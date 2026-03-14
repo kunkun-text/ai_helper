@@ -1,0 +1,18 @@
+package com.ai_helper.ai_helper.Service;
+
+import com.ai_helper.ai_helper.pojo.dto.EditDefenseDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
+import com.ai_helper.ai_helper.result.PageResult;
+import com.ai_helper.ai_helper.result.Result;
+
+
+public interface DefenseTopicsService {
+
+    Result<Object> addDefense(DefenseTopics defenseTopics);
+
+    Result<PageResult<DefenseTopics>> getAllDefense(int pageNum, int pageSize);
+
+    Result<Object> editDefense(EditDefenseDto editDefenseDto);
+
+    Result<Object> getDefenseQuestionById(Integer topicId);
+}

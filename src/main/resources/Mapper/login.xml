@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ai_helper.ai_helper.mapper.RegisterMapper">
+
+    <!-- 插入用户信息 -->
+    <insert id="register" parameterType="com.ai_helper.ai_helper.pojo.dto.UserDto">
+        INSERT INTO users (user_Number, name, email, role, password, created_at)
+        VALUES (#{userNumber}, #{name}, #{email}, #{role}, #{password}, #{createTime})
+    </insert>
+
+    <!-- 根据 userNumber 查询用户信息 -->
+    <select id="selectByUserNumber" parameterType="string" resultType="com.ai_helper.ai_helper.pojo.dto.UserDto">
+        SELECT user_Number AS userNumber,
+               user_id as id,
+               name,
+               user_Number,
+               email,
+               phone_Number,
+               role,
+               password
+        FROM users
+        WHERE user_Number = #{userNumber}
+    </select>
+
+</mapper>

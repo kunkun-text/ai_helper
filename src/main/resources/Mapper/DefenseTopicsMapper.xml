@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.ai_helper.ai_helper.mapper.DefenseTopicsMapper">
+
+    <delete id="deleteQuestionsByTopicId">
+        DELETE FROM defense_questions WHERE topic_id = #{topicId}
+    </delete>
+
+    <insert id="addDefense">
+        insert into defense_topics (teacher_id, topic_name, topic_description, defense_time, created_at, updated_at)
+        values (#{teacherId}, #{topicName}, #{topicDescription}, #{defenseTime}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <insert id="addDefenseQuestion">
+        insert into defense_questions (topic_id, teacher_id, question_type, question, standard_answer,created_at, updated_at)
+        values (#{topicId}, #{teacherId}, #{questionType}, #{question}, #{standardAnswer}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <update id="editDefense">
+        update defense_topics
+        set topic_name = #{topicName}, topic_description = #{topicDescription},
+        defense_time = #{defenseTime}, updated_at = #{updatedAt}
+        where topic_id = #{topicId}
+    </update>
+
+    <select id="selectAllDefense" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseTopics">
+        SELECT * FROM defense_topics
+        ORDER BY created_at DESC
+            LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countAllDefense" resultType="long">
+        SELECT COUNT(*) FROM defense_topics
+    </select>
+
+    <select id="getDefenseQuestionById" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseQuestions">
+        Select question_id, question, standard_answer from defense_questions where topic_id = #{topicId}
+    </select>
+</mapper>
