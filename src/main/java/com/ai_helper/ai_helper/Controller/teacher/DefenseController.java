@@ -8,6 +8,7 @@ import com.ai_helper.ai_helper.result.Result;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
 
+
 @RestController
 @RequestMapping("/teacher")
 public class DefenseController {
@@ -16,8 +17,8 @@ public class DefenseController {
     private DefenseTopicsService defenseTopicsService;
 
     @PostMapping("/addDefense")
-    public Result<Object> addDefense(@RequestBody DefenseTopics defenseTopics) {
-        return defenseTopicsService.addDefense(defenseTopics);
+    public Result<Object> addDefense(@RequestBody EditDefenseDto editDefenseDto) {
+        return defenseTopicsService.addDefense(editDefenseDto);
     }
 
     @RequestMapping("/getAllDefense")
@@ -27,16 +28,20 @@ public class DefenseController {
         return defenseTopicsService.getAllDefense(pageNum, pageSize);
     }
 
-    @GetMapping("/getDefenseQuestionById")
-    public Result<Object> getDefenseQuestionById(@RequestParam Integer topicId) {
-        return defenseTopicsService.getDefenseQuestionById(topicId);
-    }
-
     @PostMapping("/editDefense")
     public Result<Object> editDefense(@RequestBody EditDefenseDto editDefenseDto) {
         return defenseTopicsService.editDefense(editDefenseDto);
     }
 
+    @GetMapping("/getDefenseQuestionById")
+    public Result<Object> getDefenseQuestionById(@RequestParam Integer topicId) {
+        return defenseTopicsService.getDefenseQuestionById(topicId);
+    }
+
+    @DeleteMapping("/deleteDefenseTopics")
+    public Result<Object> deleteDefenseTopics(@RequestParam Integer topicId) {
+        return defenseTopicsService.deleteDefenseTopics(topicId);
+    }
 
 
 }

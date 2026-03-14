@@ -5,6 +5,9 @@
     <delete id="deleteQuestionsByTopicId">
         DELETE FROM defense_questions WHERE topic_id = #{topicId}
     </delete>
+    <delete id="deleteDefenseTopics">
+        DELETE FROM defense_topics WHERE topic_id = #{topicId}
+    </delete>
 
     <insert id="addDefense">
         insert into defense_topics (teacher_id, topic_name, topic_description, defense_time, created_at, updated_at)

@@ -8,11 +8,13 @@ import com.ai_helper.ai_helper.result.Result;
 
 public interface DefenseTopicsService {
 
-    Result<Object> addDefense(DefenseTopics defenseTopics);
+    Result<Object> addDefense(EditDefenseDto editDefenseDto);
 
     Result<PageResult<DefenseTopics>> getAllDefense(int pageNum, int pageSize);
 
     Result<Object> editDefense(EditDefenseDto editDefenseDto);
 
     Result<Object> getDefenseQuestionById(Integer topicId);
+
+    Result<Object> deleteDefenseTopics(Integer topicId);
 }

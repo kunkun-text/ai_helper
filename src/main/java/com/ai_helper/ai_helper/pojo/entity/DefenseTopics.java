@@ -7,7 +7,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 
@@ -24,12 +23,12 @@ public class DefenseTopics implements Serializable {
     * 
     */
 
-    private int topicId;
+    private Integer topicId;
     /**
     * 
     */
 
-    private int teacherId;
+    private Integer teacherId;
     /**
     * 
     */
@@ -41,7 +40,7 @@ public class DefenseTopics implements Serializable {
     private String topicDescription;
 
 
-    private LocalDate defenseTime;
+    private String defenseTime;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Shanghai")
     private LocalDateTime createdAt;

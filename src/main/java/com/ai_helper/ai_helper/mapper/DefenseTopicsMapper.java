@@ -30,4 +30,6 @@ public interface DefenseTopicsMapper {
      * 根据问题ID查询问题
      */
     List<DefenseQuestions> getDefenseQuestionById(Integer topicId);
+
+    int deleteDefenseTopics(Integer topicId);
 }
