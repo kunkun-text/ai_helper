@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ai_helper.ai_helper.mapper.DefenseRecordsMapper">
+
+
+    <select id="getDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
+        SELECT
+            dr.defense_id as defenseRecordId,
+            u.name AS userName,
+            u.profile_picture AS profilePicture,
+            dt.topic_name AS topicName,
+            dr.score AS score,
+            dr.defense_date AS defenseTime
+        FROM
+            defense_records dr
+                JOIN users u ON dr.user_id = u.user_id
+                JOIN defense_topics dt ON dr.topic_id = dt.topic_id
+        ORDER BY dr.defense_date DESC
+
+    </select>
+    <select id="getDetailRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo">
+        select
+            dr.defense_id as defenseId,
+            users.name as studentName,
+            users.user_number as studentNumber,
+            dr.defense_date as defenseTime,
+            dr.video_url as defenseVideoUrl,
+            dr.report_url as defenseReportUrl,
+            dr.video_analysis as aiVideoAnalysis,
+            dr.report_analysis as aiReportAnalysis,
+            dr.feedback as aiAllAnalysis
+        from
+            defense_records dr
+                join users on dr.user_id = users.user_id
+        where
+            dr.defense_id = #{defenseId}
+    </select>
+</mapper>
