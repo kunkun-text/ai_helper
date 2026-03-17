@@ -3,11 +3,14 @@ package com.ai_helper.ai_helper.Controller.teacher;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
+import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
 import com.ai_helper.ai_helper.result.Result;
 import com.github.pagehelper.PageInfo;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 
 /**
@@ -42,6 +45,14 @@ public class DefenseRecordsController {
     @GetMapping("/DetailRecords/{defenseId}")
     public Result<DetailRecordsVo> getDefenseDetailRecords(@PathVariable Integer defenseId) {
         return defenseRecordsService.getDefenseDetailRecords(defenseId);
+    }
+
+    /*
+    * 获取答辩详情中答辩问题及回复
+     */
+    @GetMapping("/questions/{defenseId}")
+    public Result<List<QuestionDetailVo>> getDefenseQuestions(@PathVariable Integer defenseId) {
+        return defenseRecordsService.getDefenseQuestionsAnswers(defenseId);
     }
 
 }

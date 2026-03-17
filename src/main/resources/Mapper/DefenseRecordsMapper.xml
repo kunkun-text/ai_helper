@@ -37,4 +37,19 @@
         where
             dr.defense_id = #{defenseId}
     </select>
+    <select id="getDefenseQuestionsAnswers" resultType="com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo">
+        select
+            da.answer_id as answerId,
+            dq.question,
+            dq.question_type as questionType,
+            da.student_answer as studentAnswer,
+            da.score,
+            da.feedback,
+            da.created_at as createdAt
+        from
+            defense_answers as da
+                join defense_questions as dq on da.question_id = dq.question_id
+        where
+            da.defense_id = #{defenseId}
+    </select>
 </mapper>

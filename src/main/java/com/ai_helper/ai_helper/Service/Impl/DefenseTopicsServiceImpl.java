@@ -105,6 +105,9 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
         return Result.success(pageResult);
     }
 
+
+
+    //TODO 当前的 editDefense 方法采用了"先删除所有问题，再重新添加"的策略，这样会导致已回答的历史记录丢失。
     @Override
     @Transactional
     public Result<Object> editDefense(EditDefenseDto editDefenseDto) {

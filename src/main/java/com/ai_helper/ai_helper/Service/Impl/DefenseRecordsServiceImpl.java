@@ -4,6 +4,7 @@ import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
+import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
 import com.ai_helper.ai_helper.result.Result;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
@@ -35,5 +36,14 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             return Result.error("没有该记录");
         }
         return Result.success(detailRecords);
+    }
+
+    @Override
+    public Result<List<QuestionDetailVo>> getDefenseQuestionsAnswers(Integer defenseId) {
+        List<QuestionDetailVo> list = defenseRecordsMapper.getDefenseQuestionsAnswers(defenseId);
+        if (list == null) {
+            return Result.error("没有该记录");
+        }
+        return Result.success(list);
     }
 }
