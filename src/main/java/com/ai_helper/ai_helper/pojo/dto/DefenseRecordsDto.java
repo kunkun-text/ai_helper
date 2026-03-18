@@ -12,6 +12,6 @@ public class DefenseRecordsDto {
     private Integer pageSize;
     private String userName;
     private String userNumber;
-
+    private String topicName;
 
 }

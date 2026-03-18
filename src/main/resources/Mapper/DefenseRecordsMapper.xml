@@ -21,6 +21,7 @@
         <where>
             <if test="userName != null and userName != ''">and u.name like concat('%',#{userName},'%')</if>
             <if test="userNumber != null and userNumber != ''">and u.user_number like concat('%',#{userNumber},'%')</if>
+            <if test="topicName != null"> and dt.topic_name like concat('%',#{topicName},'%')</if>
         </where>
         ORDER BY dr.defense_date DESC
 
