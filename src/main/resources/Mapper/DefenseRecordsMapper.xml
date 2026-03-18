@@ -18,6 +18,10 @@
             defense_records dr
                 JOIN users u ON dr.user_id = u.user_id
                 JOIN defense_topics dt ON dr.topic_id = dt.topic_id
+        <where>
+            <if test="userName != null and userName != ''">and u.name like concat('%',#{userName},'%')</if>
+            <if test="userNumber != null and userNumber != ''">and u.user_number like concat('%',#{userNumber},'%')</if>
+        </where>
         ORDER BY dr.defense_date DESC
 
     </select>
@@ -53,4 +57,5 @@
         where
             da.defense_id = #{defenseId}
     </select>
+
 </mapper>

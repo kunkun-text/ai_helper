@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.mapper;
 
+import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -11,9 +12,11 @@ import java.util.List;
 public interface DefenseRecordsMapper {
 
 
-    List<DefenseRecordsVo> getDefenseRecords();
+    List<DefenseRecordsVo> getDefenseRecords(DefenseRecordsDto defenseRecordsDto);
 
     DetailRecordsVo getDetailRecords(Integer defenseId);
 
     List<QuestionDetailVo> getDefenseQuestionsAnswers(Integer defenseId);
+
+
 }

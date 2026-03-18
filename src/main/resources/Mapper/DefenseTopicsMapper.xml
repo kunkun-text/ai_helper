@@ -9,7 +9,7 @@
         DELETE FROM defense_topics WHERE topic_id = #{topicId}
     </delete>
 
-    <insert id="addDefense">
+    <insert id="addDefense" useGeneratedKeys="true" keyProperty="topicId">
         insert into defense_topics (teacher_id, topic_name, topic_description, defense_time, created_at, updated_at)
         values (#{teacherId}, #{topicName}, #{topicDescription}, #{defenseTime}, #{createdAt}, #{updatedAt})
     </insert>

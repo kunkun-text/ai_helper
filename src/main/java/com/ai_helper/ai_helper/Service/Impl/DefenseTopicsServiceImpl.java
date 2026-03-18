@@ -58,8 +58,8 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
 
                 for (EditDefenseDto.DefenseQuestionItem item : editDefenseDto.getQuestions()) {
                     DefenseQuestions question = new DefenseQuestions();
-                    question.setTopicId(String.valueOf(defenseTopics.getTopicId()));
-                    question.setTeacherId(String.valueOf(editDefenseDto.getTeacherId()));
+                    question.setTopicId(defenseTopics.getTopicId());
+                    question.setTeacherId(editDefenseDto.getTeacherId());
                     question.setQuestionType(item.getQuestionType());
                     question.setQuestion(item.getQuestion());
                     question.setStandardAnswer(item.getStandardAnswer());
@@ -132,8 +132,8 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
             if (editDefenseDto.getQuestions() != null && !editDefenseDto.getQuestions().isEmpty()) {
                 for (EditDefenseDto.DefenseQuestionItem item : editDefenseDto.getQuestions()) {
                     DefenseQuestions question = new DefenseQuestions();
-                    question.setTopicId(String.valueOf(editDefenseDto.getTopicId()));
-                    question.setTeacherId(String.valueOf(editDefenseDto.getTeacherId()));
+                    question.setTopicId((editDefenseDto.getTopicId()));
+                    question.setTeacherId(editDefenseDto.getTeacherId());
                     question.setQuestionType(item.getQuestionType());
                     question.setQuestion(item.getQuestion());
                     question.setStandardAnswer(item.getStandardAnswer());

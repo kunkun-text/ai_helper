@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 public class DefenseQuestions {
 
     private int questionId;
-    private String topicId;
-    private String teacherId;
+    private Integer topicId;
+    private Integer teacherId;
     private String questionType;
     private String question;
     private String standardAnswer;

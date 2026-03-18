@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Service.Impl;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
+import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -23,7 +24,7 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     @Override
     public Result<PageInfo<DefenseRecordsVo>> getDefenseRecords(Integer pageNum, Integer pageSize) {
         PageHelper.startPage(pageNum, pageSize);
-        List<DefenseRecordsVo> records = defenseRecordsMapper.getDefenseRecords();
+        List<DefenseRecordsVo> records = defenseRecordsMapper.getDefenseRecords(null);
         PageInfo<DefenseRecordsVo> pageInfo = new PageInfo<>(records);
         return Result.success(pageInfo);
     }
@@ -45,5 +46,20 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             return Result.error("没有该记录");
         }
         return Result.success(list);
+    }
+
+    @Override
+    public Result<PageInfo<DefenseRecordsVo>> selectDefenseRecords(DefenseRecordsDto defenseRecordsDto) {
+
+        // 设置默认值，避免空指针异常
+        int pageNum = defenseRecordsDto.getPageNum() != null ? defenseRecordsDto.getPageNum() : 1;
+        int pageSize = defenseRecordsDto.getPageSize() != null ? defenseRecordsDto.getPageSize() : 10;
+
+
+        PageHelper.startPage(pageNum,pageSize);
+        List<DefenseRecordsVo> list = defenseRecordsMapper.getDefenseRecords(defenseRecordsDto);
+        PageInfo<DefenseRecordsVo> defenseRecordsVoPageInfo = new PageInfo<>(list);
+        return Result.success(defenseRecordsVoPageInfo);
+
     }
 }

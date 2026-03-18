@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.Service;
 
+import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -20,4 +21,6 @@ public interface DefenseRecordsService {
     Result<DetailRecordsVo> getDefenseDetailRecords(Integer defenseId);
 
     Result<List<QuestionDetailVo>> getDefenseQuestionsAnswers(Integer defenseId);
+
+    Result<PageInfo<DefenseRecordsVo>> selectDefenseRecords(DefenseRecordsDto defenseRecordsDto);
 }

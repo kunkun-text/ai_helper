@@ -1,6 +1,7 @@
 package com.ai_helper.ai_helper.Controller.teacher;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
+import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -53,6 +54,14 @@ public class DefenseRecordsController {
     @GetMapping("/questions/{defenseId}")
     public Result<List<QuestionDetailVo>> getDefenseQuestions(@PathVariable Integer defenseId) {
         return defenseRecordsService.getDefenseQuestionsAnswers(defenseId);
+    }
+
+    /*
+    * 答辩记录搜索功能
+     */
+    @PostMapping("/search")
+    public Result<PageInfo<DefenseRecordsVo>> searchDefenseRecords (@RequestBody DefenseRecordsDto defenseRecordsDto) {
+        return defenseRecordsService.selectDefenseRecords(defenseRecordsDto);
     }
 
 }
