@@ -9,6 +9,7 @@
         SELECT
             dr.defense_id as defenseRecordId,
             u.name AS userName,
+            u.user_number as userNumber,
             u.profile_picture AS profilePicture,
             dt.topic_name AS topicName,
             dr.score AS score,

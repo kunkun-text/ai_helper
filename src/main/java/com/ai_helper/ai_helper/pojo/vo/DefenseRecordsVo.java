@@ -12,6 +12,7 @@ public class DefenseRecordsVo {
 
     private Integer defenseRecordId;
     private String userName;
+    private String userNumber;
     private String profilePicture;
     private String topicName;
     private String score;
