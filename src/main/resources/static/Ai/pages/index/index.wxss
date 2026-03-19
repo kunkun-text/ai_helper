@@ -1,0 +1,159 @@
+/* 全局容器 */
+.login-container {
+  width: 100%;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8f9fa 0%, #e8f5e9 100%);
+  padding: 80rpx 40rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 标题区域 */
+.title-wrapper {
+  display: flex;
+  align-items: center;
+  margin-bottom: 80rpx;
+}
+.decorate-line {
+  width: 60rpx;
+  height: 4rpx;
+  background-color: #4CAF50;
+  border-radius: 2rpx;
+  margin: 0 20rpx;
+}
+.login-title {
+  font-size: 48rpx;
+  font-weight: 600;
+  color: #2e7d32;
+  letter-spacing: 4rpx;
+}
+
+/* 身份选择器 */
+.role-selector {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  margin-bottom: 60rpx;
+}
+.role-item {
+  width: 48%;
+  height: 100rpx;
+  border-radius: 50rpx;
+  border: 2rpx solid #e0e0e0;
+  background-color: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.05);
+}
+.role-item.active {
+  border-color: #4CAF50;
+  background-color: #f0f9f0;
+  box-shadow: 0 4rpx 12rpx rgba(76, 175, 80, 0.15);
+}
+.role-text {
+  font-size: 32rpx;
+  color: #333;
+}
+.check-icon {
+  position: absolute;
+  right: 20rpx;
+  font-size: 24rpx;
+  color: #4CAF50;
+  opacity: 0;
+}
+.check-icon.show {
+  opacity: 1;
+}
+
+/* 表单容器 */
+.form-container {
+  width: 100%;
+  margin-bottom: 60rpx;
+}
+.input-item {
+  width: 100%;
+  height: 90rpx;
+  background-color: #fff;
+  border-radius: 45rpx;
+  margin-bottom: 30rpx;
+  padding: 0 30rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  position: relative; /* 关键：让pwd-toggle绝对定位生效 */
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.05);
+}
+.input-item.input-focus {
+  box-shadow: 0 4rpx 12rpx rgba(76, 175, 80, 0.2);
+  border: 2rpx solid #4CAF50;
+}
+.input-box {
+  flex: 1;
+  font-size: 30rpx;
+  color: #333;
+  height: 100%;
+}
+.input-placeholder {
+  color: #999;
+  font-size: 30rpx;
+}
+
+/* 密码显隐图标 */
+.pwd-toggle {
+  position: absolute;
+  right: 30rpx;
+  font-size: 32rpx;
+  color: #999;
+  z-index: 99; /* 防止被遮挡 */
+  padding: 10rpx; /* 扩大点击区域 */
+}
+
+/* 按钮组 */
+.btn-group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  margin-bottom: 40rpx;
+}
+.login-btn {
+  width: 100%;
+  height: 90rpx;
+  border-radius: 45rpx;
+  font-size: 32rpx;
+  background-color: #e0e0e0;
+  color: #999;
+  border: none !important;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.login-btn.active {
+  background: linear-gradient(90deg, #4CAF50 0%, #388e3c 100%) !important;
+  color: #fff !important;
+}
+.register-btn {
+  width: 100%;
+  height: 90rpx;
+  border-radius: 45rpx;
+  font-size: 32rpx;
+  background-color: #fff !important;
+  color: #4CAF50 !important;
+  border: 2rpx solid #4CAF50 !important;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 底部文字 */
+.footer-text {
+  font-size: 24rpx;
+  color: #999;
+  margin-top: auto;
+  margin-bottom: 20rpx;
+}

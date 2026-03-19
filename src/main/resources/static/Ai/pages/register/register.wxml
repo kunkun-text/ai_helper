@@ -1,0 +1,126 @@
+<view class="register-container">
+  <!-- 顶部标题 + 返回 -->
+  <view class="nav-bar">
+    <view class="back-btn" bindtap="goBack">←</view>
+    <view class="register-title">账号注册</view>
+    <view class="empty"></view>
+  </view>
+
+  <!-- 身份选择（接收登录页传递的角色） -->
+  <view class="role-selector">
+    <view class="role-item {{currentRole === 'student' ? 'active' : ''}}" bindtap="selectRole" data-role="student">
+      <text class="role-text">学生</text>
+      <view class="check-icon {{currentRole === 'student' ? 'show' : ''}}">✓</view>
+    </view>
+    <view class="role-item {{currentRole === 'teacher' ? 'active' : ''}}" bindtap="selectRole" data-role="teacher">
+      <text class="role-text">教师</text>
+      <view class="check-icon {{currentRole === 'teacher' ? 'show' : ''}}">✓</view>
+    </view>
+  </view>
+
+  <!-- 注册表单 -->
+  <view class="form-container">
+    <!-- 账号输入（学号/工号） -->
+    <view class="input-item {{accountFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="{{currentRole === 'student' ? '请输入学号' : '请输入工号'}}" 
+        placeholder-class="input-placeholder"
+        value="{{account}}"
+        bindinput="onAccountInput"
+        bindfocus="onAccountFocus"
+        bindblur="onAccountBlur"
+      />
+      <view class="clear-icon {{account ? 'show' : ''}}" bindtap="clearAccount">×</view>
+    </view>
+
+    <!-- 姓名输入 -->
+    <view class="input-item {{nameFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请输入真实姓名" 
+        placeholder-class="input-placeholder"
+        value="{{name}}"
+        bindinput="onNameInput"
+        bindfocus="onNameFocus"
+        bindblur="onNameBlur"
+      />
+      <view class="clear-icon {{name ? 'show' : ''}}" bindtap="clearName">×</view>
+    </view>
+
+    <!-- 邮箱输入 -->
+    <view class="input-item {{emailFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请输入邮箱" 
+        placeholder-class="input-placeholder"
+        value="{{email}}"
+        bindinput="onEmailInput"
+        bindfocus="onEmailFocus"
+        bindblur="onEmailBlur"
+      />
+      <view class="clear-icon {{email ? 'show' : ''}}" bindtap="clearEmail">×</view>
+    </view>
+
+    <!-- 密码输入 -->
+    <view class="input-item {{pwdFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请设置密码（至少6位）" 
+        placeholder-class="input-placeholder"
+        password="{{!showPwd}}"
+        value="{{password}}"
+        bindinput="onPasswordInput"
+        bindfocus="onPwdFocus"
+        bindblur="onPwdBlur"
+      />
+      <!-- 清空按钮：调整位置，确保不与密码显示/隐藏按钮重叠 -->
+      <view class="clear-icon {{password ? 'show' : ''}}" bindtap="clearPassword" style="right: 120rpx; z-index: 100;">×</view>
+      <!-- 密码显示/隐藏按钮 -->
+      <view class="pwd-toggle" bindtap="togglePwd" style="right: 30rpx;">
+        {{showPwd ? '👁️' : '🙈'}}
+      </view>
+    </view>
+
+    <!-- 密码强度提示 -->
+    <view class="pwd-strength">
+      <text class="strength-text">密码强度：</text>
+      <view class="strength-bar">
+        <view class="bar {{pwdStrength >= 1 ? 'weak' : ''}}"></view>
+        <view class="bar {{pwdStrength >= 2 ? 'medium' : ''}}"></view>
+        <view class="bar {{pwdStrength >= 3 ? 'strong' : ''}}"></view>
+      </view>
+      <text class="strength-desc">{{pwdStrengthDesc}}</text>
+    </view>
+
+    <!-- 确认密码 -->
+    <view class="input-item {{confirmPwdFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请确认密码" 
+        placeholder-class="input-placeholder"
+        password="{{!showConfirmPwd}}"
+        value="{{confirmPassword}}"
+        bindinput="onConfirmPasswordInput"
+        bindfocus="onConfirmPwdFocus"
+        bindblur="onConfirmPwdBlur"
+      />
+      <!-- 清空按钮：调整位置，确保不与密码显示/隐藏按钮重叠 -->
+      <view class="clear-icon {{confirmPassword ? 'show' : ''}}" bindtap="clearConfirmPassword" style="right: 120rpx; z-index: 100;">×</view>
+      <!-- 密码显示/隐藏按钮 -->
+      <view class="pwd-toggle" bindtap="toggleConfirmPwd" style="right: 30rpx;">
+        {{showConfirmPwd ? '👁️' : '🙈'}}
+      </view>
+    </view>
+
+    <!-- 密码不一致提示 -->
+    <view class="error-tips {{pwdNotMatch ? 'show' : ''}}">两次输入的密码不一致</view>
+    
+  </view>
+
+  <!-- 注册按钮 -->
+  <button class="register-btn {{canRegister ? 'active' : ''}}" bindtap="handleRegister" disabled="{{!canRegister}}">完成注册</button>
+
+  <!-- 底部文字 -->
+  <view class="footer-text">© 2025 AI答辩辅助系统 版权所有</view>
+</view>

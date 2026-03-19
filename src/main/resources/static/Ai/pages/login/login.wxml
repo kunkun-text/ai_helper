@@ -1,0 +1,62 @@
+<view class="login-container">
+  <!-- 顶部装饰 + 标题 -->
+  <view class="title-wrapper">
+    <view class="decorate-line"></view>
+    <view class="login-title">AI答辩辅助系统</view>
+    <view class="decorate-line"></view>
+  </view>
+  
+  <!-- 身份选择区域 -->
+  <view class="role-selector">
+    <view class="role-item {{currentRole === 'student' ? 'active' : ''}}" bindtap="selectRole" data-role="student">
+      <text class="role-text">学生</text>
+      <view class="check-icon {{currentRole === 'student' ? 'show' : ''}}">✓</view>
+    </view>
+    <view class="role-item {{currentRole === 'teacher' ? 'active' : ''}}" bindtap="selectRole" data-role="teacher">
+      <text class="role-text">教师</text>
+      <view class="check-icon {{currentRole === 'teacher' ? 'show' : ''}}">✓</view>
+    </view>
+  </view>
+
+  <!-- 输入表单区域 -->
+  <view class="form-container">
+    <view class="input-item {{accountFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请输入学号/工号" 
+        placeholder-class="input-placeholder"
+        value="{{account}}"
+        bindinput="onAccountInput"
+        bindfocus="onAccountFocus"
+        bindblur="onAccountBlur"
+      />
+    </view>
+    <view class="input-item {{pwdFocus ? 'input-focus' : ''}}">
+      <input 
+        class="input-box" 
+        placeholder="请输入密码" 
+        placeholder-class="input-placeholder"
+        password="{{!showPwd}}"
+        value="{{password}}"
+        bindinput="onPasswordInput"
+        bindfocus="onPwdFocus"
+        bindblur="onPwdBlur"
+      />
+
+      </view>
+  </view>
+
+  <!-- 登录 + 注册按钮组 -->
+  <view class="btn-group">
+    <button class="login-btn {{canLogin ? 'active' : ''}}" bindtap="handleLogin" disabled="{{!canLogin}}">登录</button>
+    <button class="register-btn" bindtap="goToRegister">注册账号</button>
+  </view>
+  
+  <!-- 忘记密码链接 -->
+  <view class="forgot-password">
+    <text bindtap="goToForgotPassword" class="forgot-link">忘记密码？</text>
+  </view>
+
+  <!-- 底部辅助文字 -->
+  <view class="footer-text">© 2025 AI答辩辅助系统 版权所有</view>
+</view>

@@ -1,0 +1,54 @@
+/**app.wxss**/
+.container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 200rpx 0;
+  box-sizing: border-box;
+}
+
+/* 长文本滚动容器 */
+.long-text-scroll {
+  width: 100%;
+  max-height: 150rpx;
+  overflow-y: auto;
+  border: 1rpx solid #e0e0e0;
+  border-radius: 8rpx;
+  padding: 12rpx;
+  background-color: #f8f8f8;
+  margin-top: 8rpx;
+}
+
+.long-text-scroll text {
+  font-size: 28rpx;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* 问题和答案块 */
+.question-block,
+.answer-block {
+  width: 100%;
+  margin-bottom: 20rpx;
+}
+
+.question-label,
+.answer-label {
+  font-weight: bold;
+  color: #333;
+  display: block;
+  margin-bottom: 8rpx;
+  font-size: 28rpx;
+}
+
+.question-text,
+.answer-text {
+  font-size: 28rpx;
+  line-height: 1.5;
+  color: #666;
+  display: block;
+  width: 100%;
+  word-break: break-word;
+}

@@ -1,0 +1,233 @@
+/* 全局容器 */
+.register-container {
+  width: 100%;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8f9fa 0%, #e8f5e9 100%);
+  padding: 40rpx 40rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 顶部导航 */
+.nav-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 60rpx;
+}
+.back-btn {
+  font-size: 36rpx;
+  color: #131313;
+  width: 60rpx;
+  height: 60rpx;
+  text-align: center;
+  line-height: 60rpx;
+}
+.register-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #131414;
+}
+.empty {
+  width: 60rpx;
+}
+
+/* 身份选择器（和登录页一致） */
+.role-selector {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  margin-bottom: 60rpx;
+}
+.role-item {
+  width: 48%;
+  height: 100rpx;
+  border-radius: 50rpx;
+  border: 2rpx solid #e0e0e0;
+  background-color: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+.role-item.active {
+  border-color: #4CAF50;
+  background-color: #f0f9f0;
+  box-shadow: 0 4rpx 12rpx rgba(76, 175, 80, 0.15);
+}
+.role-text {
+  font-size: 32rpx;
+  color: #333;
+}
+.check-icon {
+  position: absolute;
+  right: 20rpx;
+  font-size: 24rpx;
+  color: #4CAF50;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.check-icon.show {
+  opacity: 1;
+}
+
+/* 表单容器 */
+.form-container {
+  width: 100%;
+  margin-bottom: 60rpx;
+}
+.input-item {
+  width: 100%;
+  height: 90rpx;
+  background-color: #fff;
+  border-radius: 45rpx;
+  margin-bottom: 30rpx;
+  padding: 0 30rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  position: relative;
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+.input-item.input-focus {
+  box-shadow: 0 4rpx 12rpx rgba(76, 175, 80, 0.2);
+  border: 2rpx solid #4CAF50;
+}
+.input-box {
+  flex: 1;
+  font-size: 30rpx;
+  color: #333;
+  height: 100%;
+}
+.input-placeholder {
+  color: #999;
+  font-size: 30rpx;
+}
+
+/* 清空按钮 */
+.clear-icon {
+  position: absolute;
+  right: 30rpx;
+  font-size: 28rpx;
+  color: #999;
+  width: 40rpx; /* 增大点击区域 */
+  height: 40rpx; /* 增大点击区域 */
+  text-align: center;
+  line-height: 40rpx; /* 调整行高 */
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 100; /* 确保在密码显示/隐藏按钮之上 */
+}
+.clear-icon.show {
+  opacity: 1;
+}
+.clear-icon:active {
+  color: #dc2a2a;
+  transform: scale(1.1); /* 添加点击反馈 */
+}
+
+/* 密码显隐图标 */
+.pwd-toggle {
+  position: absolute;
+  right: 30rpx;
+  font-size: 32rpx;
+  color: #999;
+  z-index: 99;
+  padding: 15rpx; /* 增大点击区域 */
+  transition: color 0.2s;
+}
+.pwd-toggle:active {
+  color: #4CAF50; /* 添加点击反馈 */
+}
+
+/* 密码强度提示 */
+.pwd-strength {
+  width: 100%;
+  margin: -20rpx 0 30rpx 0;
+  padding: 0 30rpx;
+  display: flex;
+  align-items: center;
+}
+.strength-text {
+  font-size: 26rpx;
+  color: #666;
+  margin-right: 20rpx;
+}
+.strength-bar {
+  display: flex;
+  flex: 1;
+  gap: 10rpx;
+  height: 8rpx;
+}
+.bar {
+  flex: 1;
+  border-radius: 4rpx;
+  background-color: #e0e0e0;
+}
+.bar.weak {
+  background-color: #dc2a2a;
+}
+.bar.medium {
+  background-color: #ff9800;
+}
+.bar.strong {
+  background-color: #4CAF50;
+}
+.strength-desc {
+  font-size: 26rpx;
+  color: #666;
+  margin-left: 20rpx;
+  width: 100rpx;
+  text-align: right;
+}
+
+/* 错误提示 */
+.error-tips {
+  font-size: 26rpx;
+  color: #dc2a2a;
+  padding: 0 30rpx;
+  margin-top: -20rpx;
+  margin-bottom: 30rpx;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.error-tips.show {
+  opacity: 1;
+}
+
+/* 注册按钮 */
+.register-btn {
+  width: 100%;
+  height: 90rpx;
+  border-radius: 45rpx;
+  font-size: 32rpx;
+  background-color: #e0e0e0;
+  color: #999;
+  border: none !important;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 40rpx;
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+.register-btn.active {
+  background: linear-gradient(90deg, #4CAF50 0%, #388e3c 100%) !important;
+  color: #fff !important;
+  box-shadow: 0 4rpx 12rpx rgba(76, 175, 80, 0.2);
+}
+
+/* 底部文字 */
+.footer-text {
+  font-size: 24rpx;
+  color: #999;
+  margin-top: auto;
+  margin-bottom: 20rpx;
+}

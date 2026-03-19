@@ -1,0 +1,165 @@
+<view class="page">
+  <view class="header">
+    <text class="header-title">课程考核AI答辩辅助</text>
+  </view>
+
+  <scroll-view class="content" scroll-y>
+    <view wx:if="{{activeTab === 'home'}}">
+      <view class="welcome-card gradient-blue">
+        <view class="avatar-circle">
+          <text class="avatar-text">S</text>
+        </view>
+        <view class="welcome-info">
+          <text class="welcome-title">欢迎，{{user.name}}同学</text>
+          <text class="welcome-subtitle">备考评审你的答辩视频帮助学习</text>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="card-title">下一轮答辩</text>
+        <view class="card-block">
+          <text class="label">答辩题目</text>
+          <text class="value">{{nextDefense.topic}}</text>
+        </view>
+        <view class="row">
+          <view class="badge-icon">时间</view>
+          <text class="muted">答辩时间：{{nextDefense.date}}</text>
+        </view>
+        <button class="primary-btn">开始答辩</button>
+      </view>
+
+      <view class="card">
+        <view class="upload-box">
+          <view class="upload-icon">视频</view>
+          <text class="muted">上传答辩视频</text>
+          <button class="outline-btn" bindtap="selectVideo" disabled="{{isUploading}}">选择视频，开始上传</button>
+          
+          <!-- 上传状态显示 -->
+          <view wx:if="{{uploadStatus === 'uploading' || uploadStatus === 'merging'}}" class="upload-status">
+            <view class="progress-container">
+              <progress 
+                percent="{{uploadProgress}}" 
+                stroke-width="4" 
+                active-color="#1890ff" 
+                background-color="#f5f5f5"
+                active="{{true}}"
+              />
+              <text class="progress-text">{{uploadProgress}}%</text>
+            </view>
+            <text class="status-text" wx:if="{{uploadStatus === 'uploading'}}">
+              正在上传 ({{currentChunkIndex}}/{{currentTotalChunks}})
+            </text>
+            <text class="status-text" wx:if="{{uploadStatus === 'merging'}}">
+              正在合并视频并转写文字...
+            </text>
+          </view>
+          
+          <!-- 上传完成状态 -->
+          <view wx:if="{{uploadStatus === 'completed'}}" class="upload-success">
+            <text class="success-text">上传成功！正在处理视频...</text>
+          </view>
+          
+          <!-- 上传失败状态 -->
+          <view wx:if="{{uploadStatus === 'failed'}}" class="upload-error">
+            <text class="error-text">上传失败，请重试</text>
+            <button class="retry-btn" bindtap="selectVideo">重新上传</button>
+          </view>
+        </view>
+      </view>
+
+      <view class="card">
+        <view class="card-header">
+          <text class="card-title">学生答辩记录</text>
+          <view class="link" bindtap="switchTab" data-tab="records">查看全部</view>
+        </view>
+        <scroll-view 
+          class="record-list-container" 
+          scroll-y="true" 
+          enable-back-to-top="true"
+          lower-threshold="50"
+          bindscrolltolower="onScrollToLower"
+          refresher-enabled="true"
+          refresher-triggered="{{refreshing}}"
+          bindrefresherrefresh="onRefresh"
+          style="max-height: 300rpx;">
+          <view class="record-list">
+            <block wx:for="{{previewRecords}}" wx:key="id">
+              <view class="record-item" bindtap="openRecord" data-id="{{item.id}}">
+                <view class="record-avatar">AI</view>
+                <view class="record-body">
+                  <text class="record-name">{{user.name}}</text>
+                  <text class="record-topic">{{item.topic}}</text>
+                  <text class="record-date">{{item.date}}</text>
+                </view>
+                <view class="record-score">
+                  <text class="score">{{item.score}}分</text>
+                  <text class="link-sm">查看详情</text>
+                </view>
+              </view>
+            </block>
+          </view>
+        </scroll-view>
+      </view>
+
+    </view>
+
+    <view wx:elif="{{activeTab === 'records'}}">
+      <view class="section-title">答辩记录</view>
+      <scroll-view 
+        class="record-list-full" 
+        scroll-y="true" 
+        style="height: calc(100vh - 200rpx);"
+        enable-back-to-top="true"
+        lower-threshold="50"
+        bindscrolltolower="onScrollToLower"
+        refresher-enabled="true"
+        refresher-triggered="{{refreshing}}"
+        bindrefresherrefresh="onRefresh">
+        <view class="record-list full">
+          <block wx:for="{{defenseRecords}}" wx:key="id">
+            <view class="record-item" bindtap="openRecord" data-id="{{item.id}}">
+              <view class="record-avatar">AI</view>
+              <view class="record-body">
+                <text class="record-name">{{user.name}}</text>
+                <text class="record-topic">{{item.topic}}</text>
+                <text class="record-date">{{item.date}}</text>
+              </view>
+              <view class="record-score">
+                <text class="score">{{item.score}}分</text>
+                <text class="link-sm">查看详情</text>
+              </view>
+            </view>
+          </block>
+        </view>
+      </scroll-view>
+    </view>
+
+    <!-- 答辩记录详情弹窗 -->
+    <view wx:if="{{selectedRecord}}" class="modal-overlay" bindtap="closeRecord">
+      <view class="modal-content" catchtap>
+        <view class="modal-header">
+          <text class="modal-title">答辩详情</text>
+          <button class="close-btn" bindtap="closeRecord">×</button>
+        </view>
+        <view class="modal-body">
+          <view class="detail-row">
+            <text class="detail-label">题目：</text>
+            <text class="detail-value">{{selectedRecord.topic}}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">日期：</text>
+            <text class="detail-value">{{selectedRecord.date}}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">得分：</text>
+            <text class="detail-value">{{selectedRecord.score}}分</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">反馈：</text>
+            <text class="detail-value">{{selectedRecord.feedback}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+</view>

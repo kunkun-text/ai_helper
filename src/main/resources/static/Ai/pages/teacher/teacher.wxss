@@ -1,0 +1,803 @@
+.page {
+  min-height: 100vh;
+  background: #ededf0;
+  display: flex;
+  flex-direction: column;
+}
+
+.header-fixed {
+  height: 120rpx;
+  background-color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+}
+
+.header-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333333;
+  position: absolute;
+  bottom: 10rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.content {
+  flex: 1;
+  padding: 140rpx 24rpx 140rpx; /* 增加上边距以避免内容被固定标题遮挡 */
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.section-title {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 32rpx;
+}
+
+.welcome-card {
+  display: flex;
+  align-items: center;
+  padding: 28rpx;
+  border-radius: 28rpx;
+  margin-bottom: 28rpx;
+  color: #ffffff;
+}
+
+.gradient-green {
+  background: linear-gradient(90deg, #4caf50 0%, #43a047 100%);
+  box-shadow: 0 12rpx 24rpx rgba(67, 160, 71, 0.25);
+}
+
+.avatar-circle {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 24rpx;
+}
+
+.avatar-circle.large {
+  width: 140rpx;
+  height: 140rpx;
+}
+
+.avatar-text {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #43a047;
+}
+
+.welcome-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.welcome-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.welcome-subtitle {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20rpx;
+  margin-bottom: 24rpx;
+}
+
+.stat-card {
+  background: #ffffff;
+  border-radius: 24rpx;
+  padding: 20rpx;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  box-shadow: 0 8rpx 20rpx rgba(0, 0, 0, 0.06);
+}
+
+.stat-icon {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.stat-icon.blue {
+  background: #eaf2ff;
+  color: #008cba;
+}
+
+.stat-icon.green {
+  background: #e8f5e9;
+  color: #43a047;
+}
+
+.stat-value {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.stat-label {
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 24rpx;
+  padding: 28rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 8rpx 20rpx rgba(0, 0, 0, 0.06);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+
+.card-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.label {
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.input {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  width: 100%; /* 确保占满整个容器 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  min-height: 80rpx; /* 进一步增加最小高度以更好地显示多行内容 */
+  line-height: 1.5; /* 改善文本可读性 */
+  height: auto; /* 让高度可以根据内容自动调整 */
+}
+
+.picker {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  width: 100%;
+  box-sizing: border-box;
+  color: #333333;
+  display: flex;
+  align-items: center;
+  min-height: 60rpx; /* 增加最小高度以更好地显示内容 */
+}
+
+.textarea {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  min-height: 320rpx; /* 增加最小高度以更好地显示多行内容 */
+  width: 100%; /* 确保占满整个容器 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  line-height: 1.5; /* 改善文本可读性 */
+  max-height: 600rpx; /* 增加最大高度，允许输入更多内容 */
+}
+
+.value {
+  font-size: 28rpx;
+  color: #333333;
+  margin-top: 10rpx;
+  display: block;
+  background: #f7f9fb; /* 与输入框相同的背景色 */
+  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
+  border-radius: 12rpx; /* 与输入框相同的圆角 */
+  width: 100%; /* 与输入框相同的宽度 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+}
+
+/* 回答详情样式 */
+.answer-item {
+  margin-bottom: 24rpx;
+  padding-bottom: 24rpx;
+}
+
+.answer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.answer-type {
+  font-size: 24rpx;
+  font-weight: bold;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+}
+
+.ai-question {
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+.teacher-question {
+  background-color: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.answer-score {
+  font-size: 24rpx;
+  color: #4caf50;
+  font-weight: 600;
+}
+
+.answer-separator {
+  height: 1rpx;
+  background-color: #e0e0e0;
+  margin-top: 16rpx;
+}
+
+.long-text-scroll {
+  max-height: 150rpx;
+  width: 100%;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  box-sizing: border-box;
+}
+
+.feedback {
+  color: #666666;
+  line-height: 1.5;
+}
+
+.value.feedback {
+  background: #f7f9fb;
+  padding: 16rpx;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  color: #666666;
+  line-height: 1.5;
+}
+
+/* 搜索区域样式 */
+.search-container {
+  background: #ffffff;
+  border-radius: 24rpx;
+  padding: 20rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 8rpx 20rpx rgba(0, 0, 0, 0.06);
+}
+
+.search-inputs {
+  display: flex;
+  gap: 16rpx;
+  margin-bottom: 16rpx;
+}
+
+.search-input {
+  flex: 1;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  height: 60rpx;
+  box-sizing: border-box;
+}
+
+.search-actions {
+  display: flex;
+  gap: 16rpx;
+}
+
+.search-btn {
+  flex: 1;
+  height: 72rpx; /* 统一高度为72rpx */
+  font-size: 26rpx;
+  border-radius: 16rpx; /* 统一圆角为16rpx */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.primary-btn {
+  margin-top: 0;
+  width: 100%;
+  height: 80rpx;
+  background: #008cba;
+  color: #ffffff;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.primary-btn::after {
+  border: none;
+}
+
+.outline-btn {
+  margin-top: 0;
+  flex: 1;
+  height: 72rpx; /* 统一高度为72rpx */
+  border: 2rpx solid #008cba;
+  color: #008cba;
+  border-radius: 16rpx; /* 统一圆角为16rpx */
+  font-size: 26rpx;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.outline-btn.red {
+  border-color: #f44336;
+  color: #f44336;
+}
+
+.outline-btn::after {
+  border: none;
+}
+
+.add-btn {
+  height: 60rpx; /* 增加按钮高度 */
+  padding: 0 16rpx; /* 调整内边距使按钮更紧凑 */
+  font-size: 24rpx; /* 字体大小保持不变 */
+  border-radius: 12rpx;
+  background-color: #eaf2ff; /* 背景色 */
+  color: #008cba; /* 文字颜色 */
+  border: none; /* 移除默认边框 */
+  width: auto; /* 让按钮宽度自适应内容 */
+  min-width: 100rpx; /* 设置最小宽度以确保按钮不会过窄 */
+  max-width: 160rpx; /* 设置最大宽度以限制按钮宽度 */
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* 使用space-between让按钮靠右对齐 */
+  margin-bottom: 20rpx;
+}
+
+.topic-list {
+  /* 原有的 flex 布局改为块级，因为现在是 scroll-view */
+  display: block;
+  /* 固定高度由 WXML 内联样式控制，这里可以不写死 */
+  overflow-y: auto;
+  /* 隐藏滚动条（可选） */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.topic-list::-webkit-scrollbar {
+  display: none;
+}
+
+.topic-item {
+  
+  min-height: 180rpx;
+  margin-bottom: 16rpx;
+  background: #f7f9fb;
+  border-radius: 20rpx;
+  padding: 20rpx;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.topic-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 6rpx;
+}
+
+.topic-desc {
+  font-size: 24rpx;
+  color: #666666;
+  margin-bottom: 8rpx;
+  display: block;
+}
+
+.topic-date {
+  font-size: 22rpx;
+  color: #888888;
+}
+
+.topic-arrow {
+  color: #b0b0b0;
+  font-size: 28rpx;
+  margin-left: 12rpx;
+}
+
+
+.record-list-full {
+  height: calc(100vh - 200rpx);
+  overflow-y: auto;
+}
+
+.record-item {
+  background: #f7f9fb;
+  border-radius: 20rpx;
+  padding: 20rpx;
+  display: flex;
+  gap: 16rpx;
+  margin-bottom: 16rpx;
+}
+
+.record-avatar {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: #eaf2ff;
+  color: #008cba;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 24rpx;
+}
+
+.record-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.record-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.record-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.record-id {
+  font-size: 22rpx;
+  color: #888888;
+}
+
+.record-topic {
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.record-date {
+  font-size: 22rpx;
+  color: #888888;
+}
+
+.record-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8rpx;
+}
+
+.score {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #4caf50;
+}
+
+.score-meta {
+  font-size: 20rpx;
+  color: #888888;
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+}
+
+.link {
+  font-size: 24rpx;
+  color: #007bff;
+}
+
+.link-sm {
+  font-size: 22rpx;
+  color: #007bff;
+}
+
+.profile-avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.form-item {
+  margin-bottom: 24rpx; /* 增加表单项之间的间距 */
+}
+
+.label {
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.input {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  width: 100%; /* 确保占满整个容器 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+}
+
+.picker {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  width: 100%;
+  box-sizing: border-box;
+  color: #333333;
+  display: flex;
+  align-items: center;
+}
+
+.textarea {
+  margin-top: 10rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  min-height: 140rpx;
+  width: 100%; /* 确保占满整个容器 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  line-height: 1.5; /* 改善文本可读性 */
+}
+
+.value {
+  font-size: 28rpx;
+  color: #333333;
+  margin-top: 10rpx;
+  display: block;
+  background: #f7f9fb; /* 与输入框相同的背景色 */
+  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
+  border-radius: 12rpx; /* 与输入框相同的圆角 */
+  width: 100%; /* 与输入框相同的宽度 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+}
+
+.value.feedback {
+  background: #f7f9fb;
+  padding: 16rpx;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  color: #666666;
+  line-height: 1.5;
+}
+
+.cell {
+  padding: 22rpx 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2rpx solid #f0f0f0;
+}
+
+.cell:last-child {
+  border-bottom: none;
+}
+
+.cell-text {
+  font-size: 26rpx;
+  color: #333333;
+}
+
+.cell-arrow {
+  color: #bbbbbb;
+}
+
+.cell.danger .cell-text {
+  color: #f44336;
+}
+
+.tab-bar {
+  position: fixed;
+  height: 40rpx;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #ffffff;
+  border-top: 2rpx solid #e8e8e8;
+  display: flex;
+  padding: 16rpx 0;
+}
+
+.tab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-text {
+  font-size: 24rpx;
+  color: #888888;
+}
+
+.tab-item.active .tab-text {
+  color: #4caf50;
+  font-weight: 600;
+}
+
+.modal-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99;
+}
+
+.modal-card {
+  width: 86%;
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  max-height: 90vh; /* 增加最大高度从80vh到90vh */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 防止内部内容溢出 */
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.modal-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #333333;
+  flex: 1; /* 让标题占据剩余空间 */
+}
+
+.modal-close {
+  font-size: 32rpx;
+  color: #999999;
+  margin-left: 20rpx; /* 添加左边距，与标题分开 */
+  width: 40rpx; /* 设定固定宽度 */
+  text-align: center; /* 居中对齐文字 */
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto; /* 允许内容滚动 */
+  max-height: 70vh; /* 相应增加内容区域的最大高度 */
+  padding-right: 8rpx; /* 为滚动条留出空间 */
+  padding: 10rpx 0; /* 添加内边距以提供更多空间 */
+}
+
+/* 滚动条样式 */
+.modal-body::-webkit-scrollbar {
+  width: 6rpx;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3rpx;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3rpx;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+/* 问题和标准答案样式 */
+.form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.add-question-btn {
+  color: #008cba;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+
+.questions-container {
+  margin-top: 10rpx;
+}
+
+.question-item {
+  margin-bottom: 20rpx;
+  padding: 16rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+}
+
+.question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.question-index {
+  font-weight: 600;
+  color: #333333;
+}
+
+.remove-question-btn {
+  color: #f44336;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+
+.question-detail-item {
+  margin-bottom: 20rpx;
+  padding: 16rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+}
+
+.question-text {
+  display: block;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 10rpx;
+}
+
+.answer-text {
+  display: block;
+  color: #666666;
+  font-size: 24rpx;
+  line-height: 1.5;
+}

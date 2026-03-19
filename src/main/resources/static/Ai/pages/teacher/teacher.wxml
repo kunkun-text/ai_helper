@@ -1,0 +1,470 @@
+<view class="page">
+  <view class="header-fixed">
+    <text class="header-title">课程考核AI答辩辅助</text>
+  </view>
+
+  <scroll-view class="content" scroll-y>
+    <view wx:if="{{activeTab === 'home'}}">
+      <view class="welcome-card gradient-green">
+        <view class="avatar-circle">
+          <text class="avatar-text">T</text>
+        </view>
+        <view class="welcome-info">
+          <text class="welcome-title">欢迎，{{user.name}}</text>
+          <text class="welcome-subtitle">管理答辩题目并查看学生表现</text>
+        </view>
+      </view>
+
+      <view class="stats-grid">
+        <view class="stat-card">
+          <view class="stat-icon blue">题</view>
+          <view class="stat-info">
+            <text class="stat-value">{{total}}</text>
+            <text class="stat-label">答辩题目</text>
+          </view>
+        </view>
+        <view class="stat-card">
+          <view class="stat-icon green">记</view>
+          <view class="stat-info">
+            <text class="stat-value">{{defenseRecordsTotal}}</text>
+            <text class="stat-label">答辩记录</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="card">
+        <view class="card-header">
+          <text class="card-title">答辩题目设置</text>
+          <button class="outline-btn add-btn" bindtap="openAddTopic">添加题目</button>
+        </view>
+        <scroll-view class="topic-list" scroll-y style="height: 540rpx;" bindscrolltolower="loadMoreTopics">
+          <block wx:for="{{topics}}" wx:key="id">
+            <view class="topic-item" bindtap="openTopicDetail" data-id="{{item.id}}">
+              <view class="topic-main">
+                <text class="topic-title">{{item.title}}</text>
+                <text class="topic-desc">{{item.description}}</text>
+                <text class="topic-date">答辩时间：{{item.date}}</text>
+              </view>
+              <text class="topic-arrow">></text>
+            </view>
+          </block>
+        </scroll-view>
+      </view>
+
+      <view class="card">
+        <view class="card-header">
+          <text class="card-title">学生答辩记录</text>
+          <view class="link" bindtap="switchTab" data-tab="records">查看全部</view>
+        </view>
+        <scroll-view 
+          class="record-list" 
+          scroll-y="true" 
+          enable-back-to-top="true"
+          lower-threshold="50"
+          bindscrolltolower="onDefenseRecordsScrollToLower"
+          refresher-enabled="true"
+          refresher-triggered="{{defenseRecordsRefreshing}}"
+          bindrefresherrefresh="onDefenseRecordsRefresh"
+          style="max-height: 450rpx;">
+          <block wx:for="{{defenseRecords}}" wx:key="id">
+            <view class="record-item" data-id="{{item.id}}">
+              <view class="record-avatar">AI</view>
+              <view class="record-body">
+                <view class="record-row">
+                  <text class="record-name">{{item.studentName}}</text>
+                  <text class="record-id">({{item.studentId}})</text>
+                </view>
+                <text class="record-topic">{{item.topic}}</text>
+                <text class="record-date">{{item.defenseTime}}</text>
+              </view>
+              <view class="record-score">
+                <text class="score">{{item.score}}分</text>
+                <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
+                <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
+              </view>
+            </view>
+          </block>
+        </scroll-view>
+      </view>
+    </view>
+
+    <view wx:elif="{{activeTab === 'records'}}">
+      <view class="section-title">学生答辩记录</view>
+      <!-- 搜索区域 -->
+      <view class="search-container">
+        <view class="search-inputs">
+          <input 
+            class="search-input" 
+            placeholder="学生姓名" 
+            value="{{searchUserName}}" 
+            bindinput="onSearchUserNameInput" 
+            maxlength="50"
+          />
+          <input 
+            class="search-input" 
+            placeholder="学号" 
+            value="{{searchUserNumber}}" 
+            bindinput="onSearchUserNumberInput" 
+            maxlength="20"
+          />
+          <input 
+            class="search-input" 
+            placeholder="题目名称" 
+            value="{{searchTopicName}}" 
+            bindinput="onSearchTopicNameInput" 
+            maxlength="100"
+          />
+        </view>
+        <view class="search-actions">
+          <button class = "outline-btn search-btn" bindtap="clearSearch">清空</button>
+          <button class="primary-btn search-btn" bindtap="performSearch">搜索</button>
+        </view>
+      </view>
+      
+      <scroll-view 
+        class="record-list-full" 
+        scroll-y="true" 
+        enable-back-to-top="true"
+        lower-threshold="50"
+        bindscrolltolower="onDefenseRecordsScrollToLower"
+        refresher-enabled="true"
+        refresher-triggered="{{defenseRecordsRefreshing}}"
+        bindrefresherrefresh="onDefenseRecordsRefresh"
+        style="height: 900rpx;">
+        <view class="record-list full">
+          <block wx:for="{{defenseRecords}}" wx:key="id">
+            <view class="record-item" data-id="{{item.id}}">
+              <view class="record-avatar">AI</view>
+              <view class="record-body">
+                <view class="record-row">
+                  <text class="record-name">{{item.studentName}}</text>
+                  <text class="record-id">({{item.studentId}})</text>
+                </view>
+                <text class="record-topic">{{item.topic}}</text>
+                <text class="record-date">{{item.defenseTime}}</text>
+              </view>
+              <view class="record-score">
+                <text class="score">{{item.score}}分</text>
+                <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
+                <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
+              </view>
+            </view>
+          </block>
+          <!-- 将没有更多记录提醒放回scroll-view内部 -->
+          <view wx:if="{{!defenseRecordsHasMore}}" style="text-align: center; padding: 20rpx;">
+            <text>没有更多记录了</text>
+          </view>
+                <!-- 保持加载中提醒在外面 -->
+          <view wx:if="{{defenseRecordsHasMore && defenseRecordsLoading}}" style="text-align: center; padding: 20rpx;">
+            <text>加载中...</text>
+          </view>
+        </view>
+      </scroll-view>
+      
+
+
+    </view>
+
+    <view wx:elif="{{activeTab === 'profile'}}">
+      <view class="section-title">个人信息</view>
+      <view class="profile-avatar">
+        <view class="avatar-circle large">
+          <text class="avatar-text">T</text>
+        </view>
+        <view class="link" wx:if="{{!isEditing}}" bindtap="startEdit">修改头像</view>
+      </view>
+
+      <view class="card">
+
+        <view class="form-item">
+          <text class="label">姓名</text>
+          <input class="input" wx:if="{{isEditing}}" value="{{editedUser.name}}" bindinput="onEditName" />
+          <text class="value" wx:else>{{user.name}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">教师编号</text>
+          <input class="input" wx:if="{{isEditing}}" value="{{editedUser.userNumber}}" bindinput="onEditUserNumber" />
+          <text class="value" wx:else>{{user.userNumber}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">手机号码</text>
+          <input class="input" wx:if="{{isEditing}}" value="{{editedUser.phone}}" bindinput="onEditPhone" />
+          <text class="value" wx:else>{{user.phone}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">邮箱</text>
+          <input class="input" wx:if="{{isEditing}}" value="{{editedUser.email}}" bindinput="onEditEmail" />
+          <text class="value" wx:else>{{user.email}}</text>
+        </view>
+        <button class="primary-btn" wx:if="{{isEditing}}" bindtap="saveProfile">保存信息</button>
+        <button class="primary-btn" wx:else bindtap="startEdit">修改个人信息</button>
+      </view>
+
+      <view class="card">
+        <view class="cell" bindtap="switchTab" data-tab="settings">
+          <text class="cell-text">设置</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell danger" bindtap="logout">
+          <text class="cell-text">退出登录</text>
+          <text class="cell-arrow">></text>
+        </view>
+      </view>
+    </view>
+
+    <view wx:elif="{{activeTab === 'settings'}}">
+      <view class="section-title">设置</view>
+      <view class="card">
+        <view class="cell">
+          <text class="cell-text">通知设置</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell">
+          <text class="cell-text">隐私设置</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell">
+          <text class="cell-text">关于我们</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell danger" bindtap="logout">
+          <text class="cell-text">退出登录</text>
+          <text class="cell-arrow">></text>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="tab-bar">
+    <view class="tab-item {{activeTab === 'home' ? 'active' : ''}}" bindtap="switchTab" data-tab="home">
+      <text class="tab-text">答辩题目</text>
+    </view>
+    <view class="tab-item {{activeTab === 'records' ? 'active' : ''}}" bindtap="switchTab" data-tab="records">
+      <text class="tab-text">答辩记录</text>
+    </view>
+    <view class="tab-item {{activeTab === 'profile' ? 'active' : ''}}" bindtap="switchTab" data-tab="profile">
+      <text class="tab-text">我的</text>
+    </view>
+  </view>
+
+  <view class="modal-mask" wx:if="{{showAddTopic}}">
+    <view class="modal-card">
+      <view class="modal-header">
+        <text class="modal-title">{{isEditingTopic ? '编辑答辩题目' : '添加新的答辩题目'}}</text>
+        <text class="modal-close" bindtap="closeAddTopic">×</text>
+      </view>
+      <scroll-view class="modal-body" scroll-y="true">
+        <view class="form-item">
+          <text class="label">题目标题</text>
+          <textarea class="input" value="{{newTopic.title}}" placeholder="请输入答辩题目" bindinput="onTopicTitleInput" auto-height="true" maxlength="200"/>
+        </view>
+        <view class="form-item">
+          <text class="label">题目描述</text>
+          <textarea class="textarea" value="{{newTopic.description}}" placeholder="请输入题目描述和要求" bindinput="onTopicDescInput" auto-height="true" maxlength="2000"/>
+        </view>
+        <view class="form-item">
+          <text class="label">答辩时间</text>
+          <picker mode="date" value="{{newTopic.date}}" bindchange="onTopicDateChange">
+            <view class="picker">{{newTopic.date ? newTopic.date : '选择日期'}}</view>
+          </picker>
+        </view>
+        
+        <!-- 问题和标准答案区域 -->
+        <view class="form-item">
+          <view class="form-header">
+            <text class="label">问题和标准答案</text>
+            <text class="add-question-btn" bindtap="addQuestion">+ 添加问题</text>
+          </view>
+          <view class="questions-container">
+            <block wx:for="{{newTopic.questions}}" wx:key="index">
+              <view class="question-item">
+                <view class="question-header">
+                  <text class="question-index">问题 {{index + 1}}</text>
+                  <text class="remove-question-btn" bindtap="removeQuestion" data-index="{{index}}">删除</text>
+                </view>
+                <input class="input" value="{{item.question}}" placeholder="请输入问题" bindinput="onQuestionInput" data-index="{{index}}" maxlength="500" />
+                <textarea class="textarea" value="{{item.answer}}" placeholder="请输入标准答案" bindinput="onAnswerInput" data-index="{{index}}" maxlength="2000" />
+              </view>
+            </block>
+          </view>
+        </view>
+        
+        <view class="modal-actions">
+          <button class="outline-btn" bindtap="closeAddTopic">取消</button>
+          <button class="primary-btn" bindtap="addTopic">{{isEditingTopic ? '更新题目' : '添加题目'}}</button>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <!-- 答辩题目详情弹窗 -->
+  <view class="modal-mask" wx:if="{{selectedTopic}}">
+    <view class="modal-card">
+      <view class="modal-header">
+        <text class="modal-title">答辩题目详情</text>
+        <text class="modal-close" bindtap="closeTopicDetail">×</text>
+      </view>
+      <scroll-view class="modal-body" scroll-y="true">
+        <view class="form-item">
+          <text class="label">题目标题</text>
+          <text class="value">{{selectedTopic.title}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">题目描述</text>
+          <text class="value">{{selectedTopic.description}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">答辩时间</text>
+          <text class="value">{{selectedTopic.date || '未设定'}}</text>
+        </view>
+        <view class="form-item">
+          <text class="label">创建时间</text>
+          <text class="value">{{selectedTopic.createTime || 'N/A'}}</text>
+        </view>
+        
+        <!-- 显示问题和标准答案 -->
+        <view class="form-item" wx:if="{{selectedTopic.questions && selectedTopic.questions.length > 0}}">
+          <text class="label">问题与标准答案</text>
+          <view class="questions-container">
+            <block wx:for="{{selectedTopic.questions}}" wx:key="questionId">
+              <view class="question-detail-item">
+                <view class="question-block">
+                  <text class="question-label">问题 {{index + 1}}:</text>
+                  <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+                    <text class="question-text">{{item.question}}</text>
+                  </scroll-view>
+                </view>
+                <view class="answer-block">
+                  <text class="answer-label">标准答案:</text>
+                  <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+                    <text class="answer-text">{{item.standardAnswer}}</text>
+                  </scroll-view>
+                </view>
+              </view>
+            </block>
+          </view>
+        </view>
+        
+        <view class="modal-actions" style="margin-top: 20px;">
+          <button class="outline-btn red" bindtap="deleteTopic">删除题目</button>
+          <button class="primary-btn" bindtap="editTopic">编辑题目</button>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view class="modal-mask" wx:if="{{selectedRecord}}">
+    <view class="modal-card">
+      <view class="modal-header">
+        <text class="modal-title">答辩详情</text>
+        <text class="modal-close" bindtap="closeRecord">×</text>
+      </view>
+      <scroll-view class="modal-body" scroll-y="true">
+        <view class="form-item">
+          <text class="label">学生信息</text>
+          <text class="value">{{selectedRecord.studentName}}（{{selectedRecord.studentNumber}}）</text>
+        </view>
+        <view class="form-item">
+          <text class="label">答辩时间</text>
+          <text class="value">{{selectedRecord.defenseTime}}</text>
+        </view>
+        
+        <!-- 答辩视频 -->
+        <view class="form-item" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">
+          <text class="label">答辩视频</text>
+          <view class="video-container">
+            <video 
+              src="{{selectedRecord.defenseVideoUrl}}" 
+              controls="true" 
+              autoplay="false" 
+              poster="" 
+              style="width: 100%; height: 300rpx; background-color: #000;"
+              show-center-play-btn="true"
+              enable-progress-gesture="true"
+              object-fit="contain">
+            </video>
+          </view>
+        </view>
+        <view class="form-item" wx:elif="{{selectedRecord.defenseVideoUrl === 'abc'}}">
+          <text class="label">答辩视频</text>
+          <text class="value">视频地址无效或未上传</text>
+        </view>
+        
+        <!-- 答辩报告 -->
+        <view class="form-item" wx:if="{{selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc'}}">
+          <text class="label">答辩报告</text>
+          <button class="primary-btn" bindtap="viewDefenseReport" data-url="{{selectedRecord.defenseReportUrl}}">查看文档</button>
+        </view>
+        <view class="form-item" wx:elif="{{selectedRecord.defenseReportUrl === 'abc'}}">
+          <text class="label">答辩报告</text>
+          <text class="value">文档地址无效或未上传</text>
+        </view>
+        
+        <!-- AI分析结果 -->
+        <view class="form-item" wx:if="{{selectedRecord.aiVideoAnalysis}}">
+          <text class="label">AI视频分析</text>
+          <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+            <text class="value feedback">{{selectedRecord.aiVideoAnalysis}}</text>
+          </scroll-view>
+        </view>
+        
+        <view class="form-item" wx:if="{{selectedRecord.aiReportAnalysis}}">
+          <text class="label">AI报告分析</text>
+          <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+            <text class="value feedback">{{selectedRecord.aiReportAnalysis}}</text>
+          </scroll-view>
+        </view>
+        
+        <view class="form-item" wx:if="{{selectedRecord.aiAllAnalysis}}">
+          <text class="label">AI综合分析</text>
+          <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+            <text class="value feedback">{{selectedRecord.aiAllAnalysis}}</text>
+          </scroll-view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+  
+  <!-- 回答详情模态框 -->
+  <view class="modal-mask" wx:if="{{selectedAnswers}}">
+    <view class="modal-card">
+      <view class="modal-header">
+        <text class="modal-title">回答详情</text>
+        <text class="modal-close" bindtap="closeAnswers">×</text>
+      </view>
+      <scroll-view class="modal-body" scroll-y="true">
+        <block wx:for="{{selectedAnswers}}" wx:key="answerId">
+          <view class="answer-item">
+            <view class="answer-header">
+              <text class="answer-type {{item.questionTypeClass}}">{{item.questionTypeLabel}}</text>
+              <text class="answer-score">评分: {{item.score}}分</text>
+            </view>
+            <view class="form-item">
+              <text class="label">问题</text>
+              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+                <text class="value">{{item.question}}</text>
+              </scroll-view>
+            </view>
+            <view class="form-item">
+              <text class="label">学生回答</text>
+              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+                <text class="value">{{item.studentAnswer}}</text>
+              </scroll-view>
+            </view>
+            <view class="form-item">
+              <text class="label">反馈</text>
+              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
+                <text class="value feedback">{{item.feedback}}</text>
+              </scroll-view>
+            </view>
+            <view class="form-item">
+              <text class="label">回答时间</text>
+              <text class="value">{{item.createdAt}}</text>
+            </view>
+            <view class="answer-separator"></view>
+          </view>
+        </block>
+      </scroll-view>
+    </view>
+  </view>
+</view>
