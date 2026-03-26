@@ -159,6 +159,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  border: none;
 }
 
 .primary-btn::after {
@@ -173,6 +174,16 @@
   padding: 12rpx 32rpx;
   border-radius: 8rpx;
   font-size: 24rpx;
+}
+
+.outline-btn::after {
+  border: none;
+}
+
+.link-sm {
+  font-size: 22rpx;
+  color: #1890ff;
+  margin-left: 12rpx;
 }
 
 .upload-box {
@@ -204,24 +215,24 @@
 }
 
 .progress-container {
-  position: relative;
-  margin-bottom: 10rpx;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 12rpx;
 }
 
 .progress-text {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 20rpx;
-  color: #666;
+  font-size: 22rpx;
+  color: #666666;
+  margin-left: 12rpx;
+  min-width: 40rpx;
 }
 
 .status-text {
   font-size: 22rpx;
-  color: #666;
+  color: #666666;
   text-align: center;
-  margin-top: 10rpx;
+  margin-top: 8rpx;
 }
 
 .upload-success, .upload-error {
@@ -252,13 +263,65 @@
 }
 
 .retry-btn {
-  margin-top: 10rpx;
-  background: #ff4d4f;
-  color: white;
-  border: none;
-  padding: 10rpx 20rpx;
-  border-radius: 6rpx;
+  margin-top: 12rpx;
+  background: #f44336;
+  color: #ffffff;
+  border-radius: 8rpx;
   font-size: 22rpx;
+  padding: 8rpx 20rpx;
+}
+
+.retry-btn::after {
+  border: none;
+}
+
+/* 回答详情样式 */
+.answer-item {
+  margin-bottom: 24rpx;
+  padding-bottom: 24rpx;
+  border-bottom: 2rpx solid #f0f0f0;
+}
+
+.answer-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.answer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.answer-type {
+  font-size: 24rpx;
+  font-weight: 600;
+  padding: 6rpx 12rpx;
+  border-radius: 8rpx;
+}
+
+.answer-type.teacher {
+  background: #eaf2ff;
+  color: #1890ff;
+}
+
+.answer-type.ai {
+  background: #e8f5e9;
+  color: #43a047;
+}
+
+.answer-score {
+  font-size: 24rpx;
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.answer-separator {
+  height: 2rpx;
+  background: #f0f0f0;
+  margin: 16rpx 0;
 }
 
 .record-list {
@@ -276,60 +339,71 @@
 }
 
 .record-item {
-  background: #f7f9fb;
-  border-radius: 20rpx;
-  padding: 20rpx;
   display: flex;
-  gap: 16rpx;
+  align-items: flex-start;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid #f0f0f0;
+}
+
+.record-item:last-child {
+  border-bottom: none;
 }
 
 .record-avatar {
-  width: 72rpx;
-  height: 72rpx;
-  border-radius: 50%;
+  width: 60rpx;
+  height: 60rpx;
   background: #eaf2ff;
-  color: #008cba;
+  color: #1890ff;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
   font-size: 24rpx;
+  font-weight: 600;
+  margin-right: 20rpx;
+  flex-shrink: 0;
 }
 
 .record-body {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6rpx;
+  min-width: 0;
 }
 
 .record-name {
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 600;
   color: #333333;
+  display: block;
+  margin-bottom: 6rpx;
 }
 
 .record-topic {
   font-size: 24rpx;
   color: #666666;
+  display: block;
+  margin-bottom: 6rpx;
+  word-break: break-word;
 }
 
 .record-date {
   font-size: 22rpx;
-  color: #888888;
+  color: #999999;
+  display: block;
 }
 
 .record-score {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8rpx;
+  min-width: 120rpx;
+  text-align: right;
 }
 
 .score {
-  font-size: 34rpx;
+  font-size: 28rpx;
   font-weight: 600;
   color: #4caf50;
+  margin-bottom: 8rpx;
 }
 
 .link {
@@ -337,10 +411,6 @@
   color: #007bff;
 }
 
-.link-sm {
-  font-size: 22rpx;
-  color: #007bff;
-}
 
 .profile-avatar {
   display: flex;
@@ -352,8 +422,26 @@
 
 .form-item {
   margin-bottom: 20rpx;
-  display: flex;
-  flex-direction: column;
+}
+
+.form-item:last-child {
+  margin-bottom: 0;
+}
+
+.label {
+  display: block;
+  font-size: 24rpx;
+  color: #666666;
+  margin-bottom: 8rpx;
+  font-weight: 500;
+}
+
+.value {
+  display: block;
+  font-size: 26rpx;
+  color: #333333;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .input {
@@ -431,10 +519,14 @@
 }
 
 .modal-card {
-  width: 82%;
+  width: 86%;
   background: #ffffff;
   border-radius: 20rpx;
   padding: 24rpx;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header {
@@ -448,18 +540,137 @@
   font-size: 30rpx;
   font-weight: 600;
   color: #333333;
+  flex: 1;
 }
 
 .modal-close {
   font-size: 32rpx;
   color: #999999;
+  margin-left: 20rpx;
+  width: 40rpx;
+  text-align: center;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 70vh;
+  padding-right: 8rpx;
+  padding: 10rpx 0;
+}
+
+/* 滚动条样式 */
+.modal-body::-webkit-scrollbar {
+  width: 6rpx;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3rpx;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3rpx;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
 }
 
 .feedback {
+  color: #5a5a5a;
   background: #f7f9fb;
-  padding: 16rpx;
+  padding: 12rpx 16rpx;
   border-radius: 12rpx;
   font-size: 24rpx;
-  color: #666666;
-  line-height: 1.5;
+}
+
+.long-text-scroll {
+  background: #f7f9fb;
+  padding: 12rpx 16rpx;
+  border-radius: 12rpx;
+}
+
+.video-container {
+  margin-top: 8rpx;
+}
+
+/* 文件信息样式 */
+.file-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16rpx;
+  padding: 0 24rpx;
+}
+
+.file-size {
+  font-size: 24rpx;
+  color: #666;
+}
+
+.cancel-btn {
+  font-size: 24rpx;
+  color: #ff4d4f;
+  background: transparent;
+  border: 1px solid #ff4d4f;
+  border-radius: 8rpx;
+  padding: 4rpx 16rpx;
+  line-height: 1;
+}
+
+.cancel-btn::after {
+  border: none;
+}
+
+/* 进度条容器 */
+.progress-container {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 12rpx;
+}
+
+.progress-text {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #1890ff;
+  min-width: 40rpx;
+}
+
+/* 状态文本 */
+.status-text {
+  font-size: 24rpx;
+  color: #666;
+  text-align: center;
+}
+
+/* 上传成功状态 */
+.upload-success {
+  text-align: center;
+  margin-top: 16rpx;
+}
+
+.success-text {
+  color: #52c41a;
+  font-size: 28rpx;
+  font-weight: bold;
+}
+
+/* 上传失败状态 */
+.upload-error {
+  text-align: center;
+  margin-top: 16rpx;
+}
+
+.error-text {
+  color: #ff4d4f;
+  font-size: 28rpx;
+  font-weight: bold;
+}
+
+.retry-btn {
+  margin-top: 16rpx;
+  font-size: 24rpx;
 }

@@ -4,7 +4,6 @@
 
 <mapper namespace="com.ai_helper.ai_helper.mapper.DefenseRecordsMapper">
 
-
     <select id="getDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
         SELECT
             dr.defense_id as defenseRecordId,
@@ -26,6 +25,7 @@
         ORDER BY dr.defense_date DESC
 
     </select>
+
     <select id="getDetailRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo">
         select
             dr.defense_id as defenseId,
@@ -58,5 +58,40 @@
         where
             da.defense_id = #{defenseId}
     </select>
+    <select id="getStudentDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
+        select
+            dr.defense_id as defenseRecordId,
+            u.Name as userName,
+            u.user_number as userNumber,
+            u.profile_picture as profilePicture,
+            dt.topic_name as topicName,
+            dr.score,
+            dr.created_at as defenseTime
+        from    defense_records dr
+                    left join users u on u.user_id = dr.user_id
+                    left join defense_topics dt on dt.topic_id = dr.topic_id
+        where u.user_number = #{userNumber}
+    </select>
+    <select id="getDefenseTopic" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseTopics">
+        select
+            topic_id as topicId,
+            teacher_id as teacherId,
+            topic_name as topicName,
+            topic_description as topicDescription,
+            defense_time as defenseTime,
+            created_at as createdAt
+        from
+            defense_topics
+        order by defense_time DESC
+    </select>
+
+
+    <insert id="insertVideoUrl">
+        INSERT INTO defense_records (user_id, video_url, created_at)
+        SELECT u.user_id, #{url}, NOW()
+        FROM users u
+        WHERE u.user_number = #{userId}
+        LIMIT 1
+    </insert>
 
 </mapper>

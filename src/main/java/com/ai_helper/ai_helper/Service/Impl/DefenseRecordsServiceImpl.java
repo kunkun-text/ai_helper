@@ -3,6 +3,7 @@ package com.ai_helper.ai_helper.Service.Impl;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -62,4 +63,25 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
         return Result.success(defenseRecordsVoPageInfo);
 
     }
+
+    @Override
+    public Result<PageInfo<DefenseRecordsVo>> getStudentDefenseRecords(int pageNum, int pageSize, String userNumber) {
+        PageHelper.startPage(pageNum, pageSize);
+        List<DefenseRecordsVo> list = defenseRecordsMapper.getStudentDefenseRecords(userNumber);
+
+        PageInfo<DefenseRecordsVo> pageInfo = new PageInfo<>(list);
+        return Result.success(pageInfo);
+
+    }
+
+    @Override
+    public Result<List<DefenseTopics>> getDefenseTopic() {
+        List<DefenseTopics> list = defenseRecordsMapper.getDefenseTopic();
+        if (list == null) {
+            return Result.error("暂无答辩题目");
+        }
+        return Result.success(list);
+    }
+
+
 }

@@ -1,4 +1,4 @@
-package com.ai_helper.ai_helper.pojo.entity;
+package com.ai_helper.ai_helper.pojo.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
@@ -8,9 +8,9 @@ import java.time.LocalDateTime;
 
 @Data
 @Setter
-public class DefenseHistory {
+public class DefenseHistoryDto {
 
-    private Integer historyId;
+    private Integer DefenseId;
     private Integer userId;
     private Integer defenseId;
     private double score;

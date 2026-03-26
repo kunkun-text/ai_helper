@@ -21,33 +21,21 @@ Page({
     },
     isEditing: false,
 
+    // 下一轮答辩信息（从后端获取的第一条数据）
     nextDefense: {
       topic: '大数据如何处理海量数据',
       date: '2024-04-25'
     },
-    defenseRecords: [
-      {
-        id: '1',
-        topic: '大数据如何分布式处理有哪些方法？',
-        score: 82,
-        date: '2024-04-21',
-        feedback: '回答清晰，逻辑性强。建议加强对MapReduce原理的理解。'
-      },
-      {
-        id: '2',
-        topic: '生物技术对头发是否有提香功能？',
-        score: 91,
-        date: '2024-04-21',
-        feedback: '表现优秀，论述全面。对生物技术应用理解深入。'
-      },
-      {
-        id: '3',
-        topic: '大数据如何分布式处理有哪些方法？',
-        score: 88,
-        date: '2024-04-21',
-        feedback: '整体不错，建议在案例分析中更加详细。'
-      }
-    ],
+    // 所有答辩题目列表
+    defenseTopics: [],
+    // 控制所有答辩题目弹窗显示
+    showAllTopics: false,
+    // 控制题目描述弹窗显示
+    showTopicDescription: false,
+    // 当前显示的题目描述
+    currentTopicDescription: '',
+    
+    defenseRecords: [],
     previewRecords: [],
     selectedRecord: null,
     
@@ -69,21 +57,307 @@ Page({
     pages: 1,
     hasMore: true,
     refreshing: false,
-    loadingMore: false
+    loadingMore: false,
+    
+    // 添加答辩记录总数字段
+    defenseRecordsTotal: 0,
+    
+    // 添加回答详情字段
+    selectedAnswers: null
   },
 
   onLoad() {
     console.log('学生页面onLoad执行');
     this.loadUserInfo();
 
-    this.setData({
-      previewRecords: this.data.defenseRecords.slice(0, 2)
-    });
+    // 加载真实的答辩记录数据
+    this.loadDefenseRecords();
+    
+    // 加载答辩题目数据
+    this.loadDefenseTopics();
   },
 
   onShow() {
     console.log('学生页面onShow执行');
     this.loadUserInfo();
+  },
+
+  // 切换底部导航栏选项卡
+  switchTab(e) {
+    const tab = e.currentTarget.dataset.tab;
+    if (tab && tab !== this.data.activeTab) {
+      this.setData({
+        activeTab: tab
+      });
+    }
+  },
+
+  // 开始编辑个人信息
+  startEdit() {
+    this.setData({
+      isEditing: true,
+      editedUser: { ...this.data.user }
+    });
+  },
+
+  // 编辑姓名
+  onEditName(e) {
+    const name = e.detail.value;
+    this.setData({
+      'editedUser.name': name
+    });
+  },
+
+  // 编辑学号
+  onEditUserNumber(e) {
+    const userNumber = e.detail.value;
+    this.setData({
+      'editedUser.userNumber': userNumber
+    });
+  },
+
+  // 编辑手机号
+  onEditPhone(e) {
+    const phone = e.detail.value;
+    this.setData({
+      'editedUser.phone': phone
+    });
+  },
+
+  // 编辑邮箱
+  onEditEmail(e) {
+    const email = e.detail.value;
+    this.setData({
+      'editedUser.email': email
+    });
+  },
+
+  // 保存个人信息
+  saveProfile() {
+    const { editedUser, token } = this.data;
+    const config = require('../../utils/config.js');
+    
+    // 验证必填字段
+    if (!editedUser.name.trim()) {
+      wx.showToast({
+        title: '请输入姓名',
+        icon: 'none'
+      });
+      return;
+    }
+    
+    if (!editedUser.userNumber.trim()) {
+      wx.showToast({
+        title: '请输入学号',
+        icon: 'none'
+      });
+      return;
+    }
+    
+    // 调用后端接口更新用户信息
+    wx.request({
+      url: config.serverUrl + '/student/editUserInfo',
+      method: 'POST',
+      data: {
+        name: editedUser.name,
+        userNumber: editedUser.userNumber,
+        phone: editedUser.phone,
+        email: editedUser.email
+      },
+      header: {
+        'Authorization': 'Bearer ' + token
+      },
+      success: (res) => {
+        if (res.statusCode === 200 && res.data.code === 1) {
+          // 更新本地用户信息
+          const updatedUser = {
+            name: editedUser.name,
+            userNumber: editedUser.userNumber,
+            phone: editedUser.phone,
+            email: editedUser.email
+          };
+
+          this.setData({
+            user: updatedUser,
+            isEditing: false
+          });
+
+          // 更新本地存储的用户信息
+          const userInfo = wx.getStorageSync('userInfo') || {};
+          Object.assign(userInfo, updatedUser);
+          wx.setStorageSync('userInfo', userInfo);
+
+          wx.showToast({
+            title: '保存成功',
+            icon: 'success'
+          });
+        } else {
+          wx.showToast({
+            title: res.data.msg || '保存失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail: (err) => {
+        console.error('保存个人信息失败:', err);
+        wx.showToast({
+          title: '网络请求失败',
+          icon: 'error'
+        });
+      }
+    });
+  },
+
+  // 修改密码
+  changePassword() {
+    wx.navigateTo({
+      url: '/pages/forgetPassword/forgetPassword'
+    });
+  },
+
+  // 退出登录
+  logout() {
+    wx.showModal({
+      title: '确认退出',
+      content: '确定要退出登录吗？',
+      success: (res) => {
+        if (res.confirm) {
+          // 清除本地存储的用户信息和token
+          wx.removeStorageSync('token');
+          wx.removeStorageSync('userInfo');
+          
+          // 跳转到登录页面
+          wx.redirectTo({
+            url: '/pages/login/login'
+          });
+        }
+      }
+    });
+  },
+
+  // 加载答辩题目
+  loadDefenseTopics() {
+    const config = require('../../utils/config.js');
+    const token = this.data.token;
+    
+    wx.request({
+      url: config.serverUrl + '/student/getDefenseTopic',
+      method: 'GET',
+      header: {
+        'Authorization': 'Bearer ' + token
+      },
+      success: (res) => {
+        console.log('答辩题目接口响应:', res);
+        
+        if (res.statusCode === 200 && res.data.code === 1) {
+          const topics = res.data.data || [];
+          
+          // 更新所有答辩题目列表
+          this.setData({
+            defenseTopics: topics
+          });
+          
+          // 如果有题目，设置下一轮答辩为第一个（最新的）
+          if (topics.length > 0) {
+            const latestTopic = topics[0];
+            this.setData({
+              nextDefense: {
+                topic: latestTopic.topicName,
+                date: latestTopic.defenseTime
+              }
+            });
+          }
+        } else {
+          wx.showToast({
+            title: res.data.msg || '获取答辩题目失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail: (err) => {
+        console.error('获取答辩题目失败:', err);
+        wx.showToast({
+          title: '网络请求失败',
+          icon: 'error'
+        });
+      }
+    });
+  },
+
+  // 显示所有答辩题目弹窗
+  showAllTopicsModal() {
+    this.setData({
+      showAllTopics: true
+    });
+  },
+
+  // 关闭所有答辩题目弹窗
+  closeAllTopicsModal() {
+    this.setData({
+      showAllTopics: false
+    });
+  },
+
+  // 显示题目描述弹窗
+  showTopicDescription() {
+    // 从nextDefense中获取题目描述，如果有的话
+    const config = require('../../utils/config.js');
+    const token = this.data.token;
+    
+    // 先尝试从已加载的defenseTopics中找到对应的描述
+    const topics = this.data.defenseTopics;
+    if (topics.length > 0) {
+      const currentTopic = topics[0]; // 第一个就是最新的
+      this.setData({
+        currentTopicDescription: currentTopic.topicDescription || '暂无题目描述',
+        showTopicDescription: true
+      });
+    } else {
+      // 如果没有加载题目列表，重新获取
+      wx.request({
+        url: config.serverUrl + '/student/getDefenseTopic',
+        method: 'GET',
+        header: {
+          'Authorization': 'Bearer ' + token
+        },
+        success: (res) => {
+          if (res.statusCode === 200 && res.data.code === 1) {
+            const topics = res.data.data || [];
+            if (topics.length > 0) {
+              this.setData({
+                currentTopicDescription: topics[0].topicDescription || '暂无题目描述',
+                showTopicDescription: true
+              });
+            } else {
+              this.setData({
+                currentTopicDescription: '暂无题目描述',
+                showTopicDescription: true
+              });
+            }
+          } else {
+            this.setData({
+              currentTopicDescription: '获取题目描述失败',
+              showTopicDescription: true
+            });
+          }
+        },
+        fail: (err) => {
+          console.error('获取题目描述失败:', err);
+          this.setData({
+            currentTopicDescription: '网络请求失败',
+            showTopicDescription: true
+          });
+        }
+      });
+    }
+  },
+
+  // 关闭题目描述弹窗
+  closeTopicDescription() {
+    this.setData({
+      showTopicDescription: false,
+      currentTopicDescription: ''
+    });
   },
 
   loadUserInfo() {
@@ -135,10 +409,15 @@ Page({
   // 加载答辩记录
   loadDefenseRecords(isRefresh = false, specificPageNum = null) {
     const that = this;
-    const { pageNum, pageSize } = this.data;
+    const { pageNum, pageSize, user } = this.data;
     
     // 使用传入的页码或当前页码
     const pageNumToUse = isRefresh ? 1 : (specificPageNum || pageNum);
+    
+    // 如果不是刷新且没有更多数据，直接返回
+    if (!isRefresh && !this.data.hasMore) {
+      return;
+    }
     
     // 如果是刷新，重置页码
     if (isRefresh) {
@@ -161,11 +440,12 @@ Page({
     
     // 调用后端接口获取答辩记录
     wx.request({
-      url: config.serverUrl + '/student/defense/records', // 根据实际接口路径调整
+      url: config.serverUrl + '/student/DefenseRecords', // 使用实际的接口路径
       method: 'GET',
       data: {
         pageNum: pageNumToUse,
-        pageSize: pageSize
+        pageSize: pageSize,
+        userNumber: user.userNumber // 添加用户学号参数
       },
       header: {
         'Authorization': 'Bearer ' + this.data.token
@@ -174,9 +454,21 @@ Page({
         console.log('答辩记录接口响应:', res);
         
         if (res.statusCode === 200 && res.data.code === 1) {
-          const records = res.data.data.records || [];
+          // 后端返回的实际数据结构
+          const backendRecords = res.data.data.list || [];
           const totalPages = res.data.data.pages || 1;
           const currentPage = res.data.data.pageNum || 1;
+          const total = res.data.data.total || 0;
+          
+          // 转换后端数据格式为前端需要的格式
+          const records = backendRecords.map(record => ({
+            id: record.defenseRecordId ? record.defenseRecordId.toString() : null,
+            topic: record.topicName || '未设置题目',
+            score: record.score ? parseFloat(record.score) : 0,
+            date: record.defenseTime ? record.defenseTime.split(' ')[0] : '',
+            defenseTime: record.defenseTime || '',
+            feedback: record.score ? `AI评分：${Math.floor(parseFloat(record.score) * 0.9)}分。学生表现良好。` : '暂无评分'
+          }));
           
           let newRecords = [];
           if (isRefresh) {
@@ -193,6 +485,7 @@ Page({
             previewRecords: newRecords.slice(0, 3), // 首页只显示前3条
             pageNum: currentPage,
             pages: totalPages,
+            defenseRecordsTotal: total,
             hasMore: currentPage < totalPages,
             refreshing: false,
             loadingMore: false
@@ -243,23 +536,278 @@ Page({
     }
   },
 
-  switchTab(e) {
-    const tab = e.currentTarget.dataset.tab;
-    if (tab) {
-      this.setData({ activeTab: tab });
-    }
+  // 加载答辩详情
+  loadDefenseDetail(defenseId) {
+    const that = this;
+    
+    wx.showLoading({
+      title: '加载详情中...'
+    });
+    
+    wx.request({
+      url: config.serverUrl + '/student/DefenseDetailRecords',
+      method: 'GET',
+      data: {
+        defenseRecordId: defenseId
+      },
+      header: {
+        'Authorization': 'Bearer ' + this.data.token
+      },
+      success(res) {
+        console.log('答辩详情接口响应:', res);
+        
+        if (res.statusCode === 200 && res.data.code === 1) {
+          const detailData = res.data.data;
+          
+          // 转换后端数据格式为前端需要的格式
+          const selectedRecord = {
+            id: detailData.defenseId,
+            topic: detailData.topicName || '未设置题目',
+            date: detailData.defenseTime ? detailData.defenseTime.split(' ')[0] : '',
+            defenseTime: detailData.defenseTime || '',
+            score: detailData.score ? parseFloat(detailData.score) : 0,
+            studentName: detailData.studentName || '',
+            studentNumber: detailData.studentNumber || '',
+            defenseVideoUrl: detailData.defenseVideoUrl || '',
+            defenseReportUrl: detailData.defenseReportUrl || '',
+            aiVideoAnalysis: detailData.aiVideoAnalysis || '暂无视频分析',
+            aiReportAnalysis: detailData.aiReportAnalysis || '暂无报告分析',
+            aiAllAnalysis: detailData.aiAllAnalysis || '暂无综合评价',
+            feedback: detailData.aiAllAnalysis || '暂无综合评价'
+          };
+          
+          that.setData({
+            selectedRecord: selectedRecord
+          });
+        } else {
+          wx.showToast({
+            title: res.data.msg || '加载详情失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail(err) {
+        console.error('请求失败:', err);
+        wx.showToast({
+          title: '网络请求失败',
+          icon: 'error'
+        });
+      },
+      complete() {
+        wx.hideLoading();
+      }
+    });
   },
 
   openRecord(e) {
     const recordId = e.currentTarget.dataset.id;
-    const record = this.data.defenseRecords.find(item => item.id === recordId);
-    if (record) {
-      this.setData({ selectedRecord: record });
+    // 直接使用recordId调用详情接口
+    if (recordId) {
+      this.loadDefenseDetail(recordId);
     }
+  },
+
+  // 打开答辩视频
+  openVideo() {
+    const videoUrl = this.data.selectedRecord.defenseVideoUrl;
+    if (!videoUrl || videoUrl === 'abc') {
+      wx.showToast({
+        title: '视频地址无效',
+        icon: 'error'
+      });
+      return;
+    }
+    
+    wx.showLoading({
+      title: '正在加载视频...'
+    });
+    
+    wx.downloadFile({
+      url: videoUrl,
+      success: (res) => {
+        if (res.statusCode === 200) {
+          wx.openDocument({
+            filePath: res.tempFilePath,
+            fileType: 'video',
+            success: (openRes) => {
+              console.log('视频打开成功', openRes);
+            },
+            fail: (openErr) => {
+              console.error('视频打开失败', openErr);
+              wx.showToast({
+                title: '视频打开失败，请重试',
+                icon: 'error'
+              });
+            },
+            complete: () => {
+              wx.hideLoading();
+            }
+          });
+        } else {
+          wx.hideLoading();
+          wx.showToast({
+            title: '视频下载失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail: (downloadErr) => {
+        console.error('视频下载失败:', downloadErr);
+        wx.hideLoading();
+        wx.showToast({
+          title: '视频加载失败，请检查网络',
+          icon: 'error'
+        });
+      }
+    });
+  },
+
+  // 打开答辩报告
+  openReport() {
+    const reportUrl = this.data.selectedRecord.defenseReportUrl;
+    if (!reportUrl || reportUrl === 'abc') {
+      wx.showToast({
+        title: '报告地址无效',
+        icon: 'error'
+      });
+      return;
+    }
+    
+    wx.showLoading({
+      title: '正在加载报告...'
+    });
+    
+    wx.downloadFile({
+      url: reportUrl,
+      success: (res) => {
+        if (res.statusCode === 200) {
+          // 根据文件扩展名确定文件类型
+          const filePath = res.tempFilePath;
+          let fileType = 'doc'; // 默认为Word文档
+          
+          if (filePath.endsWith('.pdf')) {
+            fileType = 'pdf';
+          } else if (filePath.endsWith('.doc') || filePath.endsWith('.docx')) {
+            fileType = 'doc';
+          } else if (filePath.endsWith('.xls') || filePath.endsWith('.xlsx')) {
+            fileType = 'xls';
+          } else if (filePath.endsWith('.ppt') || filePath.endsWith('.pptx')) {
+            fileType = 'ppt';
+          }
+          
+          wx.openDocument({
+            filePath: filePath,
+            fileType: fileType,
+            success: (openRes) => {
+              console.log('报告打开成功', openRes);
+            },
+            fail: (openErr) => {
+              console.error('报告打开失败', openErr);
+              wx.showToast({
+                title: '报告打开失败，请重试',
+                icon: 'error'
+              });
+            },
+            complete: () => {
+              wx.hideLoading();
+            }
+          });
+        } else {
+          wx.hideLoading();
+          wx.showToast({
+            title: '报告下载失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail: (downloadErr) => {
+        console.error('报告下载失败:', downloadErr);
+        wx.hideLoading();
+        wx.showToast({
+          title: '报告加载失败，请检查网络',
+          icon: 'error'
+        });
+      }
+    });
   },
 
   closeRecord() {
     this.setData({ selectedRecord: null });
+  },
+
+  // 打开回答详情
+  openAnswerDetail(e) {
+    const defenseId = e.currentTarget.dataset.id;
+    if (!defenseId) {
+      wx.showToast({
+        title: '无效的答辩ID',
+        icon: 'error'
+      });
+      return;
+    }
+    
+    const that = this;
+    wx.showLoading({
+      title: '加载回答详情...'
+    });
+    
+    wx.request({
+      url: config.serverUrl + '/student/questions/' + defenseId,
+      method: 'GET',
+      header: {
+        'Authorization': 'Bearer ' + this.data.token
+      },
+      success(res) {
+        console.log('回答详情接口响应:', res);
+        
+        if (res.statusCode === 200 && res.data.code === 1) {
+          const answers = res.data.data || [];
+          
+          // 处理数据格式，添加前端需要的字段
+          const processedAnswers = answers.map(answer => {
+            // 根据questionType设置显示标签和样式类
+            let questionTypeLabel = '教师提问';
+            let questionTypeClass = 'teacher';
+            
+            if (answer.questionType === 'ai') {
+              questionTypeLabel = 'AI提问';
+              questionTypeClass = 'ai';
+            }
+            
+            return {
+              ...answer,
+              questionTypeLabel: questionTypeLabel,
+              questionTypeClass: questionTypeClass,
+              answerId: answer.answerId // 用于wx:key
+            };
+          });
+          
+          that.setData({
+            selectedAnswers: processedAnswers
+          });
+        } else {
+          wx.showToast({
+            title: res.data.msg || '加载回答详情失败',
+            icon: 'error'
+          });
+        }
+      },
+      fail(err) {
+        console.error('请求失败:', err);
+        wx.showToast({
+          title: '网络请求失败',
+          icon: 'error'
+        });
+      },
+      complete() {
+        wx.hideLoading();
+      }
+    });
+  },
+
+  // 关闭回答详情
+  closeAnswers() {
+    this.setData({ selectedAnswers: null });
   },
 
   startEdit() {
@@ -384,9 +932,15 @@ Page({
     
     // 检查是否正在上传
     if (this.data.isUploading) {
-      wx.showToast({
-        title: '正在上传中，请稍候',
-        icon: 'none'
+      wx.showModal({
+        title: '确认取消',
+        content: '当前有上传任务正在进行，是否要取消并重新选择？',
+        success: function(res) {
+          if (res.confirm) {
+            that.cancelUpload();
+            setTimeout(() => that.selectVideo(), 100);
+          }
+        }
       });
       return;
     }
@@ -478,6 +1032,19 @@ Page({
     });
   },
 
+  // 格式化文件大小
+  formatFileSize(size) {
+    if (size < 1024) {
+      return size + ' B';
+    } else if (size < 1024 * 1024) {
+      return (size / 1024).toFixed(2) + ' KB';
+    } else if (size < 1024 * 1024 * 1024) {
+      return (size / (1024 * 1024)).toFixed(2) + ' MB';
+    } else {
+      return (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+  },
+
   // 开始上传流程
   startUpload(videoPath, fileName, fileSize) {
     const that = this;
@@ -488,6 +1055,7 @@ Page({
         uploadStatus: 'init',
         currentFileName: fileName,
         currentFileSize: fileSize,
+        currentFileSizeReadable: this.formatFileSize(fileSize),
         uploadProgress: 0,
         currentChunkIndex: 0
     });
@@ -617,7 +1185,8 @@ Page({
       method: 'POST',
       data: {
         uploadId: uploadId,
-        fileName: fileName
+        fileName: fileName,
+        userId: this.data.user.userNumber
       },
       header: {
         'Authorization': 'Bearer ' + this.data.token,
@@ -626,16 +1195,25 @@ Page({
       success: function(res) {
         console.log('完成上传响应:', res);
         
-        if (res.statusCode === 200) {
-          // 上传成功
+        if (res.statusCode === 200 && res.data.code === 1) {
+          // 上传成功，但视频仍在后台处理
           that.setData({
             uploadStatus: 'completed',
-            isUploading: false
+            isUploading: false,
+            currentProcessingId: res.data.data.processingId // 如果后端返回处理ID
           });
           
           wx.showToast({
             title: '上传成功！',
             icon: 'success'
+          });
+          
+          // 提示用户视频正在后台处理
+          wx.showModal({
+            title: '上传完成',
+            content: '视频已上传成功，正在后台进行转码和AI分析处理，请稍后查看处理结果。',
+            showCancel: false,
+            confirmText: '确定'
           });
           
         } else {
@@ -659,6 +1237,61 @@ Page({
         }
         that.handleUploadError(errorMsg);
       }
+    });
+  },
+
+  // 取消上传
+  cancelUpload() {
+    const that = this;
+    const { currentUploadId, currentFileName } = this.data;
+    
+    if (currentUploadId && currentFileName) {
+      wx.request({
+        url: config.serverUrl + '/api/video/abort',
+        method: 'POST',
+        data: {
+          uploadId: currentUploadId,
+          fileName: currentFileName
+        },
+        header: {
+          'Authorization': 'Bearer ' + this.data.token,
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        success: function(res) {
+          console.log('取消上传成功:', res);
+          that.resetUploadState();
+          wx.showToast({
+            title: '已取消上传',
+            icon: 'none'
+          });
+        },
+        fail: function(err) {
+          console.error('取消上传失败:', err);
+          that.resetUploadState();
+          wx.showToast({
+            title: '取消上传失败',
+            icon: 'error'
+          });
+        }
+      });
+    } else {
+      this.resetUploadState();
+    }
+  },
+
+  // 重置上传状态
+  resetUploadState() {
+    this.setData({
+      isUploading: false,
+      uploadStatus: 'idle',
+      uploadProgress: 0,
+      currentChunkIndex: 0,
+      currentUploadId: '',
+      currentFileName: '',
+      currentFileSize: 0,
+      currentFileSizeReadable: '',
+      currentTotalChunks: 0,
+      currentProcessingId: ''
     });
   },
 

@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Controller.student;
 
 import cn.hutool.core.util.IdUtil;
 import com.ai_helper.ai_helper.result.Result;
+import com.ai_helper.ai_helper.Service.VideoProcessingService;
 import com.ai_helper.ai_helper.util.OssRedisUploadUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +18,7 @@ import java.util.Map;
 public class VideoUploadController {
 
     private final OssRedisUploadUtil ossRedisUploadUtil;
+    private final VideoProcessingService videoProcessingService;
 
     /**
      * 1. 初始化上传
@@ -49,15 +51,25 @@ public class VideoUploadController {
     }
 
     /**
-     * 3. 完成上传（合并）
+     * 3. 完成上传 (合并)
      */
     @PostMapping("/complete")
-    public String complete(
+    public Result<Map<String, String>> complete(
             @RequestParam String uploadId,
-            @RequestParam String fileName
+            @RequestParam String fileName,
+            @RequestParam String userId,
+            @RequestParam(required = false) Long recordId
     ) {
-        String url = ossRedisUploadUtil.completeMultipartUpload(fileName, uploadId);
-        return "上传成功！视频地址：" + url;
+        String url = ossRedisUploadUtil.completeMultipartUpload(fileName, uploadId, userId);
+        
+        // 启动异步视频处理
+        videoProcessingService.processVideoAsync(url, userId, recordId);
+        
+        Map<String, String> result = new HashMap<>();
+        result.put("videoUrl", url);
+        result.put("message", "上传成功！视频正在后台处理中...");
+        
+        return Result.success(result);
     }
 
     /**
@@ -70,5 +82,14 @@ public class VideoUploadController {
     ) {
         ossRedisUploadUtil.abortUpload(fileName, uploadId);
         return "已取消上传";
+    }
+    
+    /**
+     * 5. 获取视频处理状态
+     */
+    @GetMapping("/processing-status")
+    public Result<String> getProcessingStatus(@RequestParam String processingId) {
+        String status = videoProcessingService.getProcessingStatus(processingId);
+        return Result.success(status);
     }
 }

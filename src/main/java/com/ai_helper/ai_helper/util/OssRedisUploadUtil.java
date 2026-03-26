@@ -1,7 +1,9 @@
 package com.ai_helper.ai_helper.util;
 
+import com.ai_helper.ai_helper.Service.VideoUploadService;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.model.*;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -37,6 +39,10 @@ public class OssRedisUploadUtil {
 
     // Redis 存储前缀
     private static final String UPLOAD_PREFIX = "oss:upload:";
+
+
+    @Resource
+    private VideoUploadService videoUploadService;
 
     /**
      * 初始化分片上传
@@ -105,7 +111,7 @@ public class OssRedisUploadUtil {
     /**
      * 完成上传 + 合并 + 删除 Redis
      */
-    public String completeMultipartUpload(String fileName, String uploadId) {
+    public String completeMultipartUpload(String fileName, String uploadId, String userId) {
         String key = fileDir + fileName;
         List<PartETag> partETags = getPartETags(uploadId);
 
@@ -118,10 +124,14 @@ public class OssRedisUploadUtil {
         );
 
         ossClient.completeMultipartUpload(request);
-        // 上传完成删除 Redis
-        redisTemplate.delete(UPLOAD_PREFIX + uploadId);
         
-        return "https://" + bucketName + "." + endpoint.replaceFirst("^https?://", "") + "/" + key;
+        String url = "https://" + bucketName + "." + endpoint.replaceFirst("^https?://", "") + "/" + key;
+        
+        videoUploadService.saveVideoUrl(url,userId);
+        
+        redisTemplate.delete(UPLOAD_PREFIX + uploadId);
+
+        return url;
     }
 
     /**
