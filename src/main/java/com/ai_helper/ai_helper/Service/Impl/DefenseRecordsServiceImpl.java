@@ -4,6 +4,7 @@ import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
+import com.ai_helper.ai_helper.pojo.query.TextQuery;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -81,6 +82,13 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             return Result.error("暂无答辩题目");
         }
         return Result.success(list);
+    }
+
+    @Override
+    public TextQuery getDefenseWordsRecords(Integer topicId) {
+
+        return defenseRecordsMapper.getDetailWordsRecords(topicId);
+
     }
 
 

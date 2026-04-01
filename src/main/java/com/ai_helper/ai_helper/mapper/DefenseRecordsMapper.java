@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.mapper;
 
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
+import com.ai_helper.ai_helper.pojo.query.TextQuery;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -23,7 +24,19 @@ public interface DefenseRecordsMapper {
 
     List<DefenseRecordsVo> getStudentDefenseRecords(String userNumber);
 
-    void insertVideoUrl(@Param("userId") String userId, @Param("url")  String url);
+    void insertVideoUrl(@Param("userId") String userId,@Param("topicId") Long topicId, @Param("videoUrl")  String videoUrl);
 
     List<DefenseTopics> getDefenseTopic();
+
+    int selectByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
+
+    void updateVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId,@Param("videoUrl") String videoUrl);
+
+    void updateVideoUrlById(@Param("recordId") Long recordId,@Param("videoUrl") String videoUrl);
+
+    String getUserIdByUserNumber(String userNumber);
+
+    String getVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
+
+    TextQuery getDetailWordsRecords(Integer topicId);
 }

@@ -4,8 +4,8 @@ const config = {
   // 请将此IP地址修改为你开发机器的实际IP地址
   // 在Windows命令行中运行 ipconfig 查看IPv4地址
   // 在Mac/Linux终端中运行 ifconfig 或 ip addr 查看IP地址
-  serverUrl: 'http://10.77.7.152:8080',
-  
+  serverUrl: 'http://localhost:8080',
+  //'http://10.77.7.152:8080'
   // 本地开发服务器地址（开发者工具调试时使用）
   localServerUrl: 'http://localhost:8080',
   

@@ -14,8 +14,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     private DefenseRecordsMapper defenseRecordsMapper;
     
     @Override
-    public void saveVideoUrl(String url, String userId) {
-        log.info("保存视频 URL 到数据库，userId: {}, url: {}", userId, url);
-        defenseRecordsMapper.insertVideoUrl(userId, url);
+    public void saveVideoUrl(String url, String userId, Long topicId) {
+        log.info("保存视频 URL 到数据库，userId: {}, topicId: {}, url: {}", userId, topicId, url);
+        defenseRecordsMapper.insertVideoUrl(userId, topicId, url);
     }
 }

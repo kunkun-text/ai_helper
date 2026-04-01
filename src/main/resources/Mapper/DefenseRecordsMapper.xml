@@ -4,6 +4,21 @@
 
 <mapper namespace="com.ai_helper.ai_helper.mapper.DefenseRecordsMapper">
 
+    <update id="updateVideoUrlByUserIdAndTopicId">
+        update defense_records
+        set video_url = #{videoUrl},
+            updated_at = now()
+        where user_id = #{userId}
+          and topic_id = #{topicId}
+    </update>
+
+    <update id="updateVideoUrlById">
+        update defense_records
+        set video_url = #{videoUrl},
+            updated_at = now()
+        where defense_id = #{recordId}
+    </update>
+
     <select id="getDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
         SELECT
             dr.defense_id as defenseRecordId,
@@ -84,14 +99,32 @@
             defense_topics
         order by defense_time DESC
     </select>
+    <select id="selectByUserIdAndTopicId" resultType="java.lang.Integer">
+        select count(dr.defense_id)
+        from defense_records dr
+        where dr.user_id = #{userId}
+          and dr.topic_id = #{topicId}
+    </select>
+    <select id="getUserIdByUserNumber" resultType="java.lang.String">
+        select user_id as userId
+        from users
+        where user_number = #{userNumber}
+    </select>
+    <select id="getVideoUrlByUserIdAndTopicId" resultType="java.lang.String">
+        SELECT video_url FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+            LIMIT 1
+    </select>
+    <select id="getDetailWordsRecords" resultType="com.ai_helper.ai_helper.pojo.query.TextQuery">
+        select video_ppt_words, video_words
+        from defense_records
+        where topic_id = #{topicId}
+    </select>
 
 
     <insert id="insertVideoUrl">
-        INSERT INTO defense_records (user_id, video_url, created_at)
-        SELECT u.user_id, #{url}, NOW()
-        FROM users u
-        WHERE u.user_number = #{userId}
-        LIMIT 1
+        INSERT INTO defense_records (user_id, video_url, topic_id, created_at)
+        values (#{userId},#{videoUrl}, #{topicId}, NOW())
     </insert>
 
 </mapper>

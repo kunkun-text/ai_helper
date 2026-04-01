@@ -3,6 +3,7 @@ package com.ai_helper.ai_helper.Service.Impl;
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
 import com.ai_helper.ai_helper.mapper.DefenseTopicsMapper;
 import com.ai_helper.ai_helper.pojo.dto.EditDefenseDto;
+import com.ai_helper.ai_helper.pojo.dto.TopicDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.result.PageResult;
@@ -164,6 +165,21 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
         return result > 0 ?
                 Result.success("删除成功") :
                 Result.error("删除失败");
+    }
+
+    @Override
+    public Result<Object> getTopicById(Integer topicId) {
+        try {
+            TopicDto topic = defenseTopicsMapper.getTopicById(topicId);
+            if (topic != null) {
+                return Result.success(topic);
+            } else {
+                return Result.error("未找到该答辩主题");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("查询失败：" + e.getMessage());
+        }
     }
 
 }

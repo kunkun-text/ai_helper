@@ -37,7 +37,11 @@
         <view class="upload-box">
           <view class="upload-icon">视频</view>
           <text class="muted">上传答辩视频</text>
-          <button class="outline-btn" bindtap="selectVideo" disabled="{{isUploading}}">选择视频，开始上传</button>
+          
+          <!-- 根据是否已上传显示不同按钮文本 -->
+          <button class="outline-btn" bindtap="selectVideo" disabled="{{isUploading}}">
+            {{hasUploadedVideo ? '重新上传视频' : '选择视频，开始上传'}}
+          </button>
           
           <!-- 文件信息显示 -->
           <view wx:if="{{currentFileSizeReadable}}" class="file-info">
@@ -352,12 +356,12 @@
         <block wx:for="{{defenseTopics}}" wx:key="topicId">
           <view class="form-item">
             <view class="form-header">
-              <text class="label">题目 {{index + 1}}</text>
+              <text class="label">答辩题目 {{index + 1}}</text>
               <text class="muted" style="font-size: 24rpx; margin-left: 8rpx;">{{item.defenseTime}}</text>
             </view>
             <text class="value" style="font-weight: bold; font-size: 32rpx; margin-top: 12rpx; color: #333;">{{item.topicName}}</text>
             <view style="margin-top: 16rpx;">
-              <text class="label" style="font-size: 24rpx; color: #666;">题目描述：</text>
+              <text class="label" style="font-size: 24rpx; color: #666;">答辩题目描述：</text>
               <text class="value" style="font-size: 28rpx; margin-top: 8rpx; line-height: 1.5; color: #555;">{{item.topicDescription || '暂无描述'}}</text>
             </view>
           </view>

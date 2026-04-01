@@ -63,7 +63,10 @@ Page({
     defenseRecordsTotal: 0,
     
     // 添加回答详情字段
-    selectedAnswers: null
+    selectedAnswers: null,
+    
+    // 添加视频上传状态
+    hasUploadedVideo: false
   },
 
   onLoad() {
@@ -235,6 +238,45 @@ Page({
     });
   },
 
+  // 更新视频上传状态
+  updateVideoUploadStatus() {
+    let hasUploadedVideo = false;
+    
+    // 检查是否有答辩题目和答辩记录
+    if (this.data.defenseTopics && this.data.defenseTopics.length > 0 && 
+        this.data.defenseRecords && this.data.defenseRecords.length > 0) {
+      
+      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+      
+      console.log('检查视频上传状态:');
+      console.log('currentTopicId:', currentTopicId);
+      console.log('defenseTopics[0]:', this.data.defenseTopics[0]);
+      console.log('defenseRecords:', this.data.defenseRecords);
+      
+      // 检查答辩记录中是否有对应当前题目的有效视频
+      const existingRecord = this.data.defenseRecords.find(record => {
+        // 根据实际的数据结构判断，这里假设record有topicId字段
+        // 如果没有topicId，可能需要通过其他方式匹配
+        const recordTopicId = record.topicId || record.id; // 尝试不同的字段名
+        const hasValidVideo = record.defenseVideoUrl && 
+                             record.defenseVideoUrl !== 'abc' && 
+                             record.defenseVideoUrl.trim() !== '';
+        console.log('检查记录:', record, 'recordTopicId:', recordTopicId, 'hasValidVideo:', hasValidVideo);
+        return recordTopicId === currentTopicId && hasValidVideo;
+      });
+      
+      hasUploadedVideo = !!existingRecord;
+      console.log('hasUploadedVideo:', hasUploadedVideo, 'existingRecord:', existingRecord);
+    } else {
+      console.log('缺少必要数据: defenseTopics长度:', this.data.defenseTopics?.length, 
+                  'defenseRecords长度:', this.data.defenseRecords?.length);
+    }
+    
+    this.setData({
+      hasUploadedVideo: hasUploadedVideo
+    });
+  },
+  
   // 加载答辩题目
   loadDefenseTopics() {
     const config = require('../../utils/config.js');
@@ -280,6 +322,10 @@ Page({
           title: '网络请求失败',
           icon: 'error'
         });
+      },
+      complete: () => {
+        // 更新视频上传状态
+        this.updateVideoUploadStatus();
       }
     });
   },
@@ -490,6 +536,9 @@ Page({
             refreshing: false,
             loadingMore: false
           });
+          
+          // 更新视频上传状态
+          that.updateVideoUploadStatus();
         } else {
           wx.showToast({
             title: res.data.msg || '加载失败',
@@ -945,6 +994,44 @@ Page({
       return;
     }
 
+    // 检查是否已经上传过视频（基于当前答辩题目）
+    let hasExistingVideo = false;
+    if (this.data.defenseRecords && this.data.defenseTopics.length > 0) {
+      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+      // 检查答辩记录中是否有对应当前题目的视频
+      const existingRecord = this.data.defenseRecords.find(record => {
+        // 这里需要根据实际的数据结构来判断
+        // 假设defenseRecords中的每个记录都有topicId字段
+        return record.topicId === currentTopicId && record.defenseVideoUrl && record.defenseVideoUrl !== 'abc';
+      });
+      hasExistingVideo = !!existingRecord;
+    }
+
+    // 如果已经上传过视频，显示重新上传确认
+    if (hasExistingVideo) {
+      wx.showModal({
+        title: '重新上传确认',
+        content: '您已经为当前答辩题目上传过视频，是否要重新上传？这将替换原有的视频。',
+        showCancel: true,
+        cancelText: '取消',
+        confirmText: '重新上传',
+        success: function(res) {
+          if (res.confirm) {
+            // 继续选择视频
+            that.proceedWithVideoSelection();
+          }
+        }
+      });
+    } else {
+      // 直接选择视频
+      that.proceedWithVideoSelection();
+    }
+  },
+
+  // 实际的视频选择逻辑
+  proceedWithVideoSelection() {
+    const that = this;
+    
     // 使用 chooseMedia 替代 chooseVideo（推荐的新API）
     wx.chooseMedia({
       count: 1, // 只能选择一个视频
@@ -1014,7 +1101,7 @@ Page({
                     console.log('用户已授权:', settingRes.authSetting);
                     if (settingRes.authSetting['scope.writePhotosAlbum'] || 
                         settingRes.authSetting['scope.camera']) {
-                      that.selectVideo();
+                      that.proceedWithVideoSelection();
                     }
                   }
                 });
@@ -1180,13 +1267,26 @@ Page({
       uploadProgress: 100
     });
 
+    // 获取当前答辩题目的topicId
+    let topicId = null;
+    if (this.data.defenseTopics && this.data.defenseTopics.length > 0) {
+      topicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+    }
+    
+    // 添加调试日志
+    console.log('准备上传视频，参数信息:');
+    console.log('userId:', this.data.user.userNumber);
+    console.log('topicId:', topicId);
+    console.log('defenseTopics[0]:', this.data.defenseTopics[0]);
+    
     wx.request({
       url: config.serverUrl + '/api/video/complete',
       method: 'POST',
       data: {
         uploadId: uploadId,
         fileName: fileName,
-        userId: this.data.user.userNumber
+        userId: this.data.user.userNumber,
+        topicId: topicId // 添加topicId参数
       },
       header: {
         'Authorization': 'Bearer ' + this.data.token,
@@ -1207,6 +1307,11 @@ Page({
             title: '上传成功！',
             icon: 'success'
           });
+          
+          // 更新视频上传状态（稍后更新，因为数据库可能还未完成）
+          setTimeout(() => {
+            that.updateVideoUploadStatus();
+          }, 3000);
           
           // 提示用户视频正在后台处理
           wx.showModal({

@@ -111,7 +111,7 @@ public class OssRedisUploadUtil {
     /**
      * 完成上传 + 合并 + 删除 Redis
      */
-    public String completeMultipartUpload(String fileName, String uploadId, String userId) {
+    public String completeMultipartUpload(String fileName, String uploadId, String userId, Long topicId) {
         String key = fileDir + fileName;
         List<PartETag> partETags = getPartETags(uploadId);
 
@@ -126,8 +126,6 @@ public class OssRedisUploadUtil {
         ossClient.completeMultipartUpload(request);
         
         String url = "https://" + bucketName + "." + endpoint.replaceFirst("^https?://", "") + "/" + key;
-        
-        videoUploadService.saveVideoUrl(url,userId);
         
         redisTemplate.delete(UPLOAD_PREFIX + uploadId);
 

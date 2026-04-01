@@ -58,12 +58,12 @@ public class VideoUploadController {
             @RequestParam String uploadId,
             @RequestParam String fileName,
             @RequestParam String userId,
-            @RequestParam(required = false) Long recordId
+            @RequestParam(required = false) Long topicId
     ) {
-        String url = ossRedisUploadUtil.completeMultipartUpload(fileName, uploadId, userId);
+        String url = ossRedisUploadUtil.completeMultipartUpload(fileName, uploadId, userId, topicId);
         
-        // 启动异步视频处理
-        videoProcessingService.processVideoAsync(url, userId, recordId);
+        // 启动异步视频处理，传递 topicId
+        videoProcessingService.processVideoAsync(url, userId, null, topicId);
         
         Map<String, String> result = new HashMap<>();
         result.put("videoUrl", url);

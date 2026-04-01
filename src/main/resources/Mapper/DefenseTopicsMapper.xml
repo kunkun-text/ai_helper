@@ -39,4 +39,11 @@
     <select id="getDefenseQuestionById" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseQuestions">
         Select question_id, question, standard_answer from defense_questions where topic_id = #{topicId}
     </select>
+    <select id="getTopicById" resultType="com.ai_helper.ai_helper.pojo.dto.TopicDto">
+        select
+            topic_name as topicName,
+            topic_description as topicDescription
+        from defense_topics
+        where topic_id = #{topicId}
+    </select>
 </mapper>

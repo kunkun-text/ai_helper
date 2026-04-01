@@ -17,4 +17,6 @@ public interface DefenseTopicsService {
     Result<Object> getDefenseQuestionById(Integer topicId);
 
     Result<Object> deleteDefenseTopics(Integer topicId);
+
+    Result<Object> getTopicById(Integer topicId);
 }

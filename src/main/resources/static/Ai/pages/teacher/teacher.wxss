@@ -665,52 +665,59 @@
   right: 0;
   top: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 99;
+  z-index: 999;
 }
 
 .modal-card {
   width: 86%;
   background: #ffffff;
-  border-radius: 20rpx;
-  padding: 24rpx;
-  max-height: 90vh; /* 增加最大高度从80vh到90vh */
+  border-radius: 24rpx;
+  padding: 0;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* 防止内部内容溢出 */
+  overflow: hidden;
+  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.15);
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16rpx;
+  margin-bottom: 0;
+  padding: 28rpx 28rpx 20rpx;
+  background: #ffffff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 2rpx solid #f0f0f0;
 }
 
 .modal-title {
-  font-size: 30rpx;
-  font-weight: 600;
+  font-size: 32rpx;
+  font-weight: 700;
   color: #333333;
-  flex: 1; /* 让标题占据剩余空间 */
+  flex: 1;
 }
 
 .modal-close {
-  font-size: 32rpx;
-  color: #999999;
-  margin-left: 20rpx; /* 添加左边距，与标题分开 */
-  width: 40rpx; /* 设定固定宽度 */
-  text-align: center; /* 居中对齐文字 */
+  font-size: 36rpx;
+  color: #888888;
+  margin-left: 20rpx;
+  width: 40rpx;
+  text-align: center;
+  font-weight: 300;
 }
 
 .modal-body {
   flex: 1;
-  overflow-y: auto; /* 允许内容滚动 */
-  max-height: 70vh; /* 相应增加内容区域的最大高度 */
-  padding-right: 8rpx; /* 为滚动条留出空间 */
-  padding: 10rpx 0; /* 添加内边距以提供更多空间 */
+  overflow-y: auto;
+  max-height: calc(90vh - 120rpx);
+  padding: 20rpx 28rpx 28rpx;
 }
 
 /* 滚动条样式 */

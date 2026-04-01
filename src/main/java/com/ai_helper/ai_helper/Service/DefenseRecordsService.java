@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Service;
 
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
+import com.ai_helper.ai_helper.pojo.query.TextQuery;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -28,4 +29,6 @@ public interface DefenseRecordsService {
     Result<PageInfo<DefenseRecordsVo>> getStudentDefenseRecords(int pageNum, int pageSize, String userNumber);
 
     Result<List<DefenseTopics>> getDefenseTopic();
+
+    TextQuery getDefenseWordsRecords(Integer topicId);
 }

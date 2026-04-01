@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.mapper;
 
+import com.ai_helper.ai_helper.pojo.dto.TopicDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import org.apache.ibatis.annotations.Mapper;
@@ -32,4 +33,6 @@ public interface DefenseTopicsMapper {
     List<DefenseQuestions> getDefenseQuestionById(Integer topicId);
 
     int deleteDefenseTopics(Integer topicId);
+
+    TopicDto getTopicById(Integer topicId);
 }
