@@ -114,18 +114,31 @@ public class chatController {
         
         completePrompt.append(fullPrompt);
         
+        StringBuilder aiResponseBuilder = new StringBuilder();
+        
         Flux<String> response = chatClient.prompt()
                 .user(completePrompt.toString())
                 .stream()
-                .content();
+                .content()
+                .doOnNext(chunk -> {
+                    aiResponseBuilder.append(chunk);
+                });
         
-        return response.doFinally(signalType -> {
-            if (userInput != null && !userInput.trim().isEmpty()) {
-                try {
-                    chatMemory.add(sessionId, List.of(new UserMessage(userInput)));
-                } catch (Exception e) {
-                    log.error("存储用户消息失败 - sessionId: {}, error: {}", sessionId, e.getMessage());
+        return response.doOnComplete(() -> {
+            try {
+                String aiResponse = aiResponseBuilder.toString();
+                
+                if (userInput != null && !userInput.trim().isEmpty()) {
+                    chatMemory.add(sessionId, List.of(
+                        new UserMessage(userInput),
+                        new AssistantMessage(aiResponse)
+                    ));
                 }
+                
+                log.info("会话记忆已更新 - sessionId: {}, 用户消息长度：{}, AI 回复长度：{}", 
+                        sessionId, userInput != null ? userInput.length() : 0, aiResponse.length());
+            } catch (Exception e) {
+                log.error("存储会话记忆失败 - sessionId: {}, error: {}", sessionId, e.getMessage(), e);
             }
         });
     }
