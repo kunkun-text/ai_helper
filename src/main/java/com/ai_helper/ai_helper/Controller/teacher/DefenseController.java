@@ -2,11 +2,14 @@ package com.ai_helper.ai_helper.Controller.teacher;
 
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
 import com.ai_helper.ai_helper.pojo.dto.EditDefenseDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.result.PageResult;
 import com.ai_helper.ai_helper.result.Result;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 
 @RestController
@@ -34,7 +37,7 @@ public class DefenseController {
     }
 
     @GetMapping("/getDefenseQuestionById")
-    public Result<Object> getDefenseQuestionById(@RequestParam Integer topicId) {
+    public Result<List<DefenseQuestions>> getDefenseQuestionById(@RequestParam Integer topicId) {
         return defenseTopicsService.getDefenseQuestionById(topicId);
     }
 

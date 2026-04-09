@@ -11,7 +11,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  box-shadow: 0 2rpx 8rpx rgba(13, 1, 1, 0.1);
 }
 
 .header-title {
@@ -27,7 +32,7 @@
 
 .content {
   flex: 1;
-  padding: 24rpx 24rpx 140rpx;
+  padding: 140rpx 24rpx 140rpx;
   box-sizing: border-box;
 }
 
@@ -126,6 +131,14 @@
   color: #333333;
   margin-top: 10rpx;
   display: block;
+  background: #f7f9fb;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  width: 100%;
+  box-sizing: border-box;
+  word-break: break-word; /* 确保长单词能正确换行 */
+  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
+  max-width: 650rpx; /* 限制最大宽度，防止超出弹窗容器 */
 }
 
 .row {
@@ -523,7 +536,7 @@
   background: #ffffff;
   border-radius: 24rpx;
   padding: 0;
-  max-height: 90vh;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -597,6 +610,26 @@
   background: #f7f9fb;
   padding: 12rpx 16rpx;
   border-radius: 12rpx;
+  max-height: 200rpx; /* 限制最大高度，防止内容过多时占用整个弹窗 */
+  overflow-y: auto; /* 启用垂直滚动 */
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 650rpx; /* 同样限制最大宽度 */
+}
+
+/* 优化值显示样式，确保内容不会被截断 */
+.value {
+  font-size: 28rpx;
+  color: #333333;
+  margin-top: 10rpx;
+  display: block;
+  background: #f7f9fb;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  width: 100%;
+  box-sizing: border-box;
+  word-break: break-word; /* 确保长单词能正确换行 */
+  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
 }
 
 .video-container {

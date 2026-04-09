@@ -12,6 +12,7 @@ public class QuestionDetailVo {
 
     private Integer answerId;
     private String question;
+    private String customQuestion;
     private String questionType;
     private String studentAnswer;
     private Double score;

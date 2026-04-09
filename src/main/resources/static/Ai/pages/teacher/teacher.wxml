@@ -325,7 +325,7 @@
         <!-- 显示问题和标准答案 -->
         <view class="form-item" wx:if="{{selectedTopic.questions && selectedTopic.questions.length > 0}}">
           <text class="label">问题与标准答案</text>
-          <view class="questions-container">
+          <scroll-view class="questions-container" scroll-y="true">
             <block wx:for="{{selectedTopic.questions}}" wx:key="questionId">
               <view class="question-detail-item">
                 <view class="question-block">
@@ -342,7 +342,7 @@
                 </view>
               </view>
             </block>
-          </view>
+          </scroll-view>
         </view>
         
         <view class="modal-actions" style="margin-top: 20px;">
@@ -442,7 +442,8 @@
             <view class="form-item">
               <text class="label">问题</text>
               <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
-                <text class="value">{{item.question}}</text>
+                <text class="value" wx:if="{{item.question !== null}}">{{item.question}}</text>
+                <text class="value" wx:else>{{item.customQuestion}}</text>
               </scroll-view>
             </view>
             <view class="form-item">

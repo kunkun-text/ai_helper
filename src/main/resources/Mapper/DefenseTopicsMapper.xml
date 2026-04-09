@@ -37,7 +37,18 @@
     </select>
 
     <select id="getDefenseQuestionById" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseQuestions">
-        Select question_id, question, standard_answer from defense_questions where topic_id = #{topicId}
+        SELECT
+            question_id AS questionId,
+            topic_id AS topicId,
+            teacher_id AS teacherId,
+            question_type AS questionType,
+            question,
+            standard_answer AS standardAnswer,
+            created_at AS createdAt,
+            updated_at AS updatedAt
+        FROM defense_questions
+        WHERE topic_id = #{topicId} AND question_type = 'teacher'
+        ORDER BY question_id ASC
     </select>
     <select id="getTopicById" resultType="com.ai_helper.ai_helper.pojo.dto.TopicDto">
         select

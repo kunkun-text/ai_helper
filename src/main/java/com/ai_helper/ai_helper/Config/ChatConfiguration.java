@@ -55,24 +55,40 @@ public class ChatConfiguration {
             String key = KEY_PREFIX + conversationId;
             List<Object> messages = redisTemplate.opsForList().range(key, 0, -1);
             
+            log.info("【Redis读取】从Redis获取原始数据 - conversationId: {}, 原始数量: {}", conversationId, messages != null ? messages.size() : 0);
+            
             if (messages == null || messages.isEmpty()) {
                 return new ArrayList<>();
             }
             
             List<Message> result = new ArrayList<>();
             for (Object msg : messages) {
+                log.info("【Redis读取】消息类型: {}", msg != null ? msg.getClass().getName() : "null");
+                
                 if (msg instanceof Map) {
                     Map<?, ?> map = (Map<?, ?>) msg;
+                    log.info("【Redis读取】Map内容: {}", map);
+                    
                     String type = (String) map.get("type");
                     String content = (String) map.get("content");
                     
-                    if ("user".equals(type)) {
+                    log.info("【Redis读取】type: {}, content长度: {}", type, content != null ? content.length() : 0);
+                    
+                    if ("user".equals(type) && content != null) {
                         result.add(new org.springframework.ai.chat.messages.UserMessage(content));
-                    } else if ("assistant".equals(type)) {
+                        log.info("【Redis读取】成功转换为用户消息");
+                    } else if ("assistant".equals(type) && content != null) {
                         result.add(new org.springframework.ai.chat.messages.AssistantMessage(content));
+                        log.info("【Redis读取】成功转换为AI消息");
+                    } else {
+                        log.warn("【Redis读取】无法识别的消息类型或内容为空 - type: {}, content: {}", type, content);
                     }
+                } else {
+                    log.warn("【Redis读取】消息不是Map类型，实际类型: {}", msg != null ? msg.getClass().getName() : "null");
                 }
             }
+            
+            log.info("【Redis读取】最终转换后的消息数量: {}", result.size());
             return result;
         }
         
@@ -82,11 +98,57 @@ public class ChatConfiguration {
             String lockKey = LOCK_KEY_PREFIX + conversationId;
             String lockValue = java.util.UUID.randomUUID().toString() + ":" + System.currentTimeMillis();
             
+            log.info("【Redis锁】尝试获取锁 - conversationId: {}, lockKey: {}", conversationId, lockKey);
+            
             Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
             
             if (Boolean.TRUE.equals(locked)) {
+                log.info("【Redis锁】成功获取锁 - conversationId: {}", conversationId);
                 try {
-                    List<Map<String, Object>> messageMaps = new ArrayList<>();
+                    int pushCount = 0;
+                    for (Message msg : messages) {
+                        Map<String, Object> map = new HashMap<>();
+                        if (msg instanceof UserMessage userMsg) {
+                            map.put("type", "user");
+                            map.put("content", userMsg.getText());
+                            log.info("【Redis保存】准备保存用户消息: {}", userMsg.getText().substring(0, Math.min(50, userMsg.getText().length())));
+                        } else if (msg instanceof AssistantMessage asstMsg) {
+                            map.put("type", "assistant");
+                            map.put("content", asstMsg.getText());
+                            log.info("【Redis保存】准备保存AI消息: {}", asstMsg.getText().substring(0, Math.min(50, asstMsg.getText().length())));
+                        }
+                        
+                        redisTemplate.opsForList().rightPush(key, map);
+                        pushCount++;
+                        log.info("【Redis保存】已推送第 {} 条消息", pushCount);
+                    }
+                    
+                    log.info("【Redis保存】共推送 {} 条消息到列表", pushCount);
+                    
+                    redisTemplate.expire(key, EXPIRE_MINUTES, TimeUnit.MINUTES);
+                    log.info("【Redis保存】设置过期时间为 {} 分钟", EXPIRE_MINUTES);
+                    
+                    Long listSize = redisTemplate.opsForList().size(key);
+                    log.info("【Redis保存】当前列表中消息总数: {}", listSize);
+                } finally {
+                    String currentLockValue = (String) redisTemplate.opsForValue().get(lockKey);
+                    if (lockValue.equals(currentLockValue)) {
+                        redisTemplate.delete(lockKey);
+                        log.info("【Redis锁】释放锁成功 - conversationId: {}", conversationId);
+                    } else {
+                        log.warn("【Redis锁】锁已被其他线程持有，不删除 - conversationId: {}, expected: {}, actual: {}", 
+                                conversationId, lockValue, currentLockValue);
+                    }
+                }
+            } else {
+                log.error("【Redis锁】无法获取锁，跳过存储操作 - conversationId: {}, lockKey: {}", conversationId, lockKey);
+                
+                String existingLock = (String) redisTemplate.opsForValue().get(lockKey);
+                log.error("【Redis锁】当前锁的值: {}", existingLock);
+                
+                log.warn("【Redis锁】尝试强制保存（无锁模式）");
+                try {
+                    int pushCount = 0;
                     for (Message msg : messages) {
                         Map<String, Object> map = new HashMap<>();
                         if (msg instanceof UserMessage userMsg) {
@@ -96,25 +158,20 @@ public class ChatConfiguration {
                             map.put("type", "assistant");
                             map.put("content", asstMsg.getText());
                         }
-                        messageMaps.add(map);
+                        
+                        redisTemplate.opsForList().rightPush(key, map);
+                        pushCount++;
                     }
                     
-                    if (!messageMaps.isEmpty()) {
-                        redisTemplate.opsForList().rightPushAll(key, messageMaps);
-                    }
+                    log.info("【Redis强制保存】共推送 {} 条消息到列表", pushCount);
                     
                     redisTemplate.expire(key, EXPIRE_MINUTES, TimeUnit.MINUTES);
-                } finally {
-                    String currentLockValue = (String) redisTemplate.opsForValue().get(lockKey);
-                    if (lockValue.equals(currentLockValue)) {
-                        redisTemplate.delete(lockKey);
-                    } else {
-                        log.warn("锁已被其他线程持有，不删除 - conversationId: {}, expected: {}, actual: {}", 
-                                conversationId, lockValue, currentLockValue);
-                    }
+                    
+                    Long listSize = redisTemplate.opsForList().size(key);
+                    log.info("【Redis强制保存】当前列表中消息总数: {}", listSize);
+                } catch (Exception e) {
+                    log.error("【Redis强制保存】失败", e);
                 }
-            } else {
-                log.warn("无法获取锁，跳过存储操作 - conversationId: {}", conversationId);
             }
         }
         

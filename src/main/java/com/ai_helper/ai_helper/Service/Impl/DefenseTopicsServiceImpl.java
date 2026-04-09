@@ -154,7 +154,7 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
     }
 
     @Override
-    public Result<Object> getDefenseQuestionById(Integer topicId) {
+    public Result<List<DefenseQuestions>> getDefenseQuestionById(Integer topicId) {
         List<DefenseQuestions> list = defenseTopicsMapper.getDefenseQuestionById(topicId);
         return Result.success(list);
     }

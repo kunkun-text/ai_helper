@@ -1,9 +1,12 @@
 package com.ai_helper.ai_helper.Service;
 
 import com.ai_helper.ai_helper.pojo.dto.EditDefenseDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.result.PageResult;
 import com.ai_helper.ai_helper.result.Result;
+
+import java.util.List;
 
 
 public interface DefenseTopicsService {
@@ -14,7 +17,7 @@ public interface DefenseTopicsService {
 
     Result<Object> editDefense(EditDefenseDto editDefenseDto);
 
-    Result<Object> getDefenseQuestionById(Integer topicId);
+    Result<List<DefenseQuestions>> getDefenseQuestionById(Integer topicId);
 
     Result<Object> deleteDefenseTopics(Integer topicId);
 

@@ -137,6 +137,7 @@ Page({
             updatedRecords = [...this.data.searchDefenseRecords, ...newData];
           }
           
+          // 更新搜索专用数据源
           this.setData({
             searchDefenseRecords: updatedRecords,
             defenseRecordsTotal: response.total,
@@ -146,11 +147,12 @@ Page({
             defenseRecordsRefreshing: false
           });
           
-          if (this.data.activeTab === 'records' && this.data.isSearching) {
-            this.setData({
-              defenseRecords: updatedRecords
-            });
-          }
+          // 强制同步搜索结果到显示列表，不依赖复杂的状态判断
+          // 确保只要搜索成功，结果就能立即显示
+          this.setData({
+            defenseRecords: updatedRecords,
+            isSearching: true // 确保搜索状态保持为true
+          });
         } else {
           console.log('搜索失败 - 后端返回错误:', res.data);
           wx.showToast({
@@ -173,7 +175,8 @@ Page({
         });
         this.setData({
           defenseRecordsLoading: false,
-          defenseRecordsRefreshing: false
+          defenseRecordsRefreshing: false,
+          isSearching: false // 搜索失败时重置搜索状态
         });
       }
     });
@@ -213,27 +216,39 @@ Page({
         
         if (res.data.code === 1) {
           const response = res.data.data;
-          const newData = response.list.map(record => ({
-            id: record.defenseRecordId.toString(),
-            studentName: record.userName,
-            studentId: record.userNumber,
-            topic: record.topicName,
-            score: parseFloat(record.score),
-            aiScore: Math.floor(parseFloat(record.score) * 0.9),
-            teacherScore: Math.ceil(parseFloat(record.score) * 1.1),
-            date: record.defenseTime.split(' ')[0],
-            defenseTime: record.defenseTime,
-            feedback: `AI评分：${Math.floor(parseFloat(record.score) * 0.9)}分。学生表现良好。\n\n教师评分：${Math.ceil(parseFloat(record.score) * 1.1)}分。总体表现不错。`
-          }));
+          const newData = response.list.map(record => {
+            // 处理分数：如果为null或空字符串，设置为0，否则转换为数字
+            const scoreValue = record.score && record.score !== 'null' ? parseFloat(record.score) : 0;
+            
+            // 处理时间：如果为null，设置默认值
+            const defenseTime = record.defenseTime || '暂无时间';
+            const date = record.defenseTime ? record.defenseTime.split(' ')[0] : '暂无日期';
+            
+            return {
+              id: record.defenseRecordId.toString(),
+              studentName: (record.userName || '').trim(),
+              studentId: record.userNumber || '未知学号',
+              topic: record.topicName || '未设置题目',
+              score: scoreValue,
+              aiScore: Math.floor(scoreValue * 0.9),
+              teacherScore: Math.ceil(scoreValue * 1.1),
+              date: date,
+              defenseTime: defenseTime,
+              feedback: scoreValue > 0 
+                ? `AI评分：${Math.floor(scoreValue * 0.9)}分。学生表现良好。\n\n教师评分：${Math.ceil(scoreValue * 1.1)}分。总体表现不错。`
+                : '暂无评分数据'
+            };
+          });
 
           let updatedRecords = [];
           if (isRefresh) {
             updatedRecords = newData;
           } else {
+            // 修正：使用homeDefenseRecords而不是searchDefenseRecords
             updatedRecords = [...this.data.homeDefenseRecords, ...newData];
           }
           
-          // 更新主页面专用数据源
+          // 修正：更新homeDefenseRecords而不是searchDefenseRecords
           this.setData({
             homeDefenseRecords: updatedRecords,
             defenseRecordsTotal: response.total,
@@ -243,17 +258,22 @@ Page({
             defenseRecordsRefreshing: false
           });
           
-          // 如果当前在主页面，同步到通用数据源
-          if (this.data.activeTab === 'home') {
+          // 根据当前状态决定显示哪个数据源
+          if (this.data.activeTab === 'records') {
+            if (this.data.isSearching) {
+              this.setData({
+                defenseRecords: this.data.searchDefenseRecords
+              });
+            } else {
+              this.setData({
+                defenseRecords: updatedRecords
+              });
+            }
+          } else if (this.data.activeTab === 'home') {
             this.setData({
               defenseRecords: updatedRecords
             });
           }
-          
-          // 更新首页预览数据
-          this.setData({
-            previewRecords: updatedRecords.slice(0, 3)
-          });
         } else {
           wx.showToast({
             title: res.data.msg || '获取答辩记录失败',
@@ -299,6 +319,33 @@ Page({
     });
   },
 
+  // 执行搜索
+  performSearch() {
+    const { searchUserName, searchUserNumber, searchTopicName } = this.data;
+    
+    console.log('执行搜索 - 用户名:', searchUserName, '学号:', searchUserNumber, '题目名称:', searchTopicName);
+    
+    // 如果所有搜索条件都为空，则清空搜索
+    if (!searchUserName.trim() && !searchUserNumber.trim() && !searchTopicName.trim()) {
+      console.log('搜索条件为空，执行清空搜索');
+      this.clearSearch();
+      return;
+    }
+    
+    this.setData({
+      isSearching: true,
+      searchDefenseRecords: [],
+      defenseRecords: [], // 清空当前显示的数据
+      defenseRecordsCurrentPage: 1,
+      defenseRecordsHasMore: true,
+      defenseRecordsLoading: true
+    });
+    
+    console.log('开始执行搜索请求');
+    // 执行搜索请求
+    this.loadDefenseRecordsBySearch(true); // 使用刷新模式
+  },
+
   // 清空搜索条件
   clearSearch() {
     this.setData({
@@ -319,31 +366,6 @@ Page({
     // 如果当前在主页面，不需要额外操作，因为主页面本来就显示homeDefenseRecords
   },
 
-  // 执行搜索
-  performSearch() {
-    const { searchUserName, searchUserNumber, searchTopicName } = this.data;
-    
-    console.log('执行搜索 - 用户名:', searchUserName, '学号:', searchUserNumber, '题目名称:', searchTopicName);
-    
-    // 如果所有搜索条件都为空，则清空搜索
-    if (!searchUserName.trim() && !searchUserNumber.trim() && !searchTopicName.trim()) {
-      console.log('搜索条件为空，执行清空搜索');
-      this.clearSearch();
-      return;
-    }
-    
-    this.setData({
-      isSearching: true,
-      searchDefenseRecords: [],
-      defenseRecordsCurrentPage: 1,
-      defenseRecordsHasMore: true
-    });
-    
-    console.log('开始执行搜索请求');
-    // 执行搜索请求
-    this.loadDefenseRecordsBySearch();
-  },
-
   // 下拉刷新答辩记录
   onDefenseRecordsRefresh() {
     if (this.data.activeTab === 'records' && this.data.isSearching) {
@@ -357,14 +379,14 @@ Page({
 
   // 监听答辩记录scroll-view滚动到底部
   onDefenseRecordsScrollToLower() {
-    if (this.data.defenseRecordsHasMore) {
+    if (this.data.defenseRecordsHasMore && !this.data.defenseRecordsLoading) {
       const nextPage = this.data.defenseRecordsCurrentPage + 1;
       if (this.data.activeTab === 'records' && this.data.isSearching) {
         this.loadDefenseRecordsBySearch(false, nextPage);
       } else {
         this.loadHomeDefenseRecords(false, nextPage);
       }
-    } else {
+    } else if (!this.data.defenseRecordsHasMore) {
       wx.showToast({ title: '没有更多答辩记录了', icon: 'none' });
     }
   },
@@ -418,6 +440,20 @@ loadMoreTopics() {
   onShow() {
     console.log('老师页面onShow执行');
     this.loadUserInfo();
+    
+    // 重新加载答辩记录数据，确保通过底部导航跳转时数据正确显示
+    if (this.data.activeTab === 'records') {
+      if (this.data.isSearching) {
+        // 如果处于搜索模式，重新加载搜索结果
+        this.loadDefenseRecordsBySearch(true);
+      } else {
+        // 否则重新加载全部答辩记录
+        this.loadHomeDefenseRecords(true);
+      }
+    } else if (this.data.activeTab === 'home') {
+      // 主页面也需要重新加载答辩记录
+      this.loadHomeDefenseRecords(true);
+    }
   },
 
   loadUserInfo() {
@@ -760,7 +796,7 @@ loadMoreTopics() {
           // 处理数据，添加必要的字段用于显示
           const processedAnswers = answers.map(answer => ({
             ...answer,
-            questionTypeLabel: answer.questionType === 'ai' ? 'AI问题' : '教师问题',
+            questionTypeLabel: (answer.questionType && answer.questionType.trim() === 'teacher') ? '教师问题' : 'AI问题',
             questionTypeClass: answer.questionType === 'ai' ? 'ai-question' : 'teacher-question'
           }));
           this.setData({ 
@@ -1303,8 +1339,8 @@ loadMoreTopics() {
           // 处理数据，添加必要的字段用于显示
           const processedAnswers = answers.map(answer => ({
             ...answer,
-            questionTypeLabel: answer.questionType === 'ai' ? 'AI问题' : '教师问题',
-            questionTypeClass: answer.questionType === 'ai' ? 'ai-question' : 'teacher-question'
+            questionTypeLabel: answer.questionType === 'teacher' ? '教师问题' : 'AI问题',
+
           }));
           this.setData({ 
             selectedAnswers: processedAnswers 

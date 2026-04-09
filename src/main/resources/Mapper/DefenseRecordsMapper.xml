@@ -62,6 +62,7 @@
         select
             da.answer_id as answerId,
             dq.question,
+            ds.custom_question,
             dq.question_type as questionType,
             da.student_answer as studentAnswer,
             da.score,
@@ -69,7 +70,8 @@
             da.created_at as createdAt
         from
             defense_answers as da
-                join defense_questions as dq on da.question_id = dq.question_id
+                left join defense_questions as dq on da.question_id = dq.question_id
+                left join defense_student_questions as ds on da.sq_id =  ds.sq_id
         where
             da.defense_id = #{defenseId}
     </select>
@@ -120,11 +122,47 @@
         from defense_records
         where topic_id = #{topicId}
     </select>
+    <select id="selectVideoAndPptWords" resultType="com.ai_helper.ai_helper.pojo.query.TextQuery">
+        SELECT
+            video_words as videoContent,
+            video_ppt_words as pptContent
+        FROM defense_records
+        WHERE topic_id = #{topicId} AND user_id = #{userId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
 
+    <select id="getExistingDefenseRecord" resultType="java.lang.Integer">
+        SELECT defense_id
+        FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <insert id="createDefenseRecord" useGeneratedKeys="true" keyProperty="defenseId">
+        INSERT INTO defense_records (user_id, topic_id, status, defense_date, created_at, updated_at)
+        VALUES (#{userId}, #{topicId}, 'pending', NOW(), NOW(), NOW())
+    </insert>
 
     <insert id="insertVideoUrl">
         INSERT INTO defense_records (user_id, video_url, topic_id, created_at)
         values (#{userId},#{videoUrl}, #{topicId}, NOW())
     </insert>
+
+    <insert id="insertNewQuestion" useGeneratedKeys="true" keyProperty="questionId">
+        INSERT INTO defense_questions
+        (topic_id, teacher_id, question_type, question, standard_answer, created_at, updated_at)
+        VALUES
+        (#{topicId}, #{teacherId}, #{questionType}, #{question}, #{standardAnswer}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <update id="saveSummary">
+        UPDATE defense_records
+        SET feedback = #{summary},
+            updated_at = NOW()
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+    </update>
+
 
 </mapper>

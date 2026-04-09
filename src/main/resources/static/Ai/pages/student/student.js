@@ -36,7 +36,6 @@ Page({
     currentTopicDescription: '',
     
     defenseRecords: [],
-    previewRecords: [],
     selectedRecord: null,
     
     // 视频上传相关数据
@@ -137,7 +136,7 @@ Page({
 
   // 保存个人信息
   saveProfile() {
-    const { editedUser, token } = this.data;
+    const { editedUser, token, user } = this.data;
     const config = require('../../utils/config.js');
     
     // 验证必填字段
@@ -157,23 +156,57 @@ Page({
       return;
     }
     
+    // 验证手机号格式（如果提供了）
+    if (editedUser.phone && editedUser.phone.trim()) {
+      const phoneRegex = /^1[3-9]\d{9}$/;
+      if (!phoneRegex.test(editedUser.phone.trim())) {
+        wx.showToast({
+          title: '手机号格式不正确',
+          icon: 'none'
+        });
+        return;
+      }
+    }
+    
+    // 验证邮箱格式（如果提供了）
+    if (editedUser.email && editedUser.email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(editedUser.email.trim())) {
+        wx.showToast({
+          title: '邮箱格式不正确',
+          icon: 'none'
+        });
+        return;
+      }
+    }
+    
+    // 显示加载提示
+    wx.showLoading({
+      title: '保存中...',
+      mask: true
+    });
+    
     // 调用后端接口更新用户信息
     wx.request({
-      url: config.serverUrl + '/student/editUserInfo',
+      url: config.serverUrl + '/editUserInfo', // 使用学生专用接口
       method: 'POST',
       data: {
+        id: user.id, // 添加用户ID
         name: editedUser.name,
         userNumber: editedUser.userNumber,
-        phone: editedUser.phone,
+        phoneNumber: editedUser.phone, // 修正字段名
         email: editedUser.email
       },
       header: {
-        'Authorization': 'Bearer ' + token
+        'Authorization': 'Bearer ' + token,
+        'content-type': 'application/json'
       },
       success: (res) => {
+        wx.hideLoading();
         if (res.statusCode === 200 && res.data.code === 1) {
           // 更新本地用户信息
           const updatedUser = {
+            id: user.id,
             name: editedUser.name,
             userNumber: editedUser.userNumber,
             phone: editedUser.phone,
@@ -186,9 +219,16 @@ Page({
           });
 
           // 更新本地存储的用户信息
-          const userInfo = wx.getStorageSync('userInfo') || {};
-          Object.assign(userInfo, updatedUser);
-          wx.setStorageSync('userInfo', userInfo);
+          try {
+            const userInfo = wx.getStorageSync('user') || {};
+            Object.assign(userInfo, updatedUser);
+            wx.setStorageSync('user', userInfo);
+            
+            // 同时更新userInfo存储（兼容性考虑）
+            wx.setStorageSync('userInfo', userInfo);
+          } catch (e) {
+            console.warn('更新本地存储失败:', e);
+          }
 
           wx.showToast({
             title: '保存成功',
@@ -202,9 +242,10 @@ Page({
         }
       },
       fail: (err) => {
+        wx.hideLoading();
         console.error('保存个人信息失败:', err);
         wx.showToast({
-          title: '网络请求失败',
+          title: '网络请求失败，请检查网络连接',
           icon: 'error'
         });
       }
@@ -220,14 +261,19 @@ Page({
 
   // 退出登录
   logout() {
+    const that = this;
+    
+    // 显示确认对话框
     wx.showModal({
       title: '确认退出',
       content: '确定要退出登录吗？',
-      success: (res) => {
+      success(res) {
         if (res.confirm) {
-          // 清除本地存储的用户信息和token
+          // 清除本地存储的token和用户信息
           wx.removeStorageSync('token');
-          wx.removeStorageSync('userInfo');
+          wx.removeStorageSync('user');
+          wx.removeStorageSync('role');
+          
           
           // 跳转到登录页面
           wx.redirectTo({
@@ -528,7 +574,6 @@ Page({
           // 更新数据
           that.setData({
             defenseRecords: newRecords,
-            previewRecords: newRecords.slice(0, 3), // 首页只显示前3条
             pageNum: currentPage,
             pages: totalPages,
             defenseRecordsTotal: total,
@@ -814,13 +859,13 @@ Page({
           
           // 处理数据格式，添加前端需要的字段
           const processedAnswers = answers.map(answer => {
-            // 根据questionType设置显示标签和样式类
-            let questionTypeLabel = '教师提问';
-            let questionTypeClass = 'teacher';
+            // 根据questionType设置显示标签和样式类，与教师端保持一致
+            let questionTypeLabel = 'AI问题';
+            let questionTypeClass = 'ai';
             
-            if (answer.questionType === 'ai') {
-              questionTypeLabel = 'AI提问';
-              questionTypeClass = 'ai';
+            if (answer.questionType && answer.questionType.trim() === 'teacher') {
+              questionTypeLabel = '教师问题';
+              questionTypeClass = 'teacher';
             }
             
             return {
@@ -857,122 +902,6 @@ Page({
   // 关闭回答详情
   closeAnswers() {
     this.setData({ selectedAnswers: null });
-  },
-
-  startEdit() {
-    this.setData({
-      isEditing: true,
-      editedUser: { ...this.data.user }
-    });
-  },
-
-  onEditName(e) {
-    this.setData({
-      'editedUser.name': e.detail.value
-    });
-  },
-
-  onEditUserNumber(e) {
-    this.setData({
-      'editedUser.userNumber': e.detail.value
-    });
-  },
-
-  onEditPhone(e) {
-    this.setData({
-      'editedUser.phone': e.detail.value
-    });
-  },
-
-  onEditEmail(e) {
-    this.setData({
-      'editedUser.email': e.detail.value
-    });
-  },
-
-  saveProfile() {
-    const that = this;
-    
-    // 显示加载提示
-    wx.showLoading({
-      title: '保存中...'
-    });
-
-    // 构造请求参数
-    const requestData = {
-      id: this.data.user.id,
-      name: this.data.editedUser.name,
-      userNumber: this.data.editedUser.userNumber,
-      phoneNumber: this.data.editedUser.phone,
-      email: this.data.editedUser.email
-    };
-
-    console.log('发送到后端的数据:', requestData);
-
-    // 发送请求到后端
-    wx.request({
-      url: config.serverUrl + '/editUserInfo',
-      method: 'POST',
-      data: requestData,
-      header: {
-        'content-type': 'application/json',
-        'Authorization': 'Bearer ' + this.data.token
-      },
-      success(res) {
-        console.log('后端响应:', res);
-        
-        if (res.statusCode === 200 && res.data.code === 1) {
-          // 请求成功
-          wx.showToast({
-            title: '保存成功',
-            icon: 'success'
-          });
-
-          // 更新本地用户信息
-          const updatedUser = {
-            name: that.data.editedUser.name,
-            userNumber: that.data.editedUser.userNumber,
-            phone: that.data.editedUser.phone,
-            email: that.data.editedUser.email
-          };
-
-          that.setData({
-            user: updatedUser,
-            isEditing: false
-          });
-
-          // 更新本地存储的用户信息
-          const userInfo = wx.getStorageSync('userInfo') || {};
-          Object.assign(userInfo, updatedUser);
-          wx.setStorageSync('userInfo', userInfo);
-
-        } else {
-          // 请求失败
-          wx.showToast({
-            title: res.data.msg || '保存失败',
-            icon: 'error'
-          });
-        }
-      },
-      fail(err) {
-        console.error('请求失败:', err);
-        wx.showToast({
-          title: '网络请求失败',
-          icon: 'error'
-        });
-      },
-      complete() {
-        // 隐藏加载提示
-        wx.hideLoading();
-      }
-    });
-  },
-
-  logout() {
-    wx.showToast({
-      title: '已退出登录',
-      icon: 'none'
-    });
   },
 
   // 视频上传相关方法
@@ -1072,7 +1001,7 @@ Page({
             errorMessage = '需要相册或相机权限';
             showSettingButton = true;
           } else if (err.errMsg.includes('cancel') || err.errMsg.includes('deny')) {
-            // 用户取消或拒绝，不显示错误
+            // 用户取消了视频选择或拒绝了权限，不显示错误
             console.log('用户取消了视频选择或拒绝了权限');
             return;
           } else if (err.errMsg.includes('invalid')) {
@@ -1413,6 +1342,30 @@ Page({
       title: errorMsg,
       icon: 'error',
       duration: 3000
+    });
+  },
+
+  // 退出登录
+  logout() {
+    const that = this;
+    
+    // 显示确认对话框
+    wx.showModal({
+      title: '确认退出',
+      content: '确定要退出登录吗？',
+      success(res) {
+        if (res.confirm) {
+          // 清除本地存储的 token 和用户信息
+          wx.removeStorageSync('token');
+          wx.removeStorageSync('user');
+          wx.removeStorageSync('role');
+          
+          // 跳转到登录页面
+          wx.redirectTo({
+            url: '/pages/login/login'
+          });
+        }
+      }
     });
   }
 });

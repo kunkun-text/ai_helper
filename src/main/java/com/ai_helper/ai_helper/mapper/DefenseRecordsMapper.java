@@ -39,4 +39,13 @@ public interface DefenseRecordsMapper {
     String getVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
 
     TextQuery getDetailWordsRecords(Integer topicId);
+
+
+    TextQuery selectVideoAndPptWords(@Param("topicId") Integer topicId, @Param("userId") String userId);
+
+    Integer getExistingDefenseRecord(@Param("userId") Integer userId, @Param("topicId") Integer topicId);
+
+    int createDefenseRecord(@Param("userId") Integer userId, @Param("topicId") Integer topicId);
+
+    int saveSummary(@Param("userId") String userId,@Param("topicId") Integer topicId,@Param("summary") String summary);
 }

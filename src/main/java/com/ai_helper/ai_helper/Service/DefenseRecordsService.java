@@ -31,4 +31,12 @@ public interface DefenseRecordsService {
     Result<List<DefenseTopics>> getDefenseTopic();
 
     TextQuery getDefenseWordsRecords(Integer topicId);
+
+    TextQuery selectVideoAndPptWords(Integer topicId, String userId);
+
+    Integer saveAiQuestion(List<Integer> existingQuestionIds, Integer topicId, String userId, String userInput, String aiResponse, Double score, String feedback, String summary);
+
+    void savePresetQuestionAnswer(Integer topicId, String userId, Integer questionId, String studentAnswer, String aiFeedback, Double score);
+
+    Integer getOrCreateDefenseRecord(Integer topicId, String userId);
 }

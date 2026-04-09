@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.ai_helper.ai_helper.mapper.DefenseAnswersMapper">
+
+    <insert id="insertAnswer" useGeneratedKeys="true" keyProperty="answerId">
+        INSERT INTO defense_answers 
+        (defense_id, question_id, sq_id, student_answer, score, feedback, created_at)
+        VALUES 
+        (#{defenseId}, #{questionId}, #{sqId}, #{studentAnswer}, #{score}, #{feedback}, #{createdAt})
+    </insert>
+
+</mapper>

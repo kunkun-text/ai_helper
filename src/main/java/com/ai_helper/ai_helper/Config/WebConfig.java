@@ -12,7 +12,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @EnableAsync
 public class WebConfig implements WebMvcConfigurer {
     
-    @Bean("applicationTaskExecutor")
+    @Bean("taskExecutor")
     public AsyncTaskExecutor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(10);

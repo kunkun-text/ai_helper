@@ -221,6 +221,7 @@
   border-radius: 12rpx; /* 与输入框相同的圆角 */
   width: 100%; /* 与输入框相同的宽度 */
   box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  max-width: 650rpx; /* 限制最大宽度，防止超出弹窗容器 */
 }
 
 /* 回答详情样式 */
@@ -266,12 +267,74 @@
 }
 
 .long-text-scroll {
-  max-height: 150rpx;
-  width: 100%;
-  padding: 16rpx 20rpx;
   background: #f7f9fb;
+  padding: 12rpx 16rpx;
   border-radius: 12rpx;
-  box-sizing: border-box;
+  max-height: 200rpx; /* 限制最大高度，防止内容过多时占用整个弹窗 */
+  overflow-y: auto; /* 启用垂直滚动 */
+}
+
+/* 优化值显示样式，确保内容不会被截断 */
+.value {
+  font-size: 28rpx;
+  color: #333333;
+  margin-top: 10rpx;
+  display: block;
+  background: #f7f9fb; /* 与输入框相同的背景色 */
+  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
+  border-radius: 12rpx; /* 与输入框相同的圆角 */
+  width: 100%; /* 与输入框相同的宽度 */
+  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  word-break: break-word; /* 确保长单词能正确换行 */
+  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
+}
+
+.questions-container {
+  max-height: 380rpx;
+  overflow-y: auto;
+  padding: 10rpx 0;
+}
+
+/* 问题项样式 */
+.question-item {
+  margin-bottom: 20rpx;
+}
+
+.form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.add-question-btn {
+  font-size: 20rpx;
+  color: #008cba;
+  padding: 6rpx 20rpx;
+  border-radius: 12rpx;
+  background: #eaf2ff;
+  border: 1rpx solid #008cba;
+}
+
+.question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.question-index {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.remove-question-btn {
+  font-size: 24rpx;
+  color: #f44336;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: #ffebee;
 }
 
 .feedback {
@@ -807,4 +870,65 @@
   color: #666666;
   font-size: 24rpx;
   line-height: 1.5;
+}
+
+.questions-container {
+  max-height: 400rpx;
+  overflow-y: auto;
+  padding: 10rpx 0;
+}
+
+/* 弹框样式 */
+.modal-card {
+  width: 90%;
+  max-width: 750rpx;
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  margin: 0 30rpx;
+}
+
+.modal-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-header {
+  padding: 32rpx 28rpx 20rpx;
+  border-bottom: 1rpx solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.modal-close {
+  font-size: 48rpx;
+  color: #999999;
+  padding: 8rpx;
+}
+
+.modal-body {
+  padding: 20rpx 28rpx;
+  max-height: 70vh;
+}
+
+.modal-actions {
+  padding: 20rpx 28rpx 32rpx;
+  display: flex;
+  gap: 20rpx;
 }
