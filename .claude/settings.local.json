@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d \"D:/wh学全栈/AI-helper\")",
+      "Bash(mvn compile *)",
+      "Bash(python3 -c \"import json; json.load\\(open\\('src/main/resources/static/Ai/app.json', encoding='utf-8'\\)\\); print\\('app.json OK'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('src/main/resources/static/Ai/app.json','utf8'\\)\\); console.log\\('app.json OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(node -c \"src/main/resources/static/Ai/pages/student/student.js\")",
+      "Bash(node -c \"src/main/resources/static/Ai/pages/defense/defense.js\")",
+      "Bash(node *)",
+      "Bash(mvn resources:resources -q)"
+    ]
+  }
+}

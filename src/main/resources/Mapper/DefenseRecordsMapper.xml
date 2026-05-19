@@ -164,5 +164,49 @@
         WHERE user_id = #{userId} AND topic_id = #{topicId}
     </update>
 
+    <update id="updateReportUrl">
+        UPDATE defense_records
+        SET report_url = #{reportUrl},
+            updated_at = NOW()
+        WHERE user_id = #{userId}
+          AND topic_id = #{topicId}
+    </update>
+
+    <insert id="insertReportUrl">
+        INSERT INTO defense_records (user_id, topic_id, report_url, status, defense_date, created_at, updated_at)
+        VALUES (#{userId}, #{topicId}, #{reportUrl}, 'pending', NOW(), NOW(), NOW())
+    </insert>
+
+    <!-- ========== 原子化 UPSERT 操作（线程安全） ========== -->
+
+    <insert id="upsertVideoUrl">
+        INSERT INTO defense_records (user_id, topic_id, video_url, status, defense_date, created_at, updated_at)
+        VALUES (#{userId}, #{topicId}, #{videoUrl}, 'pending', NOW(), NOW(), NOW())
+        ON DUPLICATE KEY UPDATE video_url = #{videoUrl}, updated_at = NOW()
+    </insert>
+
+    <insert id="upsertReportUrl">
+        INSERT INTO defense_records (user_id, topic_id, report_url, status, defense_date, created_at, updated_at)
+        VALUES (#{userId}, #{topicId}, #{reportUrl}, 'pending', NOW(), NOW(), NOW())
+        ON DUPLICATE KEY UPDATE report_url = #{reportUrl}, updated_at = NOW()
+    </insert>
+
+    <insert id="upsertDefenseRecord">
+        INSERT INTO defense_records (user_id, topic_id, status, defense_date, created_at, updated_at)
+        VALUES (#{userId}, #{topicId}, 'pending', NOW(), NOW(), NOW())
+        ON DUPLICATE KEY UPDATE updated_at = NOW()
+    </insert>
+
+    <select id="getDefenseIdByUserAndTopic" resultType="java.lang.Integer">
+        SELECT defense_id FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+        LIMIT 1
+    </select>
+
+    <select id="getReportUrlByUserIdAndTopicId" resultType="java.lang.String">
+        SELECT report_url FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+        LIMIT 1
+    </select>
 
 </mapper>

@@ -1,0 +1,144 @@
+<view class="page">
+  <!-- 顶部导航 -->
+  <view class="header">
+    <view class="header-left" bindtap="goBack">
+      <text class="back-icon">‹</text>
+    </view>
+    <view class="header-center">
+      <text class="header-title">{{topicName || '答辩考试'}}</text>
+      <view class="header-status">
+        <text class="status-dot {{status}}"></text>
+        <text class="status-text">{{statusText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 消息列表 -->
+  <scroll-view class="msg-list" scroll-y="true" scroll-into-view="{{scrollToId}}" scroll-with-animation="true"
+    upper-threshold="50" bindscrolltoupper="onScrollToTop">
+
+    <block wx:for="{{messages}}" wx:key="id">
+      <!-- 系统消息 -->
+      <view wx:if="{{item.type === 'system'}}" class="msg-system">
+        <text class="msg-system-text">{{item.text}}</text>
+      </view>
+
+      <!-- AI 消息 -->
+      <view wx:elif="{{item.type === 'ai'}}" class="msg-row msg-ai" id="msg-{{item.id}}">
+        <view class="msg-avatar ai-avatar">AI</view>
+        <view class="msg-content">
+          <view class="msg-bubble ai-bubble">
+            <text class="msg-text">{{item.displayText}}</text>
+
+            <!-- 结构化展示 -->
+            <view wx:if="{{item.question}}" class="msg-section section-question">
+              <text class="section-label-question">下一问</text>
+              <text class="section-text">{{item.question}}</text>
+            </view>
+
+            <view wx:if="{{item.evaluation}}" class="msg-section section-eval">
+              <text class="section-label">评价</text>
+              <text class="section-text">{{item.evaluation}}</text>
+            </view>
+
+            <view wx:if="{{item.score !== null}}" class="msg-section section-score">
+              <text class="score-value">{{item.score}}<text class="score-unit">分</text></text>
+            </view>
+
+            <view wx:if="{{item.summary}}" class="msg-section section-summary">
+              <text class="section-label">📋 总结</text>
+              <text class="section-text">{{item.summary}}</text>
+            </view>
+            <view wx:if="{{item.videoAnalysis}}" class="msg-section section-analysis">
+              <text class="section-label">🎥 视频分析</text>
+              <text class="section-text">{{item.videoAnalysis}}</text>
+            </view>
+            <view wx:if="{{item.reportAnalysis}}" class="msg-section section-analysis">
+              <text class="section-label">📄 报告分析</text>
+              <text class="section-text">{{item.reportAnalysis}}</text>
+            </view>
+
+            <view wx:if="{{item.totalScore !== null}}" class="msg-section section-total-score">
+              <text class="total-score-value">{{item.totalScore}}<text class="score-unit">分</text></text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 用户消息 -->
+      <view wx:elif="{{item.type === 'user'}}" class="msg-row msg-user" id="msg-{{item.id}}">
+        <view class="msg-content user-content">
+          <view class="msg-bubble user-bubble">
+            <text class="msg-text user-text">{{item.text}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- AI 输入中 -->
+    <view wx:if="{{isAiThinking}}" class="msg-row msg-ai">
+      <view class="msg-avatar ai-avatar">AI</view>
+      <view class="msg-content">
+        <view class="msg-bubble ai-bubble">
+          <view class="typing-indicator">
+            <view class="typing-dot"></view>
+            <view class="typing-dot"></view>
+            <view class="typing-dot"></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view id="scroll-bottom"></view>
+  </scroll-view>
+
+  <!-- 底部输入栏 -->
+  <view class="input-bar {{isFinished ? 'input-bar-hidden' : ''}}">
+    <input class="msg-input" placeholder="输入你的回答..."
+      value="{{inputText}}" bindinput="onInput"
+      disabled="{{isAiThinking || isFinished}}"
+      confirm-type="send" bindconfirm="sendMessage"
+      maxlength="2000" />
+    <button class="send-btn {{inputText && inputText.trim() && !isAiThinking ? 'send-active' : ''}}"
+      bindtap="sendMessage"
+      disabled="{{!inputText || !inputText.trim() || isAiThinking || isFinished}}">
+      发送
+    </button>
+  </view>
+
+  <!-- 答辩完成遮罩 -->
+  <view wx:if="{{isFinished && showFinishModal}}" class="modal-mask" bindtap="closeFinishModal">
+    <view class="finish-card" catchtap>
+      <view class="finish-header">
+        <text class="finish-icon">🎉</text>
+        <text class="finish-title">答辩完成！</text>
+      </view>
+      <scroll-view class="finish-body" scroll-y="true">
+        <view wx:if="{{lastAiMessage && lastAiMessage.totalScore !== null}}" class="finish-total-score">
+          <text class="finish-score-label">总得分</text>
+          <text class="finish-score-value">{{lastAiMessage.totalScore}}</text>
+          <text class="finish-score-unit">分</text>
+        </view>
+
+        <view wx:if="{{lastAiMessage && lastAiMessage.summary}}" class="finish-section">
+          <text class="finish-section-label">总结</text>
+          <text class="finish-section-text">{{lastAiMessage.summary}}</text>
+        </view>
+
+        <view wx:if="{{lastAiMessage && lastAiMessage.videoAnalysis}}" class="finish-section">
+          <text class="finish-section-label">视频分析</text>
+          <text class="finish-section-text">{{lastAiMessage.videoAnalysis}}</text>
+        </view>
+
+        <view wx:if="{{lastAiMessage && lastAiMessage.reportAnalysis}}" class="finish-section">
+          <text class="finish-section-label">报告分析</text>
+          <text class="finish-section-text">{{lastAiMessage.reportAnalysis}}</text>
+        </view>
+      </scroll-view>
+      <view class="finish-actions">
+        <button class="finish-btn primary" bindtap="goBack">返回首页</button>
+        <button class="finish-btn outline" bindtap="closeFinishModal">查看详情</button>
+      </view>
+    </view>
+  </view>
+</view>

@@ -25,7 +25,7 @@
           <view class="badge-icon">时间</view>
           <text class="muted">答辩时间：{{nextDefense.date}}</text>
         </view>
-        <button class="primary-btn">开始答辩</button>
+        <button class="primary-btn" bindtap="startDefense">开始答辩</button>
         <view style="margin-top: 16rpx; text-align: center;">
           <text class="link" bindtap="showTopicDescription">查看题目描述</text>
           <text class="muted" style="margin: 0 8rpx;">|</text>
@@ -79,6 +79,48 @@
           <view wx:if="{{uploadStatus === 'failed'}}" class="upload-error">
             <text class="error-text">上传失败，请重试</text>
             <button class="retry-btn" bindtap="selectVideo">重新上传</button>
+          </view>
+        </view>
+      </view>
+
+      <!-- 报告上传卡片 -->
+      <view class="card">
+        <view class="upload-box">
+          <view class="upload-icon">报告</view>
+          <text class="muted">上传答辩报告（PDF / Word 格式）</text>
+
+          <button class="outline-btn" bindtap="selectReport" disabled="{{isReportUploading}}">
+            {{hasUploadedReport ? '重新上传报告' : '选择报告，开始上传'}}
+          </button>
+
+          <!-- 文件信息显示 -->
+          <view wx:if="{{reportFileName}}" class="file-info">
+            <text class="file-size">{{reportFileName}}（{{reportFileSizeReadable}}）</text>
+          </view>
+
+          <!-- 上传进度 -->
+          <view wx:if="{{reportStatus === 'uploading'}}" class="upload-status">
+            <view class="progress-container">
+              <progress
+                percent="{{reportUploadProgress}}"
+                stroke-width="4"
+                active-color="#1890ff"
+                background-color="#f5f5f5"
+                active="{{true}}"
+              />
+              <text class="progress-text">{{reportUploadProgress}}%</text>
+            </view>
+          </view>
+
+          <!-- 上传成功 -->
+          <view wx:if="{{reportStatus === 'completed'}}" class="upload-success">
+            <text class="success-text">报告上传成功！</text>
+          </view>
+
+          <!-- 上传失败 -->
+          <view wx:if="{{reportStatus === 'failed'}}" class="upload-error">
+            <text class="error-text">上传失败，请重试</text>
+            <button class="retry-btn" bindtap="selectReport">重新上传</button>
           </view>
         </view>
       </view>

@@ -2,11 +2,11 @@ package com.ai_helper.ai_helper.Controller;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
+import com.ai_helper.ai_helper.pojo.dto.AiAnalysis;
 import com.ai_helper.ai_helper.pojo.dto.TopicDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseAnswers;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseStudentQuestions;
-import com.ai_helper.ai_helper.pojo.query.TextQuery;
 import com.ai_helper.ai_helper.result.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -92,8 +92,13 @@ public class chatController {
 
                     if (!questions.isEmpty()) {
                         log.info("找到 {} 个答辩题目，进入提问模式", questions.size());
+
+                        // 统计已提的额外问题数，用于动态限制
+                        int extraQuestionLimit = 2;
+                        int extraAskedCount = countExtraQuestions(topicId, userId);
+
                         StringBuilder contextPrompt = buildQuestionModePrompt(
-                                topicResult.getData(),questions, topicId, finalUserInput, userId);
+                                topicResult.getData(), questions, topicId, finalUserInput, userId, extraAskedCount, extraQuestionLimit);
 
                         return sendMessageWithMemory(existingQuestionIds, existingQuestionCount, userId, topicId, contextPrompt.toString(), finalSessionId, finalUserInput);
                     } else {
@@ -130,7 +135,32 @@ public class chatController {
         return chat(prompt, topicId, sessionId, userId);
     }
 
-private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, int existingQuestionCount, String userId, Integer topicId, String fullPrompt, String sessionId, String userInput) {
+    /**
+     * 统计该学生该主题下已提的额外问题数
+     */
+    private int countExtraQuestions(Integer topicId, String userId) {
+        try {
+            Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
+            if (defenseId == null) return 0;
+            List<DefenseStudentQuestions> list = defenseStudentQuestionsMapper.getQuestionsByDefenseId(defenseId);
+            // 额外问题只有 ai 类型的（预设问题是 teacher 类型）
+            int count = 0;
+            if (list != null) {
+                for (DefenseStudentQuestions q : list) {
+                    if ("ai".equals(q.getQuestionType())) {
+                        count++;
+                    }
+                }
+            }
+            log.info("已提额外问题数: {}/{}", count, defenseId);
+            return count;
+        } catch (Exception e) {
+            log.warn("统计额外问题数失败", e);
+            return 0;
+        }
+    }
+
+    private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, int existingQuestionCount, String userId, Integer topicId, String fullPrompt, String sessionId, String userInput) {
         List<Message> history = chatMemory.get(sessionId);
 
         log.info("【调试】sessionId: {}, 获取到的历史消息数量: {}", sessionId, history.size());
@@ -182,71 +212,84 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
 
                     if (userInput != null && !userInput.trim().isEmpty()) {
                         Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
-                        
-                        if (assistantCountInHistory < existingQuestionCount) {
-                            log.info("✅ 当前是第{}个预设问题的回答（共{}个），准备保存",
-                                    assistantCountInHistory + 1, existingQuestionCount);
+
+                        Double score = extractScoreFromResponse(aiResponse);
+                        String feedback = extractFeedbackFromResponse(aiResponse);
+
+                        // 用 <= 确保第 N 个预设问题的回答能进入预设路径
+                        if (assistantCountInHistory <= existingQuestionCount) {
+                            log.info("当前是第{}个预设问题的回答（共{}个），准备保存",
+                                    assistantCountInHistory, existingQuestionCount);
 
                             try {
-                                if (assistantCountInHistory < existingQuestionIds.size()) {
-                                    Integer currentQuestionId = existingQuestionIds.get(assistantCountInHistory);
+                                int questionIndex = assistantCountInHistory - 1;
+                                if (questionIndex >= 0 && questionIndex < existingQuestionIds.size()) {
+                                    Integer currentQuestionId = existingQuestionIds.get(questionIndex);
                                     log.info("保存预设问题回答 - questionId: {}, userId: {}", currentQuestionId, userId);
-
-                                    Double score = extractScoreFromResponse(aiResponse);
-                                    String feedback = extractFeedbackFromResponse(aiResponse);
 
                                     defenseRecordsService.savePresetQuestionAnswer(
                                             topicId, userId, currentQuestionId, userInput, feedback, score);
 
-                                    log.info("✅ 预设问题回答保存成功，得分: {}, 评价长度: {}", score, feedback.length());
+                                    log.info("预设问题回答保存成功，得分: {}, 评价长度: {}", score, feedback != null ? feedback.length() : 0);
                                 } else {
-                                    log.warn("⚠️ 无法获取对应的预设问题ID");
+                                    log.warn("无法获取对应的预设问题ID");
                                 }
                             } catch (Exception e) {
-                                log.error("❌ 保存预设问题回答时发生异常", e);
+                                log.error("保存预设问题回答时发生异常", e);
                             }
                         } else {
-                            log.info("✅ 额外问题阶段（历史AI消息数={}, 预设问题数={}）",
+                            log.info("额外问题阶段（历史AI消息数={}, 预设问题数={}）",
                                     assistantCountInHistory, existingQuestionCount);
 
-                            Double score = extractScoreFromResponse(aiResponse);
-                            String feedback = extractFeedbackFromResponse(aiResponse);
+                            // 保存总结/视频分析/报告分析到答辩记录
+                            AiAnalysis aiAnalysis = new AiAnalysis();
+                            aiAnalysis.setDefenseId(defenseId);
+                            aiAnalysis.setUserId(userId);
+                            aiAnalysis.setFeedback(summary(aiResponse));
+                            aiAnalysis.setVideoAnalysis(videoAnalysis(aiResponse));
+                            aiAnalysis.setReportAnalysis(reportAnalysis(aiResponse));
 
-                            if (defenseId == null) {
-                                log.error("❌ defenseId 为 null，无法保存额外问题回答");
-                            } else {
-                                int currentExtraQuestionIndex = assistantCountInHistory - existingQuestionCount + 1;
-                                
-                                String currentQuestionBeingAnswered = getCurrentQuestionFromHistory(history, existingQuestionCount, currentExtraQuestionIndex, defenseId);
+                            // 提取总得分并设置到 AiAnalysis
+                            Double totalScore = extractTotalScoreFromResponse(aiResponse);
+                            if (totalScore != null) {
+                                aiAnalysis.setScore(totalScore);
+                                log.info("设置总得分: {} 到 defense_records", totalScore);
+                            }
 
-                                log.info("【调试】当前正在回答第{}个额外问题: {}", currentExtraQuestionIndex, currentQuestionBeingAnswered != null ? currentQuestionBeingAnswered.substring(0, Math.min(50, currentQuestionBeingAnswered.length())) : "未找到");
+                            if (aiAnalysis.getFeedback() != null || aiAnalysis.getVideoAnalysis() != null || aiAnalysis.getReportAnalysis() != null) {
+                                log.info("检测到总结内容，准备保存答辩总反馈");
+                                defenseAnswersMapper.insertAiFeedback(aiAnalysis);
+                                log.info("答辩总结保存成功");
+                            }
 
-                                if (currentQuestionBeingAnswered != null && !currentQuestionBeingAnswered.isEmpty()) {
-                                    log.info("✅ 找到当前问题,准备保存问题和回答");
-                                    
-                                    DefenseStudentQuestions existingQuestion = findExistingStudentQuestion(defenseId, currentQuestionBeingAnswered);
+                            if (defenseId != null) {
+                                // 从历史中获取上一条AI消息末尾的问题（即当前正在回答的问题）
+                                String currentQuestion = extractQuestionFromLastAiMessage(history);
+                                log.info("从历史中提取当前问题: {}",
+                                        currentQuestion != null ? currentQuestion.substring(0, Math.min(50, currentQuestion.length())) : "未找到");
+
+                                if (currentQuestion != null && !currentQuestion.isEmpty()) {
+                                    DefenseStudentQuestions existingQuestion = findExistingStudentQuestion(defenseId, currentQuestion);
 
                                     Integer sqId;
                                     if (existingQuestion != null) {
                                         sqId = existingQuestion.getSqId();
-                                        log.info("✅ 使用已存在的问题记录 - sqId: {}", sqId);
+                                        log.info("使用已存在的额外问题记录 - sqId: {}", sqId);
                                     } else {
                                         int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
-
                                         DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
                                         studentQuestion.setDefenseId(defenseId);
                                         studentQuestion.setQuestionId(null);
-                                        studentQuestion.setCustomQuestion(currentQuestionBeingAnswered);
+                                        studentQuestion.setCustomQuestion(currentQuestion);
                                         studentQuestion.setCustomStandardAnswer("");
                                         studentQuestion.setQuestionType("ai");
                                         studentQuestion.setSort(nextSort);
                                         studentQuestion.setCreatedAt(java.time.LocalDateTime.now());
-
                                         defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
                                         sqId = studentQuestion.getSqId();
-                                        log.info("✅ 创建新问题记录 - sqId: {}, sort: {}", sqId, nextSort);
+                                        log.info("创建新的额外问题记录 - sqId: {}, sort: {}", sqId, nextSort);
                                     }
-                                    
+
                                     if (sqId != null) {
                                         DefenseAnswers answer = new DefenseAnswers();
                                         answer.setDefenseId(defenseId);
@@ -256,108 +299,42 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                                         answer.setFeedback(feedback);
                                         answer.setScore(score != null ? new java.math.BigDecimal(score) : null);
                                         answer.setCreatedAt(java.time.LocalDateTime.now());
-                                        
                                         defenseAnswersMapper.insertAnswer(answer);
-                                        log.info("✅ 额外问题回答保存成功 - sqId: {}, 得分: {}", sqId, score);
-                                    } else {
-                                        log.warn("⚠️ sqId 为 null，无法保存回答");
+                                        log.info("额外问题回答保存成功 - sqId: {}, 得分: {}", sqId, score);
                                     }
                                 } else {
-                                    log.warn("⚠️ 未找到当前正在回答的额外问题，可能是第一个额外问题");
-                                    
-                                    String firstExtraQuestion = extractFirstExtraQuestionFromPreviousAiResponse(history, existingQuestionCount);
-                                    
-                                    if (firstExtraQuestion != null && !firstExtraQuestion.isEmpty()) {
-                                        log.info("✅ 从上一条AI消息中提取到第一个额外问题: {}", firstExtraQuestion.substring(0, Math.min(50, firstExtraQuestion.length())));
-                                        
-                                        DefenseStudentQuestions existingFirstQuestion = findExistingStudentQuestion(defenseId, firstExtraQuestion);
-                                        
-                                        Integer sqId;
-                                        if (existingFirstQuestion != null) {
-                                            sqId = existingFirstQuestion.getSqId();
-                                            log.info("✅ 使用已存在的第一个额外问题 - sqId: {}", sqId);
-                                        } else {
-                                            int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
-                                            
-                                            DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
-                                            studentQuestion.setDefenseId(defenseId);
-                                            studentQuestion.setQuestionId(null);
-                                            studentQuestion.setCustomQuestion(firstExtraQuestion);
-                                            studentQuestion.setCustomStandardAnswer("");
-                                            studentQuestion.setQuestionType("ai");
-                                            studentQuestion.setSort(nextSort);
-                                            studentQuestion.setCreatedAt(java.time.LocalDateTime.now());
-                                            
-                                            defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
-                                            sqId = studentQuestion.getSqId();
-                                            log.info("✅ 创建第一个额外问题记录 - sqId: {}, sort: {}", sqId, nextSort);
-                                        }
-                                        
-                                        if (sqId != null) {
-                                            DefenseAnswers answer = new DefenseAnswers();
-                                            answer.setDefenseId(defenseId);
-                                            answer.setQuestionId(null);
-                                            answer.setSqId(sqId);
-                                            answer.setStudentAnswer(userInput);
-                                            answer.setFeedback(feedback);
-                                            answer.setScore(score != null ? new java.math.BigDecimal(score) : null);
-                                            answer.setCreatedAt(java.time.LocalDateTime.now());
-                                            
-                                            defenseAnswersMapper.insertAnswer(answer);
-                                            log.info("✅ 第一个额外问题回答保存成功 - sqId: {}, 得分: {}", sqId, score);
-                                        }
-                                    } else {
-                                        log.warn("⚠️ 无法从历史中提取第一个额外问题");
-                                    }
-                                }
-                                
-                                String nextQuestion = extractNextQuestionFromResponse(aiResponse);
-                                if (nextQuestion != null && !nextQuestion.isEmpty()) {
-                                    log.info("✅ AI提出了新的额外问题，检查是否需要保存");
-                                    
-                                    DefenseStudentQuestions existingNextQuestion = findExistingStudentQuestion(defenseId, nextQuestion);
-                                    
-                                    if (existingNextQuestion == null) {
-                                        int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
-                                        
-                                        DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
-                                        studentQuestion.setDefenseId(defenseId);
-                                        studentQuestion.setQuestionId(null);
-                                        studentQuestion.setCustomQuestion(nextQuestion);
-                                        studentQuestion.setCustomStandardAnswer("");
-                                        studentQuestion.setQuestionType("ai");
-                                        studentQuestion.setSort(nextSort);
-                                        studentQuestion.setCreatedAt(java.time.LocalDateTime.now());
-                                        
-                                        defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
-                                        log.info("✅ 新额外问题已保存 - sqId: {}, sort: {}", studentQuestion.getSqId(), nextSort);
-                                    } else {
-                                        log.info("✅ 新额外问题已存在，跳过保存 - sqId: {}", existingNextQuestion.getSqId());
-                                    }
-                                } else {
-                                    log.info("ℹ️ AI回复中没有新的额外问题");
+                                    log.warn("无法从历史中提取当前问题，跳过额外问题保存");
                                 }
                             }
                         }
+
+                        // ===== 无论预设题还是额外题阶段，都保存AI回复中的下一个额外问题 =====
+                        if (defenseId != null) {
+                            String nextQuestion = extractNextQuestionFromResponse(aiResponse);
+                            if (nextQuestion != null && !nextQuestion.isEmpty()) {
+                                submitIfNewQuestion(defenseId, nextQuestion);
+                            } else {
+                                log.info("AI回复中没有新的额外问题");
+                            }
+                        }
                     } else {
-                        log.info("⏸️ 用户未提供回答（可能是首次提问或总结阶段），不保存回答记录");
+                        log.info("用户未提供回答（可能是首次提问或总结阶段），不保存回答记录");
                     }
                 } else {
-                    log.warn("⚠️ topicId 或 userId 为空，跳过问题保存检查 - topicId: {}, userId: {}", topicId, userId);
+                    log.warn("topicId 或 userId 为空，跳过问题保存检查 - topicId: {}, userId: {}", topicId, userId);
                 }
 
-                if (userInput != null && !userInput.trim().isEmpty()) {
-                    log.info("【调试】准备保存消息到Redis - sessionId: {}", sessionId);
-
-                    chatMemory.add(sessionId, List.of(
-                        new UserMessage(userInput),
-                        new AssistantMessage(aiResponse)
-                    ));
-
-                    log.info("【调试】消息已保存到Redis");
-
-                    List<Message> verifyHistory = chatMemory.get(sessionId);
-                    log.info("【调试】验证：保存后Redis中的消息数量: {}", verifyHistory.size());
+                if (aiResponse != null && !aiResponse.trim().isEmpty()) {
+                    if (userInput != null && !userInput.trim().isEmpty()) {
+                        chatMemory.add(sessionId, List.of(
+                            new UserMessage(userInput),
+                            new AssistantMessage(aiResponse)
+                        ));
+                    } else {
+                        chatMemory.add(sessionId, List.of(
+                            new AssistantMessage(aiResponse)
+                        ));
+                    }
                 }
 
                 log.info("会话记忆已更新 - sessionId: {}, 用户消息长度：{}, AI 回复长度：{}",
@@ -367,11 +344,65 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                 log.error("存储会话记忆失败 - sessionId: {}, error: {}", sessionId, e.getMessage(), e);
             }
 
-
-
         });
 
 
+    }
+
+    /**
+     * 从历史中提取最后一条AI消息末尾的问题（【问题】标记后的内容）
+     */
+    private String extractQuestionFromLastAiMessage(List<Message> history) {
+        if (history == null || history.isEmpty()) return null;
+
+        // 从后往前找最后一条 AI 消息
+        for (int i = history.size() - 1; i >= 0; i--) {
+            Message msg = history.get(i);
+            if (msg instanceof AssistantMessage) {
+                String text = ((AssistantMessage) msg).getText();
+                if (text != null && text.contains("【问题】")) {
+                    int start = text.indexOf("【问题】") + 4;
+                    String question = text.substring(start).trim();
+                    if (!question.isEmpty()) return question;
+                }
+                // 没有【问题】标记则返回最后一行带问号的句子
+                String[] lines = text.split("\n");
+                for (int j = lines.length - 1; j >= 0; j--) {
+                    String line = lines[j].trim();
+                    if (!line.isEmpty() && (line.contains("?") || line.contains("？"))) {
+                        return line;
+                    }
+                }
+                break;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 如果问题不存在则保存到 defense_student_questions
+     */
+    private void submitIfNewQuestion(Integer defenseId, String question) {
+        try {
+            DefenseStudentQuestions existing = findExistingStudentQuestion(defenseId, question);
+            if (existing != null) {
+                log.info("额外问题已存在，跳过保存 - sqId: {}", existing.getSqId());
+                return;
+            }
+            int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
+            DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
+            studentQuestion.setDefenseId(defenseId);
+            studentQuestion.setQuestionId(null);
+            studentQuestion.setCustomQuestion(question);
+            studentQuestion.setCustomStandardAnswer("");
+            studentQuestion.setQuestionType("ai");
+            studentQuestion.setSort(nextSort);
+            studentQuestion.setCreatedAt(java.time.LocalDateTime.now());
+            defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
+            log.info("新额外问题已保存 - sqId: {}, sort: {}", studentQuestion.getSqId(), nextSort);
+        } catch (Exception e) {
+            log.warn("保存额外问题时发生异常", e);
+        }
     }
 
     private int countAssistantMessages(List<Message> history) {
@@ -381,86 +412,8 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                 count++;
             }
         }
-        log.info("【调试】countAssistantMessages - 历史消息总数: {}, AI消息数: {}", history.size(), count);
+        log.info("countAssistantMessages - 历史消息总数: {}, AI消息数: {}", history.size(), count);
         return count;
-    }
-
-    private String extractFirstExtraQuestionFromPreviousAiResponse(List<Message> history, int existingQuestionCount) {
-        if (history == null || history.isEmpty()) {
-            return null;
-        }
-        
-        int aiCount = 0;
-        for (int i = history.size() - 1; i >= 0; i--) {
-            Message msg = history.get(i);
-            if (msg instanceof AssistantMessage) {
-                aiCount++;
-                
-                if (aiCount == 1) {
-                    String aiText = ((AssistantMessage) msg).getText();
-                    
-                    if (aiText.contains("【问题】")) {
-                        int startIndex = aiText.indexOf("【问题】") + 4;
-                        String question = aiText.substring(startIndex).trim();
-                        
-                        if (!question.isEmpty()) {
-                            log.info("从上一条AI消息中提取到第一个额外问题");
-                            return question;
-                        }
-                    }
-                    
-                    String[] lines = aiText.split("\n");
-                    for (int j = lines.length - 1; j >= 0; j--) {
-                        String line = lines[j].trim();
-                        if (!line.isEmpty() &&
-                            (line.contains("?") || line.contains("？") ||
-                             line.matches(".*请.*回答.*") || line.matches(".*你的.*看法.*"))) {
-                            log.info("从上一条AI消息最后一行提取到问题: {}", line.substring(0, Math.min(50, line.length())));
-                            return line;
-                        }
-                    }
-                    
-                    break;
-                }
-            }
-        }
-        
-        return null;
-    }
-
-    private String extractQuestionFromResponse(String aiResponse, int assistantCount, int existingQuestionCount) {
-        if (aiResponse == null || aiResponse.isEmpty()) {
-            return null;
-        }
-
-        if (assistantCount >= existingQuestionCount) {
-            if (aiResponse.contains("【总结】")) {
-                log.info("检测到总结内容，不提取问题");
-                return null;
-            }
-
-            if (aiResponse.contains("【问题】")) {
-                int startIndex = aiResponse.indexOf("【问题】") + 4;
-                String question = aiResponse.substring(startIndex).trim();
-                log.info("从【问题】标记中提取到问题: {}", question.substring(0, Math.min(50, question.length())));
-                return question;
-            }
-        }
-
-        String[] lines = aiResponse.split("\n");
-        for (int i = lines.length - 1; i >= 0; i--) {
-            String line = lines[i].trim();
-            if (!line.isEmpty() &&
-                (line.contains("?") || line.contains("？") ||
-                 line.matches(".*请.*回答.*") || line.matches(".*你的.*看法.*") ||
-                 line.matches(".*你怎么.*"))) {
-                log.info("从最后一行提取到问题: {}", line.substring(0, Math.min(50, line.length())));
-                return line;
-            }
-        }
-
-        log.info("未找到明确的问题，返回完整回复");
-        return aiResponse;
     }
 
     private String extractNextQuestionFromResponse(String aiResponse) {
@@ -477,27 +430,6 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                 return question;
             }
         }
-
-        return null;
-    }
-
-    private String getCurrentQuestionFromHistory(List<Message> history, int existingQuestionCount, int currentExtraQuestionIndex, Integer defenseId) {
-        if (history == null || history.isEmpty()) {
-            return null;
-        }
-
-        log.info("【调试】查找第{}个额外问题", currentExtraQuestionIndex);
-
-        List<com.ai_helper.ai_helper.pojo.entity.DefenseStudentQuestions> savedQuestions =
-            defenseStudentQuestionsMapper.getQuestionsByDefenseId(defenseId);
-
-        if (currentExtraQuestionIndex > 0 && savedQuestions != null && currentExtraQuestionIndex <= savedQuestions.size()) {
-            String question = savedQuestions.get(currentExtraQuestionIndex - 1).getCustomQuestion();
-            log.info("从已保存的问题中找到第{}个额外问题: {}", currentExtraQuestionIndex, question.substring(0, Math.min(50, question.length())));
-            return question;
-        }
-
-        log.warn("⚠️ 无法从数据库中找到第{}个额外问题，savedQuestions大小: {}", currentExtraQuestionIndex, savedQuestions != null ? savedQuestions.size() : 0);
 
         return null;
     }
@@ -626,42 +558,110 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                 int endIndex = aiResponse.length();
                 if (aiResponse.contains("【视频分析】")) {
                     endIndex = aiResponse.indexOf("【视频分析】");
+                } else if (aiResponse.contains("【报告分析】")) {
+                    endIndex = aiResponse.indexOf("【报告分析】");
+                } else if (aiResponse.contains("【总得分】")) {
+                    endIndex = aiResponse.indexOf("【总得分】");
                 }
 
                 String summary = aiResponse.substring(startIndex, endIndex).trim();
-                log.info("从【评价】标记中提取到评价内容，长度: {}", summary.length());
+                log.info("从【总结】标记中提取到总结内容，长度: {}", summary.length());
                 return summary;
             }
-
-            String[] lines = aiResponse.split("\n");
-            StringBuilder feedbackBuilder = new StringBuilder();
-
-            for (String line : lines) {
-                if (line.trim().startsWith("【视频分析】") ||
-                        line.trim().startsWith("【报告分析】") ||
-                        line.trim().startsWith("【总得分】")) {
-                    break;
-                }
-                if (!line.trim().isEmpty()) {
-                    if (feedbackBuilder.length() > 0) {
-                        feedbackBuilder.append("\n");
-                    }
-                    feedbackBuilder.append(line);
-                }
-            }
-
-            if (feedbackBuilder.length() > 0) {
-                log.info("从行解析中提取总结，长度: {}", feedbackBuilder.length());
-                return feedbackBuilder.toString();
-            }
+            log.info("未找到【总结】标记");
+            return null;
 
         } catch (Exception e) {
             log.warn("提取总结失败: {}", e.getMessage());
         }
 
-        log.info("未找到明确的总结标记，返回完整回复");
-        return aiResponse;
+        return null;
     }
+
+    private String videoAnalysis (String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) {
+            return aiResponse;
+        }
+        try {
+            if (aiResponse.contains("【视频分析】")) {
+                int startIndex = aiResponse.indexOf("【视频分析】")+ 6;
+
+                int endIndex = aiResponse.length();
+                if (aiResponse.contains("【报告分析】")) {
+                    endIndex = aiResponse.indexOf("【报告分析】");
+                } else if (aiResponse.contains("【总得分】")) {
+                    endIndex = aiResponse.indexOf("【总得分】");
+                }
+
+                String summary = aiResponse.substring(startIndex, endIndex).trim();
+                log.info("从【视频分析】标记中提取到总结内容，长度: {}", summary.length());
+                return summary;
+            }
+            log.info("未找到【视频分析】标记");
+            return null;
+
+        } catch (Exception e) {
+            log.warn("提取视频分析失败: {}", e.getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * 从AI回复中提取总得分（【总得分】标记后的数字）
+     */
+    private Double extractTotalScoreFromResponse(String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) {
+            return null;
+        }
+        try {
+            if (aiResponse.contains("【总得分】")) {
+                int startIndex = aiResponse.indexOf("【总得分】") + 5;
+                int endIndex = aiResponse.indexOf("\n", startIndex);
+                if (endIndex == -1) {
+                    endIndex = aiResponse.length();
+                }
+                String scoreStr = aiResponse.substring(startIndex, endIndex).trim();
+                scoreStr = scoreStr.replaceAll("[^0-9.]", "");
+                if (!scoreStr.isEmpty()) {
+                    double score = Double.parseDouble(scoreStr);
+                    log.info("从【总得分】标记中提取到总分数: {}", score);
+                    return score;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("提取总得分失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String reportAnalysis (String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) {
+            return aiResponse;
+        }
+        try {
+            if (aiResponse.contains("【报告分析】")) {
+                int startIndex = aiResponse.indexOf("【报告分析】") + 6;
+
+                int endIndex = aiResponse.length();
+                if (aiResponse.contains("【总得分】")) {
+                    endIndex = aiResponse.indexOf("【总得分】");
+                }
+
+                String summary = aiResponse.substring(startIndex, endIndex).trim();
+                log.info("从【报告分析】标记中提取到总结内容，长度: {}", summary.length());
+                return summary;
+            }
+            log.info("未找到【报告分析】标记");
+            return null;
+
+        } catch (Exception e) {
+            log.warn("提取报告分析失败: {}", e.getMessage());
+        }
+
+        return null;
+    }
+
 
     private Flux<String> handleFallback(String userId, Integer topicId, String prompt, String reason, String sessionId, String userInput) {
         String fallbackPrompt = reason + "，直将接回答问题。\n\n" + prompt;
@@ -670,7 +670,8 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
 
     @SuppressWarnings("unchecked")
     private StringBuilder buildQuestionModePrompt(Object topicData, List<DefenseQuestions> questions,
-                                                  Integer topicId, String prompt,String userId) {
+                                                  Integer topicId, String prompt, String userId,
+                                                  int extraAskedCount, int extraQuestionLimit) {
         StringBuilder contextPrompt = new StringBuilder();
         contextPrompt.append("=== 答辩考试场景 ===\n\n");
 
@@ -691,7 +692,6 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
                 contextPrompt.append("主题描述：").append(topic.getTopicDescription()).append("\n");
             }
         }
-        TextQuery videoContent = defenseRecordsService.selectVideoAndPptWords(topicId,userId);
 
         contextPrompt.append("\n【学生上传答辩视频转换的文字以及ppt提取的文字】（你可以参考这些进行后续提问）\n");
 
@@ -712,13 +712,16 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
             }
         }
 
+        int remainingExtra = extraQuestionLimit - extraAskedCount;
+
         contextPrompt.append("\n\n【答辩规则】\n");
         contextPrompt.append("1. 你必须严格按照题目列表中的问题进行提问，不能更改问题内容\n");
         contextPrompt.append("2. 每次只提一个问题，等待学生回答\n");
         contextPrompt.append("3. 根据学生的回答，使用评分参考进行评价\n");
         contextPrompt.append("4. 题目列表提问完后，你可以根据答辩项目以及学生答辩的ppt和内容进行适当多余提问\n");
-        contextPrompt.append("5. 【重要】额外提问最多只能提 2 个问题，提完 2 个额外问题后必须进入总结阶段\n");
-        contextPrompt.append("6. 完成所有问题（预设问题 + 最多2个额外问题）后，给出总体评价和总结\n\n");
+        contextPrompt.append("5. 【重要】你已经提了 ").append(extraAskedCount).append(" 个额外问题，最多还能提 ").append(remainingExtra).append(" 个额外问题。")
+                .append("提完这 ").append(remainingExtra).append(" 个后必须进入总结阶段，不能再提任何新问题！\n");
+        contextPrompt.append("6. 完成所有问题（预设问题 + 最多").append(extraQuestionLimit).append("个额外问题）后，给出总体评价和总结\n\n");
 
         contextPrompt.append("【评分标准】\n");
         contextPrompt.append("- 每个问题满分 100 分\n");
@@ -729,6 +732,8 @@ private Flux<String> sendMessageWithMemory(List<Integer> existingQuestionIds, in
         contextPrompt.append("- 现在请开始考试：先向学生问好，然后直接提出第 1 个问题\n");
         contextPrompt.append("- 不要暴露你有参考答案，这些是给你的评分标准\n");
         contextPrompt.append("- 保持专业、严肃的考官语气\n\n");
+        contextPrompt.append("- 学生回答后直接进行下一个问题，不要换个方式提出相同问题！！！\n");
+        contextPrompt.append("- 如果学生回答'不知道'或表示无法回答，视为该题已作答，直接进入下一题，绝对不要重复或重述当前问题！\n\n");
 
         contextPrompt.append("【输出格式要求】\n");
         contextPrompt.append("- 如果你的回复中包含评价和新问题，请使用以下格式：\n");

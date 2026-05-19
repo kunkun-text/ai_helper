@@ -8,5 +8,14 @@
         VALUES 
         (#{defenseId}, #{questionId}, #{sqId}, #{studentAnswer}, #{score}, #{feedback}, #{createdAt})
     </insert>
+    <update id="insertAiFeedback">
+        update defense_records
+        set feedback = #{feedback},
+            video_analysis = #{videoAnalysis},
+            report_analysis = #{reportAnalysis},
+            score = #{score},
+            updated_at = NOW()
+        where defense_id = #{defenseId} and user_id = #{userId}
+    </update>
 
 </mapper>

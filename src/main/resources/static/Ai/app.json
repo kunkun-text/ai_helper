@@ -3,6 +3,7 @@
     "pages/login/login",
     "pages/register/register",
     "pages/student/student",
+    "pages/defense/defense",
     "pages/teacher/teacher",
     "pages/forgetPassword/forgetPassword",
     "pages/webview/webview"

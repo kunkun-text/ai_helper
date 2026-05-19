@@ -223,6 +223,7 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             } else {
                 log.error("❌ 预设问题回答保存失败");
             }
+
             
         } catch (Exception e) {
             log.error("❌ 保存预设问题回答时发生异常", e);
@@ -232,30 +233,32 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     @Override
     public Integer getOrCreateDefenseRecord(Integer topicId, String userId) {
         try {
-            Integer userIdInt = userId.matches("\\d+") ? Integer.parseInt(userId) : null;
-            
-            if (userIdInt == null) {
-                log.warn("userId格式不正确: {}", userId);
+            if (userId == null || userId.trim().isEmpty()) {
+                log.warn("userId为空");
                 return null;
             }
-            
-            Integer existingDefenseId = defenseRecordsMapper.getExistingDefenseRecord(userIdInt, topicId);
-            
-            if (existingDefenseId != null) {
-                log.info("找到已存在的答辩记录 - defenseId: {}", existingDefenseId);
-                return existingDefenseId;
+
+            String userNumber = userId.trim();
+
+            String internalUserId = defenseRecordsMapper.getUserIdByUserNumber(userNumber);
+
+            if (internalUserId == null) {
+                log.error("未找到用户: {}", userNumber);
+                return null;
             }
-            
-            int newDefenseId = defenseRecordsMapper.createDefenseRecord(userIdInt, topicId);
-            
-            if (newDefenseId > 0) {
-                log.info("创建新的答辩记录 - defenseId: {}", newDefenseId);
-                return newDefenseId;
+
+            defenseRecordsMapper.upsertDefenseRecord(internalUserId, topicId);
+
+            Integer defenseId = defenseRecordsMapper.getDefenseIdByUserAndTopic(internalUserId, topicId);
+
+            if (defenseId != null) {
+                log.info("获取/创建答辩记录成功 - defenseId: {}, userId: {}", defenseId, internalUserId);
+                return defenseId;
             } else {
-                log.error("创建答辩记录失败");
+                log.error("获取答辩记录失败 - userId: {}, topicId: {}", internalUserId, topicId);
                 return null;
             }
-            
+
         } catch (Exception e) {
             log.error("获取或创建答辩记录时发生异常", e);
             return null;

@@ -65,7 +65,17 @@ Page({
     selectedAnswers: null,
     
     // 添加视频上传状态
-    hasUploadedVideo: false
+    hasUploadedVideo: false,
+
+    // 报告上传相关数据
+    isReportUploading: false,
+    reportStatus: 'idle', // 'idle', 'uploading', 'completed', 'failed'
+    reportUploadProgress: 0,
+    reportFileName: '',
+    reportFileSizeReadable: '',
+
+    // 报告上传状态
+    hasUploadedReport: false
   },
 
   onLoad() {
@@ -323,6 +333,193 @@ Page({
     });
   },
   
+  // 更新报告上传状态
+  updateReportUploadStatus() {
+    let hasUploadedReport = false;
+
+    if (this.data.defenseTopics && this.data.defenseTopics.length > 0 &&
+        this.data.defenseRecords && this.data.defenseRecords.length > 0) {
+
+      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+
+      const existingRecord = this.data.defenseRecords.find(record => {
+        const recordTopicId = record.topicId || record.id;
+        const hasValidReport = record.defenseReportUrl &&
+                               record.defenseReportUrl !== 'abc' &&
+                               record.defenseReportUrl.trim() !== '';
+        return recordTopicId === currentTopicId && hasValidReport;
+      });
+
+      hasUploadedReport = !!existingRecord;
+    }
+
+    this.setData({
+      hasUploadedReport: hasUploadedReport
+    });
+  },
+
+  // 选择报告文件
+  selectReport() {
+    const that = this;
+
+    if (this.data.isReportUploading) {
+      wx.showToast({
+        title: '正在上传中，请稍候',
+        icon: 'none'
+      });
+      return;
+    }
+
+    wx.chooseMessageFile({
+      count: 1,
+      type: 'file',
+      success: function(res) {
+        if (res.tempFiles && res.tempFiles.length > 0) {
+          const file = res.tempFiles[0];
+          const fileName = file.name;
+          const fileSize = file.size;
+          const filePath = file.path;
+
+          // 校验文件类型（只允许文档类型）
+          const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+          const allowedExts = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'];
+          if (allowedExts.indexOf(ext) === -1) {
+            wx.showToast({
+              title: '不支持的文件格式，请上传PDF或Word文档',
+              icon: 'none',
+              duration: 3000
+            });
+            return;
+          }
+
+          // 校验文件大小（最大 50MB）
+          const MAX_SIZE = 50 * 1024 * 1024;
+          if (fileSize > MAX_SIZE) {
+            wx.showToast({
+              title: '文件过大，请上传小于50MB的文件',
+              icon: 'none',
+              duration: 3000
+            });
+            return;
+          }
+
+          that.setData({
+            reportFileName: fileName,
+            reportFileSizeReadable: that.formatFileSize(fileSize)
+          });
+
+          that.uploadReport(filePath, fileName);
+        }
+      },
+      fail: function(err) {
+        console.error('选择文件失败:', err);
+        if (err.errMsg && !err.errMsg.includes('cancel')) {
+          wx.showToast({
+            title: '选择文件失败',
+            icon: 'error'
+          });
+        }
+      }
+    });
+  },
+
+  // 上传报告
+  uploadReport(filePath, fileName) {
+    const that = this;
+
+    this.setData({
+      isReportUploading: true,
+      reportStatus: 'uploading',
+      reportUploadProgress: 0
+    });
+
+    // 模拟进度（wx.uploadFile 不支持实时进度）
+    let progressInterval = setInterval(() => {
+      let current = that.data.reportUploadProgress;
+      if (current < 90) {
+        that.setData({
+          reportUploadProgress: current + 5
+        });
+      } else {
+        clearInterval(progressInterval);
+      }
+    }, 200);
+
+    let topicId = null;
+    if (this.data.defenseTopics && this.data.defenseTopics.length > 0) {
+      topicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+    }
+
+    wx.uploadFile({
+      url: config.serverUrl + '/api/report/upload',
+      filePath: filePath,
+      name: 'file',
+      formData: {
+        userId: this.data.user.userNumber,
+        topicId: topicId || ''
+      },
+      header: {
+        'Authorization': 'Bearer ' + this.data.token
+      },
+      success: function(res) {
+        clearInterval(progressInterval);
+
+        console.log('报告上传响应:', res);
+
+        if (res.statusCode === 200) {
+          try {
+            const data = JSON.parse(res.data);
+            if (data.code === 1) {
+              that.setData({
+                reportStatus: 'completed',
+                isReportUploading: false,
+                reportUploadProgress: 100,
+                hasUploadedReport: true
+              });
+
+              wx.showToast({
+                title: '报告上传成功！',
+                icon: 'success'
+              });
+
+              // 延迟刷新报告状态
+              setTimeout(() => {
+                that.updateReportUploadStatus();
+                that.loadDefenseRecords(true);
+              }, 1000);
+            } else {
+              that.handleReportUploadError(data.msg || '上传失败');
+            }
+          } catch (e) {
+            that.handleReportUploadError('解析响应失败');
+          }
+        } else {
+          that.handleReportUploadError('服务器错误：' + res.statusCode);
+        }
+      },
+      fail: function(err) {
+        clearInterval(progressInterval);
+        console.error('报告上传请求失败:', err);
+        that.handleReportUploadError('网络请求失败');
+      }
+    });
+  },
+
+  // 处理报告上传错误
+  handleReportUploadError(errorMsg) {
+    console.error('报告上传错误:', errorMsg);
+    this.setData({
+      reportStatus: 'failed',
+      isReportUploading: false,
+      reportUploadProgress: 0
+    });
+    wx.showToast({
+      title: errorMsg,
+      icon: 'error',
+      duration: 3000
+    });
+  },
+
   // 加载答辩题目
   loadDefenseTopics() {
     const config = require('../../utils/config.js');
@@ -372,7 +569,30 @@ Page({
       complete: () => {
         // 更新视频上传状态
         this.updateVideoUploadStatus();
+        // 更新报告上传状态
+        this.updateReportUploadStatus();
       }
+    });
+  },
+
+  // 开始答辩
+  startDefense() {
+    const { defenseTopics, user } = this.data;
+
+    if (!defenseTopics || defenseTopics.length === 0) {
+      wx.showToast({
+        title: '暂无答辩题目',
+        icon: 'none'
+      });
+      return;
+    }
+
+    const topic = defenseTopics[0];
+    const topicId = topic.topicId || topic.id;
+    const topicName = topic.topicName;
+
+    wx.navigateTo({
+      url: `/pages/defense/defense?topicId=${topicId}&topicName=${encodeURIComponent(topicName)}&userId=${user.userNumber}`,
     });
   },
 
@@ -584,6 +804,8 @@ Page({
           
           // 更新视频上传状态
           that.updateVideoUploadStatus();
+          // 更新报告上传状态
+          that.updateReportUploadStatus();
         } else {
           wx.showToast({
             title: res.data.msg || '加载失败',
@@ -1240,6 +1462,7 @@ Page({
           // 更新视频上传状态（稍后更新，因为数据库可能还未完成）
           setTimeout(() => {
             that.updateVideoUploadStatus();
+            that.updateReportUploadStatus();
           }, 3000);
           
           // 提示用户视频正在后台处理

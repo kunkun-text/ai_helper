@@ -45,27 +45,21 @@ public class VideoProcessingServiceImpl implements VideoProcessingService {
             // 3. 更新或创建数据库记录
             if (topicId != null && userNumber != null) {
                 try {
-                    String oldVideoUrl = null;
+                    // 先查旧 video_url（用于删除旧文件）
+                    String oldVideoUrl = userId != null
+                        ? defenseRecordsMapper.getVideoUrlByUserIdAndTopicId(userId, topicId)
+                        : null;
 
-                    // 查询是否存在相同 userId 和 topicId 的记录
-                    int count = defenseRecordsMapper.selectByUserIdAndTopicId(userId, topicId);
-                    log.info("查询 userId: {} 和 topicId: {} 的记录数量：{}", userId, topicId, count);
-                    
-                    if (count > 0) {
-                        // 存在记录，先查询旧的 videoUrl
-                        oldVideoUrl = defenseRecordsMapper.getVideoUrlByUserIdAndTopicId(userId, topicId);
-                        
-                        // 更新 videoUrl
-                        defenseRecordsMapper.updateVideoUrlByUserIdAndTopicId(userId, topicId, videoUrl);
-                        log.info("更新视频 URL 成功 - userId: {}, topicId: {}", userId, topicId);
-                        
-                        // 删除阿里云原视频（异步删除，不阻塞主流程）
-                        deleteOldVideoAsync(oldVideoUrl, videoUrl);
+                    // 原子化 upsert（线程安全）：不存在则插入，存在则更新
+                    if (userId != null) {
+                        defenseRecordsMapper.upsertVideoUrl(userId, topicId, videoUrl);
+                        log.info("视频 URL 保存成功 - userId: {}, topicId: {}", userId, topicId);
                     } else {
-                        // 不存在记录，插入新记录
-                        defenseRecordsMapper.insertVideoUrl(userId, topicId, videoUrl);
-                        log.info("插入新视频记录成功 - userId: {}, topicId: {}", userId, topicId);
+                        log.warn("未找到用户: {}", userNumber);
                     }
+
+                    // 删除阿里云原视频（异步删除，不阻塞主流程）
+                    deleteOldVideoAsync(oldVideoUrl, videoUrl);
                 } catch (Exception e) {
                     log.error("数据库操作失败 - userId: {}, topicId: {}, videoUrl: {}", userId, topicId, videoUrl, e);
                     throw e; // 重新抛出异常，确保处理状态正确设置为失败
