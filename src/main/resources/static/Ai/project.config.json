@@ -1,6 +1,6 @@
 {
   "compileType": "miniprogram",
-  "libVersion": "3.14.2",
+  "libVersion": "3.14.3",
   "packOptions": {
     "ignore": [],
     "include": []
@@ -36,9 +36,11 @@
     "tabIndent": "auto",
     "tabSize": 2
   },
-  "appid": "",
+  "appid": "wx84e776809dda09b4",
   "simulatorPluginLibVersion": {},
-  "requiredBackgroundModes": ["audio"],
+  "requiredBackgroundModes": [
+    "audio"
+  ],
   "permission": {
     "scope.userLocation": {
       "desc": "你的位置信息将用于获取附近的服务"

@@ -31,3 +31,16 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### 日志 ###
+*.log
+hs_err_pid*
+replay_pid*
+
+### 本地配置（含密码/个人信息，不入库） ###
+src/main/resources/application.yml
+src/main/resources/application.properties
+
+### 微信开发者工具在仓库根目录生成的重复配置 ###
+/project.config.json
+/project.private.config.json

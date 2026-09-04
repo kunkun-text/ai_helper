@@ -517,3 +517,54 @@
   color: #1890ff;
   text-decoration: underline;
 }
+
+/* ======== Wait Timer ======== */
+.wait-timer {
+  font-size: 22rpx;
+  color: #999;
+  text-align: center;
+  margin-top: 8rpx;
+}
+
+/* ======== Retry Bar ======== */
+.retry-bar {
+  position: fixed;
+  bottom: 120rpx;
+  left: 0;
+  right: 0;
+  background: #fff3f3;
+  padding: 16rpx 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 99;
+  border-top: 2rpx solid #ffccc7;
+}
+
+.retry-error {
+  font-size: 24rpx;
+  color: #ff4d4f;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 16rpx;
+}
+
+.retry-btn {
+  width: 120rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  text-align: center;
+  background: #ff4d4f;
+  color: #fff;
+  border-radius: 28rpx;
+  font-size: 24rpx;
+  flex-shrink: 0;
+  border: none;
+  padding: 0;
+}
+
+.retry-btn::after {
+  border: none;
+}

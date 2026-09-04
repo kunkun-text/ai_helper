@@ -85,12 +85,19 @@
             <view class="typing-dot"></view>
             <view class="typing-dot"></view>
           </view>
+          <view wx:if="{{showWaitTimer}}" class="wait-timer">⏳ 已等待 {{waitSeconds}} 秒</view>
         </view>
       </view>
     </view>
 
     <view id="scroll-bottom"></view>
   </scroll-view>
+
+  <!-- 重试按钮 -->
+  <view wx:if="{{showRetry && !isFinished}}" class="retry-bar">
+    <text class="retry-error">{{lastError}}</text>
+    <button class="retry-btn" bindtap="retryLastMessage">重试</button>
+  </view>
 
   <!-- 底部输入栏 -->
   <view class="input-bar {{isFinished ? 'input-bar-hidden' : ''}}">
@@ -99,9 +106,9 @@
       disabled="{{isAiThinking || isFinished}}"
       confirm-type="send" bindconfirm="sendMessage"
       maxlength="2000" />
-    <button class="send-btn {{inputText && inputText.trim() && !isAiThinking ? 'send-active' : ''}}"
+    <button class="send-btn {{inputText && !isAiThinking && !isFinished ? 'send-active' : ''}}"
       bindtap="sendMessage"
-      disabled="{{!inputText || !inputText.trim() || isAiThinking || isFinished}}">
+      disabled="{{!inputText || isAiThinking || isFinished}}">
       发送
     </button>
   </view>

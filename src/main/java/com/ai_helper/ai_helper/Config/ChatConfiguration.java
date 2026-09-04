@@ -31,12 +31,9 @@ public class ChatConfiguration {
     @Bean
     @Primary
     public ChatClient chatClient(ChatModel chatModel, TextTools textTools) {
-        ChatClient.Builder builder = ChatClient
-                .builder(chatModel)
-                .defaultSystem("你是一个智能答辩助手，请以老师的身份回答问题。你可以根据需要使用工具查询视频内容来辅助回答。")
-                .defaultTools(textTools);
-        
-        return builder.build();
+        return ChatClient.builder(chatModel)
+                .defaultTools(textTools)
+                .build();
     }
     
     static class RedisChatMemory implements ChatMemory {

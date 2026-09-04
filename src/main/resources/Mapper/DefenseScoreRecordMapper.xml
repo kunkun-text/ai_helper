@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ai_helper.ai_helper.mapper.DefenseScoreRecordMapper">
+
+    <insert id="insertScoreRecord" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO defense_score_record
+            (defense_id, question_id, round_num, expression_score, logic_score,
+             professional_score, adaptability_score, innovation_score, comment, created_at)
+        VALUES (#{defenseId}, #{questionId}, #{roundNum}, #{expressionScore}, #{logicScore},
+                #{professionalScore}, #{adaptabilityScore}, #{innovationScore}, #{comment}, NOW())
+    </insert>
+
+    <select id="getScoreRecordsByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord">
+        SELECT id, defense_id, question_id, round_num,
+               expression_score, logic_score, professional_score,
+               adaptability_score, innovation_score, comment, created_at
+        FROM defense_score_record
+        WHERE defense_id = #{defenseId}
+        ORDER BY round_num ASC
+    </select>
+
+    <select id="aggregateScoresByDefenseId" resultType="java.util.HashMap">
+        SELECT
+            COUNT(*) AS total_rounds,
+            ROUND(AVG(expression_score), 1) AS avg_expression,
+            ROUND(AVG(logic_score), 1) AS avg_logic,
+            ROUND(AVG(professional_score), 1) AS avg_professional,
+            ROUND(AVG(adaptability_score), 1) AS avg_adaptability,
+            ROUND(AVG(innovation_score), 1) AS avg_innovation,
+            ROUND(AVG(expression_score + logic_score + professional_score + adaptability_score + innovation_score) / 5, 1) AS avg_total,
+            ROUND(SUM(expression_score + logic_score + professional_score + adaptability_score + innovation_score) / 5, 1) AS sum_total
+        FROM defense_score_record
+        WHERE defense_id = #{defenseId}
+    </select>
+
+</mapper>
