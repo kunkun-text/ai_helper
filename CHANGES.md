@@ -162,3 +162,80 @@ new:        DefenseScoreRecordMapper.xml
 | MySQL 新增表 | 执行 `docs/ddl_defense_score_record.sql` |
 | Redis | 无需改动 |
 | 小程序 | 微信开发者工具 → 清除缓存 → 重新编译 |
+
+---
+
+# 2026-09-10 改动（答辩 Bug 修复 + 每次答辩独立记录）
+
+> 改动日期：2026.9.10，涉及 9 个代码/前端文件 + 本文档
+
+## 改动概述
+
+修复两个答辩流程 Bug，并将答辩记录模型重构为「一次答辩 = 一条独立记录」：
+
+1. **Bug 1**：学生回答"不知道/不会"类短语时，AI 直接结束答辩给分 → 改为固定模板零分流程，继续下一题
+2. **Bug 2**：答辩结束后小程序前端看不到答辩记录 → 多原因修复（重复空壳记录、列表无排序、总分从不落库、页面不刷新）
+3. **记录模型**：所有答辩挤在同一条历史记录里 → 每次答辩独立生成一条记录，时间显示到分钟
+
+## 一、Bug 1：放弃作答固定零分流程（chatController.java）
+
+- 新增放弃作答判定：回答 ≤15 字且含"不知道/不会/不清楚/不了解/不懂/没学过/没复习/没准备/没印象/跳过"任一短语即命中
+- 命中后**不调用评分模型**（零延迟），走固定模板：`点评(0分说明) / 评分:0/50|0|0|0|0|0 / 下一题或总结`
+- 预设题阶段说"不会" → 本题五维 0 分落库 → 从题库取下一题继续答辩
+- 最后一道预设题说"不会" → 0 分后进入 AI 追问阶段（模型围绕课题生成追问，失败有兜底问题库）
+- 追问阶段说"不会" → 0 分继续追问；额度（2 次）用完后说"不会" → 0 分 + 固定总结正常收尾
+- 提示词同步加固：禁止模型因"不知道"输出『总结』提前结束答辩
+- 修复追问计数泄漏：预设题阶段的"下一题"不再误登记为 AI 追问（此前导致额度计数虚高、防提前总结机制失效）
+- 轮次统计口径统一：与 chat() 一致，基于未裁剪历史统计，避免裁剪后轮次错乱
+
+## 二、Bug 2 + 答辩记录模型重构
+
+### 后端
+- `getOrCreateDefenseRecord` 语义改为「取该学生该课题**进行中（pending）**的最新一条，没有才新建」
+- 进入答辩页的 `/api/chat/clear` 现在会：清理上次遗留的空壳记录（一题未答）+ 创建本次答辩的独立记录（答辩时间=当下，精确到秒）
+- 移除 `resetAiFollowUps`：追问额度按答辩记录隔离统计，新记录天然从零开始，无需再删除历史追问数据
+- 答辩结束收尾：总结生成时聚合各轮五维平均分（0-50 制）+ 总结写回 `defense_records.score/feedback`，状态置 `completed`
+- 学生端记录列表：按 `defense_id` 倒序（最新在前）+ 过滤一题未答的空壳记录 + 返回 `status` 字段
+
+### 前端（小程序）
+- 答辩记录页 `onShow` 自动刷新（答辩结束返回立即可见新记录，无需重启小程序）
+- 记录时间显示到分钟（如 `2026-09-10 14:30`，兼容 ISO 与空格两种时间格式）
+- 未答完就退出的记录显示"未完成"标注，正常结束的显示总分
+
+## 三、涉及文件（9 个）
+
+| 文件 | 改动 |
+|------|------|
+| `Controller/chatController.java` | 放弃作答固定流程及全套辅助方法、提示词加固、追问计数修复、答辩收尾聚合、clear 端点开启新记录 |
+| `Service/DefenseRecordsService.java` | 新增 `finishDefenseRecord`、`startNewDefenseRecord`，移除 `resetAiFollowUps` |
+| `Service/Impl/DefenseRecordsServiceImpl.java` | 实现上述接口；`getOrCreateDefenseRecord` 改为 pending 最新语义 |
+| `mapper/DefenseRecordsMapper.java` | 新增 `updateFinalResult`、`deleteEmptyShellRecords` |
+| `resources/Mapper/DefenseRecordsMapper.xml` | 同上两条 SQL；`getDefenseIdByUserAndTopic` 仅取 pending 最新；学生列表加排序/过滤/status |
+| `pojo/vo/DefenseRecordsVo.java` | 新增 `status` 字段 |
+| `pom.xml` | 移除重复声明的 `spring-boot-starter-web` 依赖 |
+| `static/Ai/pages/student/student.js` | onShow 刷新记录、时间格式化到分钟、status 处理 |
+| `static/Ai/pages/student/student.wxml` | 记录卡片"未完成"状态标注（首页与记录页两处） |
+
+## 四、数据库变更（已于 2026-09-10 手动执行）
+
+```sql
+-- 1. 清理历史重复空壳记录（defense_records 无唯一约束时 ON DUPLICATE KEY 失效，积累 172 条；
+--    全部子表数据挂在 defense_id=26 上，已备份至 defense_records_bak_20260910）
+DELETE FROM defense_records WHERE user_id=23 AND topic_id=28 AND defense_id > 26;
+
+-- 2. 老记录补聚合总分（按 defense_score_record 五维平均）并完结
+UPDATE defense_records SET score=23.3, status='completed' WHERE defense_id=26;
+
+-- 3. (user_id, topic_id) 保持普通索引——新模型允许多次答辩多条记录，不能加唯一索引
+ALTER TABLE defense_records DROP INDEX uk_user_topic, ADD INDEX idx_user_topic (user_id, topic_id);
+```
+
+> 注意：曾尝试加唯一索引 `uk_user_topic` 修复重复问题，后因记录模型改为"每次答辩一条"而撤销，勿再添加。
+
+## 五、验证要点
+
+- 重启后端 + 微信开发者工具重新编译小程序
+- 答辩中说"不知道" → 该题 0 分并继续下一题；全程说"不知道"也能正常走完并出总分
+- 每次答辩在记录列表中生成独立一条（时间到分钟），点开只显示本次问答内容
+- 中途退出的记录显示"未完成"，一题未答的不显示
+- 运行日志落盘于 `logs/ai-helper.log`（`application.yml` 本地配置，该文件不入库）
