@@ -92,6 +92,10 @@ Page({
   onShow() {
     console.log('学生页面onShow执行');
     this.loadUserInfo();
+    // 从答辩页返回时刷新答辩记录（onLoad只在首次进入执行，onShow补一次刷新）
+    if (this._recordsLoaded) {
+      this.loadDefenseRecords(true);
+    }
   },
 
   // 切换底部导航栏选项卡
@@ -718,6 +722,13 @@ Page({
     console.log('=== 用户信息加载完成 ===');
   },
 
+  // 格式化时间到分钟：兼容 "2026-09-10 14:30:00" 与 ISO "2026-09-10T14:30:00" 两种格式
+  formatDateTime(t) {
+    if (!t) return '';
+    const s = String(t).replace('T', ' ');
+    return s.length >= 16 ? s.substring(0, 16) : s;
+  },
+
   // 加载答辩记录
   loadDefenseRecords(isRefresh = false, specificPageNum = null) {
     const that = this;
@@ -776,9 +787,10 @@ Page({
           const records = backendRecords.map(record => ({
             id: record.defenseRecordId ? record.defenseRecordId.toString() : null,
             topic: record.topicName || '未设置题目',
+            status: record.status || 'pending',
             score: record.score ? parseFloat(record.score) : 0,
-            date: record.defenseTime ? record.defenseTime.split(' ')[0] : '',
-            defenseTime: record.defenseTime || '',
+            date: that.formatDateTime(record.defenseTime),
+            defenseTime: that.formatDateTime(record.defenseTime),
             feedback: record.score ? `AI评分：${Math.floor(parseFloat(record.score) * 0.9)}分。学生表现良好。` : '暂无评分'
           }));
           
@@ -829,6 +841,8 @@ Page({
         });
       },
       complete() {
+        // 标记已加载过记录，供 onShow 判断是否需要刷新
+        that._recordsLoaded = true;
         // 隐藏加载提示
         if (!isRefresh) {
           wx.hideLoading();
@@ -879,8 +893,8 @@ Page({
           const selectedRecord = {
             id: detailData.defenseId,
             topic: detailData.topicName || '未设置题目',
-            date: detailData.defenseTime ? detailData.defenseTime.split(' ')[0] : '',
-            defenseTime: detailData.defenseTime || '',
+            date: that.formatDateTime(detailData.defenseTime),
+            defenseTime: that.formatDateTime(detailData.defenseTime),
             score: detailData.score ? parseFloat(detailData.score) : 0,
             studentName: detailData.studentName || '',
             studentNumber: detailData.studentNumber || '',
