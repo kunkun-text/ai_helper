@@ -150,7 +150,8 @@
                   <text class="record-date">{{item.date}}</text>
                 </view>
                 <view class="record-score">
-                  <text class="score">{{item.score}}分</text>
+                  <text class="score" wx:if="{{item.status === 'completed'}}">{{item.score}}分</text>
+                  <text class="score" wx:else>未完成</text>
                   <text class="link-sm">查看详情</text>
                 </view>
               </view>
@@ -183,7 +184,8 @@
                 <text class="record-date">{{item.date}}</text>
               </view>
               <view class="record-score">
-                <text class="score">{{item.score}}分</text>
+                <text class="score" wx:if="{{item.status === 'completed'}}">{{item.score}}分</text>
+                <text class="score" wx:else>未完成</text>
                 <text class="link-sm">查看详情</text>
               </view>
             </view>
