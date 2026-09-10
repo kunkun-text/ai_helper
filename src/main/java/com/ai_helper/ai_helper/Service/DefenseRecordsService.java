@@ -41,9 +41,12 @@ public interface DefenseRecordsService {
     Integer getOrCreateDefenseRecord(Integer topicId, String userId);
 
     /**
-     * 开始新答辩前重置该学生该课题的历史 AI 追问（删除追问及其关联回答），使追问额度回到初始值
-     *
-     * @return 删除的追问条数
+     * 开始新答辩：清理该学生该课题遗留的空壳记录（一题未答），并创建本次答辩的独立记录
      */
-    int resetAiFollowUps(Integer topicId, String userId);
+    void startNewDefenseRecord(Integer topicId, String userId);
+
+    /**
+     * 答辩结束收尾：聚合总分（0-50制）与总结评语写回 defense_records
+     */
+    void finishDefenseRecord(Integer defenseId, java.math.BigDecimal totalScore, String summary);
 }
