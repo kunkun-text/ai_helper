@@ -21,6 +21,11 @@
         ORDER BY sort ASC
     </select>
 
+    <delete id="deleteAiQuestionsByDefenseId">
+        DELETE FROM defense_student_questions
+        WHERE defense_id = #{defenseId} AND question_type = 'ai'
+    </delete>
+
 </mapper>
 
 
