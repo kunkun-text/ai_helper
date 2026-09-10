@@ -17,6 +17,9 @@ public class DefenseRecordsVo {
     private String topicName;
     private String score;
 
+    /** 答辩状态：pending=进行中/未完成，completed=已结束 */
+    private String status;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Shanghai")
     private LocalDateTime defenseTime;
 
