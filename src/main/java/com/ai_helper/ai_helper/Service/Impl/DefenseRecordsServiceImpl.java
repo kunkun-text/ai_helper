@@ -247,9 +247,14 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                 return null;
             }
 
-            defenseRecordsMapper.upsertDefenseRecord(internalUserId, topicId);
-
+            // 每次答辩独立成一条记录：取该学生该课题进行中（pending）的最新一条
+            // （新记录由开始答辩时的 clear 接口创建），兜底：无进行中记录时才在此创建
             Integer defenseId = defenseRecordsMapper.getDefenseIdByUserAndTopic(internalUserId, topicId);
+
+            if (defenseId == null) {
+                defenseRecordsMapper.createDefenseRecord(internalUserId, topicId);
+                defenseId = defenseRecordsMapper.getDefenseIdByUserAndTopic(internalUserId, topicId);
+            }
 
             if (defenseId != null) {
                 log.info("获取/创建答辩记录成功 - defenseId: {}, userId: {}", defenseId, internalUserId);
@@ -266,27 +271,44 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     }
 
     @Override
-    public int resetAiFollowUps(Integer topicId, String userId) {
+    public void startNewDefenseRecord(Integer topicId, String userId) {
         try {
             if (topicId == null || userId == null || userId.trim().isEmpty()) {
-                log.warn("重置AI追问：topicId或userId为空");
-                return 0;
+                log.warn("开始新答辩：topicId或userId为空，跳过创建");
+                return;
             }
 
-            Integer defenseId = getOrCreateDefenseRecord(topicId, userId);
-            if (defenseId == null) {
-                log.error("重置AI追问：无法获取答辩记录 - topicId: {}, userId: {}", topicId, userId);
-                return 0;
+            String internalUserId = defenseRecordsMapper.getUserIdByUserNumber(userId.trim());
+            if (internalUserId == null) {
+                log.warn("开始新答辩：未找到用户 {}", userId);
+                return;
             }
 
-            int deletedAnswers = defenseAnswersMapper.deleteAiAnswersByDefenseId(defenseId);
-            int deletedQuestions = defenseStudentQuestionsMapper.deleteAiQuestionsByDefenseId(defenseId);
-            log.info("重置AI追问完成 - defenseId: {}, 删除追问 {} 条、关联回答 {} 条", defenseId, deletedQuestions, deletedAnswers);
-            return deletedQuestions;
+            int removed = defenseRecordsMapper.deleteEmptyShellRecords(internalUserId, topicId);
+            defenseRecordsMapper.createDefenseRecord(internalUserId, topicId);
+            log.info("开始新答辩：清理空壳记录 {} 条，已创建本次答辩记录 - topicId: {}, userId: {}",
+                    removed, topicId, internalUserId);
 
         } catch (Exception e) {
-            log.error("重置AI追问时发生异常", e);
-            return 0;
+            log.error("开始新答辩创建记录时发生异常", e);
+        }
+    }
+
+    @Override
+    public void finishDefenseRecord(Integer defenseId, java.math.BigDecimal totalScore, String summary) {
+        try {
+            if (defenseId == null) {
+                log.warn("答辩收尾：defenseId为空，跳过总分落库");
+                return;
+            }
+            int result = defenseRecordsMapper.updateFinalResult(defenseId, totalScore, summary);
+            if (result > 0) {
+                log.info("✅ 答辩总分落库成功 - defenseId: {}, 总分: {}", defenseId, totalScore);
+            } else {
+                log.warn("⚠️ 答辩总分落库失败，未找到记录 - defenseId: {}", defenseId);
+            }
+        } catch (Exception e) {
+            log.error("❌ 答辩总分落库时发生异常 - defenseId: {}", defenseId, e);
         }
     }
 
