@@ -43,7 +43,7 @@ Page({
     wx.request({
       url: config.serverUrl + '/api/chat/clear',
       method: 'POST',
-      data: { sessionId: sid },
+      data: { sessionId: sid, topicId: this.data.topicId, userId: this.data.userId },
       header: {
         'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
         'content-type': 'application/json',
