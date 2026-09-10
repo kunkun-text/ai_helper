@@ -18,4 +18,9 @@
         where defense_id = #{defenseId} and user_id = #{userId}
     </update>
 
+    <delete id="deleteAiAnswersByDefenseId">
+        DELETE FROM defense_answers
+        WHERE defense_id = #{defenseId} AND sq_id IS NOT NULL
+    </delete>
+
 </mapper>
