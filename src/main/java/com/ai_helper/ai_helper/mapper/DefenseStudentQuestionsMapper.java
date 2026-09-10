@@ -14,4 +14,7 @@ public interface DefenseStudentQuestionsMapper {
     int getNextSortNumber(@Param("defenseId") Integer defenseId);
     
     List<DefenseStudentQuestions> getQuestionsByDefenseId(@Param("defenseId") Integer defenseId);
+
+    /** 删除指定答辩记录下所有历史 AI 追问（用于开始新答辩时重置追问额度） */
+    int deleteAiQuestionsByDefenseId(@Param("defenseId") Integer defenseId);
 }
