@@ -133,14 +133,14 @@ public class chatController {
                                 topicResult.getData(), questions, topicId, finalUserInput, userId,
                                 extraAskedCount, extraQuestionLimit, currentRound, existingQuestionIds);
 
-                        return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, userId, topicId,
+                        return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, extraAskedCount, userId, topicId,
                                 contextPrompt.toString(), finalSessionId, finalUserInput));
                     } else {
                         log.info("该题目下暂无问题，进入视频内容辅助回答模式");
                         StringBuilder contextPrompt = buildVideoAssistModePrompt(
                                 topicResult.getData(), topicId, finalUserInput);
 
-                        return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, userId, topicId,
+                        return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, 0, userId, topicId,
                                 contextPrompt.toString(), finalSessionId, finalUserInput));
                     }
                 } else {
@@ -155,7 +155,7 @@ public class chatController {
             }
         } else {
             log.info("无 topicId，使用通用模式回答");
-            return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, userId, null, finalUserInput, finalSessionId, finalUserInput));
+            return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, null, finalUserInput, finalSessionId, finalUserInput));
         }
     }
 
@@ -215,8 +215,21 @@ public class chatController {
             return Map.of("success", false, "message", "sessionId 为空");
         }
         chatMemory.clear(sessionId);
-        log.info("已清理 Redis 会话记忆 - sessionId: {}", sessionId);
-        return Map.of("success", true, "message", "已清理");
+
+        // 同步清掉该学生该课题历史遗留的 AI 追问及其回答，使追问额度恢复初始值
+        int removedFollowUps = 0;
+        try {
+            Integer topicId = body.get("topicId") != null ? Integer.parseInt(body.get("topicId").toString()) : null;
+            String userId = body.getOrDefault("userId", "").toString();
+            if (topicId != null && !userId.isEmpty()) {
+                removedFollowUps = defenseRecordsService.resetAiFollowUps(topicId, userId);
+            }
+        } catch (Exception e) {
+            log.warn("清理历史AI追问失败（不影响会话清理）: {}", e.getMessage());
+        }
+
+        log.info("已清理 Redis 会话记忆 - sessionId: {}, 清除历史AI追问: {} 条", sessionId, removedFollowUps);
+        return Map.of("success", true, "message", "已清理", "removedFollowUps", removedFollowUps);
     }
 
     // ==================== Prompt 构建（极简管道格式） ====================
@@ -265,6 +278,13 @@ public class chatController {
                 } else {
                     p.append("本题为整场答辩的最后一轮。学生回答完后请给出总结。注意：本轮不要输出『下一题』，最后一行改为：总结:（100字以内，对整场答辩的总体评价，先肯定优点，再指出整体不足和建议）\n");
                 }
+            } else {
+                // 预设题已问完的追问阶段：明确剩余额度，额度用完则要求本轮总结
+                if (remainingExtra > 0) {
+                    p.append("预设题已全部问完，还可追问").append(remainingExtra).append("个。请按格式输出点评/评分/下一题，“下一题”由你提出。\n");
+                } else {
+                    p.append("预设题与追问已全部问完，这是最后一轮。请按格式输出点评/评分，最后一行改为：总结:（100字以内，对整场答辩的总体评价，先肯定优点，再指出整体不足和建议）。不要输出『下一题』。\n");
+                }
             }
         }
 
@@ -278,7 +298,7 @@ public class chatController {
     // ==================== 消息发送与记忆管理 ====================
 
     private String sendMessageWithMemory(List<Integer> existingQuestionIds, int existingQuestionCount,
-                                                String userId, Integer topicId, String fullPrompt,
+                                                int extraAskedCount, String userId, Integer topicId, String fullPrompt,
                                                 String sessionId, String userInput) {
         List<Message> history = chatMemory.get(sessionId);
 
@@ -345,6 +365,9 @@ public class chatController {
                 .call()
                 .content();
         log.info("=== AI 原始返回内容: {}", aiResponse);
+
+        // 还未到最后一轮时，剥离模型提前输出的"总结"行，防止前端误判答辩提前结束
+        aiResponse = stripPrematureSummary(aiResponse, existingQuestionCount, extraAskedCount);
 
         try {
             if (topicId != null && userId != null) {
@@ -696,14 +719,39 @@ public class chatController {
         return null;
     }
 
-    /** 清洗下一题文本：截断"答案要点"等内容，防止评分参考泄露给学生 */
+    /** 清洗下一题文本：只保留第一行并截断"答案要点"等内容，防止评分参考或总结串入题目 */
     private String cleanNextQuestion(String q) {
         if (q == null) return null;
-        String cleaned = q;
+        String cleaned = q.trim();
+        int nl = cleaned.indexOf('\n');
+        if (nl > -1) cleaned = cleaned.substring(0, nl).trim();
         int idx = cleaned.indexOf("要点");
         if (idx > 0) cleaned = cleaned.substring(0, idx).trim();
         if (cleaned.isEmpty() || "无".equals(cleaned)) return null;
         return cleaned;
+    }
+
+    /**
+     * 还未到最后一轮时，剥离模型提前输出的"总结"行（含其后内容）。
+     * 仅在题库模式（existingQuestionCount > 0）下生效；追问额度用完的最后一轮允许总结。
+     */
+    private String stripPrematureSummary(String aiResponse, int existingQuestionCount, int extraAskedCount) {
+        if (aiResponse == null || aiResponse.isEmpty()) return aiResponse;
+        if (existingQuestionCount <= 0) return aiResponse;
+        if (extraAskedCount >= EXTRA_QUESTION_LIMIT) return aiResponse;
+
+        int pos = aiResponse.indexOf("总结:");
+        int posFull = aiResponse.indexOf("总结：");
+        if (pos == -1 || (posFull != -1 && posFull < pos)) pos = posFull;
+        if (pos == -1) return aiResponse;
+
+        if (pos == 0) {
+            // 整条回复只有总结：无法安全剥离，保留原样并告警（提示词已约束，正常流程极少出现）
+            log.warn("模型在非最后一轮输出了纯总结回复，未剥离: {}", aiResponse);
+            return aiResponse;
+        }
+        log.warn("模型在非最后一轮提前输出总结，已剥离: {}", aiResponse.substring(pos));
+        return aiResponse.substring(0, pos).trim();
     }
 
     private String extractQuestionFromLastAiMessage(List<Message> history) {
@@ -791,7 +839,7 @@ public class chatController {
     private Flux<String> handleFallback(String userId, Integer topicId, String prompt, String reason,
                                          String sessionId, String userInput) {
         String fallbackPrompt = reason + "，直接回答问题。\n\n" + prompt;
-        return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, userId, topicId, fallbackPrompt, sessionId, userInput));
+        return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, topicId, fallbackPrompt, sessionId, userInput));
     }
 
     // ==================== 视频辅助模式 Prompt ====================
