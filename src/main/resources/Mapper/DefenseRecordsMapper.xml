@@ -83,11 +83,15 @@
             u.profile_picture as profilePicture,
             dt.topic_name as topicName,
             dr.score,
+            dr.status,
             dr.created_at as defenseTime
         from    defense_records dr
                     left join users u on u.user_id = dr.user_id
                     left join defense_topics dt on dt.topic_id = dr.topic_id
         where u.user_number = #{userNumber}
+          and (dr.status = 'completed'
+               or exists (select 1 from defense_answers da where da.defense_id = dr.defense_id))
+        order by dr.defense_id desc
     </select>
     <select id="getDefenseTopic" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseTopics">
         select
@@ -197,9 +201,11 @@
         ON DUPLICATE KEY UPDATE updated_at = NOW()
     </insert>
 
+    <!-- 每次答辩独立成一条记录：只取进行中（pending）的最新一条，全部已完成则由调用方创建新记录 -->
     <select id="getDefenseIdByUserAndTopic" resultType="java.lang.Integer">
         SELECT defense_id FROM defense_records
-        WHERE user_id = #{userId} AND topic_id = #{topicId}
+        WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
+        ORDER BY defense_id DESC
         LIMIT 1
     </select>
 
@@ -208,5 +214,24 @@
         WHERE user_id = #{userId} AND topic_id = #{topicId}
         LIMIT 1
     </select>
+
+    <!-- 答辩结束收尾：写入聚合总分（0-50制）与总结评语 -->
+    <update id="updateFinalResult">
+        UPDATE defense_records
+        SET score = #{score},
+            feedback = #{summary},
+            status = 'completed',
+            updated_at = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 开始新答辩：清理该学生该课题一题未答的空壳记录 -->
+    <delete id="deleteEmptyShellRecords">
+        DELETE FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
+          AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = defense_records.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = defense_records.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = defense_records.defense_id)
+    </delete>
 
 </mapper>
