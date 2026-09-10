@@ -47,6 +47,13 @@ public interface DefenseRecordsMapper {
 
     int createDefenseRecord(@Param("userId") String userId, @Param("topicId") Integer topicId);
 
+    /**
+     * 开始新答辩：清理该学生该课题一题未答的空壳记录
+     *
+     * @return 删除的空壳记录条数
+     */
+    int deleteEmptyShellRecords(@Param("userId") String userId, @Param("topicId") Integer topicId);
+
     int saveSummary(@Param("userId") String userId,@Param("topicId") Integer topicId,@Param("summary") String summary);
 
     void updateReportUrl(@Param("userId") String userId, @Param("topicId") Integer topicId, @Param("reportUrl") String reportUrl);
@@ -64,4 +71,11 @@ public interface DefenseRecordsMapper {
     void upsertDefenseRecord(@Param("userId") String userId, @Param("topicId") Integer topicId);
 
     Integer getDefenseIdByUserAndTopic(@Param("userId") String userId, @Param("topicId") Integer topicId);
+
+    /**
+     * 答辩结束收尾：写入聚合总分（0-50制）、总结评语，并将状态置为已完成
+     */
+    int updateFinalResult(@Param("defenseId") Integer defenseId,
+                          @Param("score") java.math.BigDecimal score,
+                          @Param("summary") String summary);
 }
