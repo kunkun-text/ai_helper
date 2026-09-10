@@ -265,5 +265,30 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
         }
     }
 
+    @Override
+    public int resetAiFollowUps(Integer topicId, String userId) {
+        try {
+            if (topicId == null || userId == null || userId.trim().isEmpty()) {
+                log.warn("重置AI追问：topicId或userId为空");
+                return 0;
+            }
+
+            Integer defenseId = getOrCreateDefenseRecord(topicId, userId);
+            if (defenseId == null) {
+                log.error("重置AI追问：无法获取答辩记录 - topicId: {}, userId: {}", topicId, userId);
+                return 0;
+            }
+
+            int deletedAnswers = defenseAnswersMapper.deleteAiAnswersByDefenseId(defenseId);
+            int deletedQuestions = defenseStudentQuestionsMapper.deleteAiQuestionsByDefenseId(defenseId);
+            log.info("重置AI追问完成 - defenseId: {}, 删除追问 {} 条、关联回答 {} 条", defenseId, deletedQuestions, deletedAnswers);
+            return deletedQuestions;
+
+        } catch (Exception e) {
+            log.error("重置AI追问时发生异常", e);
+            return 0;
+        }
+    }
+
 
 }
