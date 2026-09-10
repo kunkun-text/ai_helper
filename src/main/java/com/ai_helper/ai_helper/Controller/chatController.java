@@ -216,20 +216,20 @@ public class chatController {
         }
         chatMemory.clear(sessionId);
 
-        // 同步清掉该学生该课题历史遗留的 AI 追问及其回答，使追问额度恢复初始值
-        int removedFollowUps = 0;
+        // 开始新答辩：清理上次遗留的空壳记录（一题未答），并为本轮创建独立的答辩记录
+        // 追问额度按答辩记录隔离统计，新记录下天然从零开始，无需再删除历史追问
         try {
             Integer topicId = body.get("topicId") != null ? Integer.parseInt(body.get("topicId").toString()) : null;
             String userId = body.getOrDefault("userId", "").toString();
             if (topicId != null && !userId.isEmpty()) {
-                removedFollowUps = defenseRecordsService.resetAiFollowUps(topicId, userId);
+                defenseRecordsService.startNewDefenseRecord(topicId, userId);
             }
         } catch (Exception e) {
-            log.warn("清理历史AI追问失败（不影响会话清理）: {}", e.getMessage());
+            log.warn("开启新答辩记录失败（不影响会话清理）: {}", e.getMessage());
         }
 
-        log.info("已清理 Redis 会话记忆 - sessionId: {}, 清除历史AI追问: {} 条", sessionId, removedFollowUps);
-        return Map.of("success", true, "message", "已清理", "removedFollowUps", removedFollowUps);
+        log.info("已清理 Redis 会话记忆并开启新答辩记录 - sessionId: {}", sessionId);
+        return Map.of("success", true, "message", "已清理");
     }
 
     // ==================== Prompt 构建（极简管道格式） ====================
@@ -249,6 +249,7 @@ public class chatController {
         p.append("下一题:（30字以内，提问下一道题目）\n");
         p.append("示例：\n点评:概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用。\n\n");
         p.append("打分必须客观公正：学生回答正确、完整、条理清晰才给高分；回答错误、答非所问、含糊其辞或直接说“不知道”必须给低分（对应维度只给0-4分，总分不超过25/50），严禁凭印象乱给高分。\n\n");
+        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语时，本题五维全部给0分，点评后必须照常输出『下一题』继续提问；严禁因此输出『总结』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
 
         if (isFirstRound) {
             p.append("共").append(questions.size()).append("题:\n");
@@ -319,6 +320,16 @@ public class chatController {
             }
         }
 
+        // --- 学生放弃作答（"不知道/不会"类短语）：不调用评分模型，本题零分并直接进入下一题 ---
+        if (topicId != null && userId != null && isGiveUpAnswer(userInput)) {
+            String fixedResponse = handleGiveUpAnswer(existingQuestionIds, existingQuestionCount,
+                    extraAskedCount, userId, topicId, userInput, sessionId, history);
+            if (fixedResponse != null) {
+                return fixedResponse;
+            }
+            // 返回 null 表示轮次/题库异常，回退正常模型流程
+        }
+
         log.info("=== 当前使用的 Ollama 模型: {} ===", ollamaModelName);
 
         // --- 历史消息裁剪：只保留最近 MAX_HISTORY_MESSAGES 条 ---
@@ -371,7 +382,8 @@ public class chatController {
 
         try {
             if (topicId != null && userId != null) {
-                int assistantCountInHistory = countAssistantMessages(trimmedHistory);
+                // 轮次口径与 chat() 一致：基于未裁剪历史统计，避免裁剪到12条后轮次封顶错乱
+                int assistantCountInHistory = countAssistantMessages(history);
 
                 if (userInput != null && !userInput.trim().isEmpty()) {
                     Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
@@ -449,9 +461,18 @@ public class chatController {
                                 log.warn("题库兜底获取下一题失败", ex);
                             }
                         }
-                        if (nextQuestion != null && !nextQuestion.isEmpty()) {
+                        if (nextQuestion != null && !nextQuestion.isEmpty()
+                                && assistantCountInHistory >= existingQuestionCount) {
+                            // 仅追问阶段由模型自拟的下一题才登记入库；预设题阶段不动，避免污染追问额度计数
                             submitIfNewQuestion(defenseId, nextQuestion);
                         }
+                    }
+
+                    // 最后一轮总结生成后收尾：聚合五维平均分写入 defense_records，供前端答辩记录展示
+                    boolean hasSummary = aiResponse != null
+                            && (aiResponse.contains("总结:") || aiResponse.contains("总结："));
+                    if (hasSummary && extraAskedCount >= EXTRA_QUESTION_LIMIT) {
+                        finishDefenseAggregation(defenseId, extractSummaryText(aiResponse));
                     }
                 }
             }
@@ -752,6 +773,255 @@ public class chatController {
         }
         log.warn("模型在非最后一轮提前输出总结，已剥离: {}", aiResponse.substring(pos));
         return aiResponse.substring(0, pos).trim();
+    }
+
+    // ==================== 放弃作答（"不知道/不会"）固定流程 ====================
+
+    /** 判定为放弃作答的短语 */
+    private static final String[] GIVE_UP_PHRASES = {
+            "不知道", "不会", "不清楚", "不了解", "不懂", "没学过", "没复习", "没准备", "没印象", "跳过"
+    };
+
+    /** 放弃作答判定的最大回答长度（过长回答不视为放弃，走正常评分） */
+    private static final int GIVE_UP_MAX_LENGTH = 15;
+
+    private boolean isGiveUpAnswer(String userInput) {
+        if (userInput == null) return false;
+        String text = userInput.trim();
+        if (text.isEmpty() || text.length() > GIVE_UP_MAX_LENGTH) return false;
+        for (String phrase : GIVE_UP_PHRASES) {
+            if (text.contains(phrase)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 学生放弃作答的固定处理：本题五维0分、不调用评分模型，直接给出下一题或收尾总结。
+     *
+     * @return 固定模板响应；返回 null 表示轮次/题库异常，需回退正常模型流程
+     */
+    private String handleGiveUpAnswer(List<Integer> existingQuestionIds, int existingQuestionCount,
+                                      int extraAskedCount, String userId, Integer topicId,
+                                      String userInput, String sessionId, List<Message> history) {
+        try {
+            int currentRound = countAssistantMessages(history);
+            int qi = currentRound - 1;
+            boolean inPresetPhase = qi >= 0 && qi < existingQuestionCount;
+            boolean quotaRemains = extraAskedCount < EXTRA_QUESTION_LIMIT;
+
+            Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
+            if (defenseId == null) {
+                log.warn("放弃作答处理：无法获取答辩记录，回退正常流程 - topicId: {}, userId: {}", topicId, userId);
+                return null;
+            }
+
+            String zeroComment = "学生表示不知道该题，本题计0分，建议课后补强该知识点。";
+
+            // 先确定下一题：预设题未问完 → 题库取下一题；追问额度未用完 → 模型生成追问；否则收尾
+            boolean terminal = false;
+            String nextQuestion = null;
+            if (inPresetPhase && qi + 1 < existingQuestionCount) {
+                nextQuestion = fetchPresetQuestionText(topicId, qi + 1);
+            } else if (quotaRemains) {
+                nextQuestion = generateFollowUpQuestion(topicId);
+            } else {
+                terminal = true;
+            }
+            if (!terminal && (nextQuestion == null || nextQuestion.isEmpty())) {
+                log.warn("放弃作答处理：下一题获取失败，回退正常流程 - topicId: {}", topicId);
+                return null;
+            }
+
+            // 落库：评分记录 + 回答记录
+            if (inPresetPhase) {
+                saveGiveUpScoreRecord(defenseId, existingQuestionIds.get(qi), currentRound, zeroComment);
+                defenseRecordsService.savePresetQuestionAnswer(
+                        topicId, userId, existingQuestionIds.get(qi), userInput, zeroComment, 0.0);
+            } else {
+                saveGiveUpScoreRecord(defenseId, null, currentRound, zeroComment);
+                saveGiveUpFollowUpAnswer(defenseId, history, userInput, zeroComment, 0.0);
+            }
+
+            // 仅当本轮抛出的是"新追问题"时才登记入库（预设最后一题切换到追问的第一题也在此登记）
+            boolean nextIsNewFollowUp = !terminal && !(inPresetPhase && qi + 1 < existingQuestionCount);
+            if (nextIsNewFollowUp) {
+                submitIfNewQuestion(defenseId, nextQuestion);
+            }
+
+            String fixedResponse;
+            if (terminal) {
+                String summary = "本次答辩到此结束，系统已按各轮评分汇总最终成绩，可在答辩记录中查看。";
+                fixedResponse = "点评:" + zeroComment + "\n评分:0/50|0|0|0|0|0\n总结:" + summary;
+                finishDefenseAggregation(defenseId, summary);
+            } else {
+                fixedResponse = "点评:" + zeroComment + "\n评分:0/50|0|0|0|0|0\n下一题:" + nextQuestion;
+            }
+
+            chatMemory.add(sessionId, List.of(
+                    new UserMessage(userInput),
+                    new AssistantMessage(fixedResponse)
+            ));
+            trimChatMemory(sessionId);
+
+            log.info("学生放弃作答，走固定零分流程 - defenseId: {}, round: {}, terminal: {}",
+                    defenseId, currentRound, terminal);
+            return fixedResponse;
+        } catch (Exception e) {
+            log.error("放弃作答固定流程异常，回退正常模型流程", e);
+            return null;
+        }
+    }
+
+    /** 从题库获取指定下标的预设题文本 */
+    private String fetchPresetQuestionText(Integer topicId, int index) {
+        try {
+            Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (qr.getCode() == 1 && qr.getData() != null && index >= 0 && index < qr.getData().size()) {
+                return qr.getData().get(index).getQuestion();
+            }
+        } catch (Exception e) {
+            log.warn("题库获取下一题失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /** 追问阶段：让模型围绕课题出一个新的追问问题（仅输出问题本身） */
+    private String generateFollowUpQuestion(Integer topicId) {
+        String topicName = "";
+        try {
+            Result<Object> topicResult = defenseTopicsService.getTopicById(topicId);
+            if (topicResult.getCode() == 1 && topicResult.getData() instanceof TopicDto) {
+                topicName = ((TopicDto) topicResult.getData()).getTopicName();
+            }
+        } catch (Exception e) {
+            log.warn("获取课题名称失败: {}", e.getMessage());
+        }
+
+        String prompt = "你是一名答辩考官，正在考核学生的课题《" + topicName + "》。"
+                + "请提出一个新的追问问题，只输出问题本身（30字以内，以？结尾），不要输出其他任何内容。";
+        try {
+            String resp = chatClient.prompt()
+                    .user(prompt)
+                    .options(OpenAiChatOptions.builder()
+                            .model("qwen2.5:3b-16k")
+                            .maxTokens(60)
+                            .build())
+                    .call()
+                    .content();
+            String question = cleanNextQuestion(resp);
+            if (question != null && !question.isEmpty()) {
+                return question;
+            }
+        } catch (Exception e) {
+            log.warn("模型生成追问失败，使用兜底问题: {}", e.getMessage());
+        }
+
+        String[] fallbacks = {
+                "请结合实际应用场景，谈谈该课题的不足与改进方向？",
+                "针对你刚才的回答，请补充说明关键的实现细节？",
+                "如果时间或资源受限，你会如何调整该课题的方案？"
+        };
+        return fallbacks[java.util.concurrent.ThreadLocalRandom.current().nextInt(fallbacks.length)];
+    }
+
+    /** 放弃作答的固定零分评分记录（五维全0） */
+    private void saveGiveUpScoreRecord(Integer defenseId, Integer questionId, int roundNum, String comment) {
+        DefenseScoreRecord record = new DefenseScoreRecord();
+        record.setDefenseId(defenseId);
+        record.setQuestionId(questionId);
+        record.setRoundNum(roundNum);
+        record.setExpressionScore(BigDecimal.ZERO);
+        record.setLogicScore(BigDecimal.ZERO);
+        record.setProfessionalScore(BigDecimal.ZERO);
+        record.setAdaptabilityScore(BigDecimal.ZERO);
+        record.setInnovationScore(BigDecimal.ZERO);
+        record.setComment(comment);
+        record.setCreatedAt(LocalDateTime.now());
+        scorePersistenceService.saveRoundScoreAsync(record);
+    }
+
+    /** 追问阶段放弃作答：将该回答按0分存入 defense_answers（问题行通常已由追问登记时创建） */
+    private void saveGiveUpFollowUpAnswer(Integer defenseId, List<Message> history,
+                                          String userInput, String feedback, Double score) {
+        String currentQuestion = extractQuestionFromLastAiMessage(history);
+        if (currentQuestion == null || currentQuestion.isEmpty()) {
+            log.warn("放弃作答处理：未从历史中解析到当前追问题，跳过回答落库 - defenseId: {}", defenseId);
+            return;
+        }
+        try {
+            DefenseStudentQuestions existingQuestion = findExistingStudentQuestion(defenseId, currentQuestion);
+            Integer sqId;
+            if (existingQuestion != null) {
+                sqId = existingQuestion.getSqId();
+            } else {
+                int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
+                DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
+                studentQuestion.setDefenseId(defenseId);
+                studentQuestion.setQuestionId(null);
+                studentQuestion.setCustomQuestion(currentQuestion);
+                studentQuestion.setCustomStandardAnswer("");
+                studentQuestion.setQuestionType("ai");
+                studentQuestion.setSort(nextSort);
+                studentQuestion.setCreatedAt(LocalDateTime.now());
+                defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
+                sqId = studentQuestion.getSqId();
+            }
+            if (sqId == null) return;
+            DefenseAnswers answer = new DefenseAnswers();
+            answer.setDefenseId(defenseId);
+            answer.setQuestionId(null);
+            answer.setSqId(sqId);
+            answer.setStudentAnswer(userInput);
+            answer.setFeedback(feedback);
+            answer.setScore(score != null ? new BigDecimal(score) : null);
+            answer.setCreatedAt(LocalDateTime.now());
+            defenseAnswersMapper.insertAnswer(answer);
+        } catch (Exception e) {
+            log.warn("放弃作答追问回答落库失败 - defenseId: {}", defenseId, e);
+        }
+    }
+
+    /**
+     * 答辩收尾：聚合各轮五维评分（0-50制平均），连同总结写回 defense_records，供前端答辩记录展示
+     */
+    @SuppressWarnings("unchecked")
+    private void finishDefenseAggregation(Integer defenseId, String summary) {
+        try {
+            if (defenseId == null) {
+                log.warn("答辩收尾：defenseId为空，跳过总分落库");
+                return;
+            }
+            Map<String, Object> aggregated = scorePersistenceService.aggregateScores(defenseId);
+            List<DefenseScoreRecord> records = (List<DefenseScoreRecord>) aggregated.get("records");
+            if (records == null || records.isEmpty()) {
+                log.warn("答辩收尾：无评分记录，跳过总分落库 - defenseId: {}", defenseId);
+                return;
+            }
+            double total = 0;
+            for (DefenseScoreRecord r : records) {
+                total += nvl(r.getExpressionScore()) + nvl(r.getLogicScore()) + nvl(r.getProfessionalScore())
+                        + nvl(r.getAdaptabilityScore()) + nvl(r.getInnovationScore());
+            }
+            BigDecimal finalScore = BigDecimal.valueOf(Math.round(total / records.size() * 10) / 10.0);
+            defenseRecordsService.finishDefenseRecord(defenseId, finalScore, summary);
+            log.info("答辩收尾完成 - defenseId: {}, 总分: {}, 轮次数: {}", defenseId, finalScore, records.size());
+        } catch (Exception e) {
+            log.error("答辩收尾聚合失败 - defenseId: {}", defenseId, e);
+        }
+    }
+
+    private double nvl(BigDecimal v) {
+        return v == null ? 0.0 : v.doubleValue();
+    }
+
+    /** 从AI回复中提取"总结:"后的文本 */
+    private String extractSummaryText(String aiResponse) {
+        if (aiResponse == null) return null;
+        int pos = aiResponse.indexOf("总结:");
+        int posFull = aiResponse.indexOf("总结：");
+        if (pos == -1 || (posFull != -1 && posFull < pos)) pos = posFull;
+        if (pos == -1) return null;
+        return aiResponse.substring(pos + 3).trim();
     }
 
     private String extractQuestionFromLastAiMessage(List<Message> history) {
