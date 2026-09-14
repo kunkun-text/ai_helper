@@ -239,3 +239,150 @@ ALTER TABLE defense_records DROP INDEX uk_user_topic, ADD INDEX idx_user_topic (
 - 每次答辩在记录列表中生成独立一条（时间到分钟），点开只显示本次问答内容
 - 中途退出的记录显示"未完成"，一题未答的不显示
 - 运行日志落盘于 `logs/ai-helper.log`（`application.yml` 本地配置，该文件不入库）
+
+---
+
+# 2026-09-14 改动（10 轮答辩改造 + 补题库 + 内存崩溃修复）
+
+> 改动日期：2026.9.14，涉及 chatController.java + MySQL 题库数据
+> **⚠️ 交接状态：所有代码改动已写入但【尚未编译、尚未提交、尚未实测 10 轮流程】。** 见文末「待办」。
+
+## 目标
+把答辩从旧的「预设题 + 2 次追问」改为 **5 道预设题 + 5 次 AI 追问 = 共 10 轮**，配合题库补题达到每个课题 ≥5 道题，实现 5+5=10 轮才允许总结出总分。
+
+## 一、代码改动（全部在 chatController.java）
+
+### 1. 追问额度 2 → 5
+```java
+- private static final int EXTRA_QUESTION_LIMIT = 2;
++ private static final int EXTRA_QUESTION_LIMIT = 5;   // 5 预设题 + 5 追问 = 10 轮
+```
+全局引用均读该常量（`remainingExtra`/`quotaRemains`/`countExtraQuestions`），无硬编码 2 冲突。`resetAiFollowUps` 已移除，未加回。
+
+### 2. 进度标签追加到用户消息末尾
+`sendMessageWithMemory` 末尾拼：
+```
+[进度: 第X题/共Y题, 已追问Z/5次]
+```
+`Y = existingQuestionCount + EXTRA_QUESTION_LIMIT`，让模型无需回看历史也知道进度。`MAX_HISTORY_MESSAGES` 保持 12（不调大，避免撑爆 16k 上下文）。
+
+### 3. 系统提示词加固（buildQuestionModePrompt）
+- 明确「本场约 10 轮：5 预设 + 至多 5 追问，严禁提前输出总结」
+- 追问阶段也统一用 **`下一题:`** 标签（不用"追问:"，因前端 `defense.js parseSegmentFormat` 只认 下一题/下一问，不认"追问:"）——这是为了前后端标签一致，避免前端解析不到题
+- 保留「学生说不知道 → 本题 0 分但继续下一题/追问」规则
+
+### 4. 收尾硬校验 + 轮次硬上限兜底（防"停不下来"）
+> **这是本轮内存崩溃的根因修复**，见下文「三、内存崩溃」。
+
+## 二、数据库改动（2026-09-14 已执行）
+
+| 步骤 | SQL | 说明 |
+|------|-----|------|
+| 备份 | `CREATE TABLE defense_topics_bak_20260914 AS ...`、`defense_questions_bak_20260914 AS ...` | 改前备份（9 行原始题） |
+| 改名 | `UPDATE defense_topics SET topic_name=...` WHERE topic_id IN (13,14,20,21) | 13/14/20/21 改名为"大数据技术原理"系列 |
+| 清垃圾题 | `DELETE FROM defense_questions WHERE topic_id IN (13,14,20,21) AND question_type='teacher'` | 清掉"你好/今天星期几/诗句"等测试题 |
+| 补题 | 13/14/20/21 各插 5 道大数据技术原理题；27 补到 5 道、28 补到 5 道 | 见下 |
+| 验证 | 见下方「当前题库」 | 每课题 =5 |
+
+**当前题库分布（question_type='teacher'）：**
+
+| topic_id | topic_name | 题数 |
+|---|---|---|
+| 13 | 大数据技术原理（Hadoop与存储） | 5 |
+| 14 | 大数据技术原理（Spark与计算） | 5 |
+| 20 | 大数据技术原理（数据仓库与NoSQL） | 5 |
+| 21 | 大数据技术原理（数据采集与ETL） | 5 |
+| 27 | 基于 Spark 的电商用户行为大数据分析平台 | 5 |
+| 28 | 基于Hadoop的城市空气质量数据分析与可视化 | 5 |
+
+**新增备份表**：`defense_topics_bak_20260914`、`defense_questions_bak_20260914`。
+**注意**：`defense_records_bak_20260910`（2026-09-10 遗留，172 行）为**历史淘汰记录备份，保留勿动**。
+
+`defense_topics.question_count` 字段为**废弃字段**（代码不读取，前端仅本地自增计数），未修改，保持默认 3，不影响出题。
+
+## 三、内存崩溃根因与修复（重要）
+
+### 现象
+连续多次答辩后后端崩溃，`hs_err_pid10860.log`：`malloc failed to allocate 1.5MB ... Chunk::new`，JVM 堆实际只用了 53MB，但进程被系统杀。第二次答辩「答了十几次停不下来」。
+
+### 根因（两层）
+1. **业务层**：`finishDefenseAggregation` 结束条件**硬依赖模型输出"总结:"**。小模型 qwen2.5:3b-16k 在第 10 轮常输出"下一题:"而非"总结:" → `hasSummary=false` → 不收尾 → 「下一题:」一路滚下去 → 前端继续让学生答 → 后端再调 Ollama → 无限循环直到内存枯竭。（首次正常是模型恰好吐了"总结:"，第二次没吐就卡死）
+2. **资源层**：机器物理内存仅 7G，Ollama 模型占 2.9GB 且部分在 CPU/内存跑，叠加 IDEA/工具后系统内存耗尽，JVM 连编译器线程要的几 MB native 内存都申请不到。
+
+### 修复（chatController.java 收尾逻辑）
+```java
+// 计数口径（已验证）：assistantCountInHistory = 用户已答次数 + 1（首轮出题 greeting 也 add 了 1 条 AssistantMessage）
+// 完整 5+5=10 轮 → 用户答 10 次 → assistantCount 最终 = 11
+boolean presetDone  = assistantCountInHistory >= existingQuestionCount;
+boolean followUpDone = presetDone && (assistantCountInHistory - 1) >= existingQuestionCount + EXTRA_QUESTION_LIMIT;
+boolean hardCapReached = assistantCountInHistory >= existingQuestionCount + EXTRA_QUESTION_LIMIT + 1; // = 11
+if ((presetDone && followUpDone && hasSummary) || hardCapReached) {   // ① 正常 ② 兜底
+    if (!hasSummary) aiResponse += "\n总结:本轮答辩已进行X轮，已自动结束。";  // 补占位总结让前端收到信号
+    finishDefenseAggregation(defenseId, ...);
+} else if (!presetDone || !followUpDone) {
+    // 未满则剥离提前总结 + 补"下一题:"兜底，防前端"有分无题"
+}
+```
+- **① 正常路径**：模型输出"总结:" → 与旧逻辑完全一致。
+- **② 兜底路径**：assistantCount 到 11（第 10 次回答）仍未输出总结 → 强制收尾 + 补"总结:"信号，**杜绝死循环**。
+
+### extraAskedCount 虚高（已绕过）
+`countExtraQuestions` 从 DB 统计 `question_type='ai'` 条数，但**追问入库有两个点**（`saveExtraQuestionPhase` 登记当前题 + `submitIfNewQuestion` 登记新下一题），一轮登记 2 条不同题 → DB ai 数 ≈ 实际追问 ×2（实测 5 追问 → DB 10 条）。为避免 `followUpDone` 提前 true 导致轮次错乱，**收尾判断已改用权威回合数**（assistantCountInHistory）而非 DB 计数。
+
+## 四、待办（交接给 Claude 时先做这些）
+
+1. **编译验证**（改动后还没 `mvn compile`，因改动时机器内存耗尽连 Maven 都起不来）：
+   ```
+   mvn -o compile
+   ```
+2. **重启后端 + 跑一场 10 轮答辩实测**，重点验证：
+   - 第 1~5 题（预设题）→ 6~10 题（AI 追问），第 10 轮才出总结及总分
+   - 逆反向测试：全程答"不知道" → 0 分但继续，满 10 轮才停
+   - 看后端日志 `硬校验拦截提前总结` / `硬上限兜底` 是否触发、有无死循环
+3. **资源优化（可选，建议）**：
+   - 后端 JVM 加 `-Xmx512m -XX:MaxMetaspaceSize=256m`（当前无 -Xmx 配置，JVM 按物理内存预留大堆，加剧 native 内存压力）
+   - Ollama 环境变量 `OLLAMA_NUM_PARALLEL=1`、`OLLAMA_MAX_LOADED_MODELS=1`
+   - 若答辩不需长上下文，可考虑小 num_ctx 的模型（需确认，非必修）
+4. **清理**：若确认备份表无用可删 `defense_topics_bak_20260914`、`defense_questions_bak_20260914`；`defense_records_bak_20260910` 保留勿删。
+
+## 五、未提交 / 未验证状态（交接清单）
+- **代码**：`chatController.java` 已改，**未提交**、**未编译确认**。
+- **数据库**：题库补题已执行到位，MySQL 正常。
+- **Git**：本轮所有改动**尚未提交**，做好准备后再 `git add + git commit`（信息用中文一行标题，参考历史风格）。
+
+---
+
+# 2026-09-15 改动（权威轮次计数修复 + 防死循环兜底重连）
+
+> 改动日期：2026.9.15 深夜，涉及 chatController.java + DefenseScoreRecordMapper（接口/XML）+ DefenseRecordsMapper.xml + .gitignore
+> 本节是对上文 9-14「待办」的闭环：**编译已通过、实测未复现 bug、已提交。**
+
+## 一、9-14 实测暴露的问题（根因）
+
+9-14 晚重新编译后完整跑了两场答辩（defenseId 235 / 236，user 12408060102、topic 28），复盘日志与 Redis 发现：
+
+1. **防死循环硬上限兜底实际永不触发（严重回归）**：`trimChatMemory` 会把 Redis 会话记忆**物理截断到 12 条**，而收尾判断用的 `assistantCountInHistory = countAssistantMessages(history)` 是从这份被裁剪的记忆里数 assistant 消息 → **永远 ≤ 6**。于是 `followUpDone`（要 count-1 ≥ 10）、`hardCapReached`（要 count ≥ 11）永远为 false，收尾条件整体不可能成立。当晚两场能正常结束，纯粹因为最后一答是"我不会"走了放弃作答收尾——若学生全程认真作答，后端永远不会收尾，9-14 要修的死循环/内存崩溃场景原样存在。
+2. **轮次号落库错乱**：235 场 roundNum 序列 `1,2,1,4,5,6,6,6,6,6,6`（第 7 轮起封顶在 6，另有 1 条疑似前端重试产生的重复行）；236 场落了 14 行（超过 10 轮设计上限）。收尾日志「轮次数： 11」其实是落库行数（`records.size()`），不是回合数——此前 9-14 的"计数口径已验证"结论被这个日志误导。
+3. **连带问题**：`questionId` 按 count-1 映射 → 后半场评分行挂错题；追问阶段放弃作答时报"未从历史中解析到当前追问题，跳过回答落库"；`extraAskedCount` 按 DB 追问题条数统计、因两个入库点各登记一次而虚高 ≈2 倍（9-10 已发现，本轮一并修掉）。
+
+## 二、修复内容
+
+| 修复 | 位置 | 说明 |
+|---|---|---|
+| 权威轮次计数 | chatController.java（chat / sendMessageWithMemory / handleGiveUpAnswer / 收尾块）+ `DefenseScoreRecordMapper` 新增 `countByDefenseId` | 轮次改按 `defense_score_record` 落库行数 +1：每次作答（含放弃 0 分）恰落一行，天然免疫记忆裁剪。收尾改为 `lastRound = 轮次 ≥ 预设数 + 5`，**第 10 次作答即收尾**：模型输出"总结:"用总结，没有则剥残留"下一题:"（新增 `stripNextQuestionFromText`）并补占位总结强制收尾。`extraAskedCount` 纠正为"本轮之前已完成的追问次数" |
+| 放弃短语漏判 | GIVE_UP_PHRASES | 补"不太清楚/太不清楚/不太懂/不太会"（contains 要求连续子串，"不太清楚"原本漏判，实测同一回答三次得分 25/0/20 口径不一） |
+| 开局必抛 MyBatis 异常 | DefenseRecordsMapper.xml `createDefenseRecord` | 多 @Param 方法带 `useGeneratedKeys` 无法回填生成键，每次 `/api/chat/clear` 必抛 ExecutorException（靠重查兜底未断功能但刷错误日志）；两处调用方均不用生成键，已移除该属性 |
+| 日志防泄漏 | .gitignore | 补 `logs/`（原只挡 `*.log`，`ai-helper.log.*.gz` 会漏进提交） |
+| 进度标签 / 总结剥离阈值 | sendMessageWithMemory 进度行、stripPrematureSummary | 与权威口径对齐；第 10 轮模型的"总结:"不再被误剥（旧阈值导致最后一轮只能走占位总结） |
+
+## 三、验证结果（2026-09-15）
+
+- `mvn -o compile` BUILD SUCCESS（66 个源文件；编译用 `D:\maven\apache-maven-3.8.1\bin\mvn.cmd`，PATH 无 mvn）
+- 用户实测一场完整答辩：未复现 bug，轮次正常、第 10 轮收尾、无死循环
+
+## 四、遗留（非阻塞，暂不处理）
+
+- 前端重试可产生同轮重复评分行（235 场出现过 1 条），会使权威计数 +1、提前一轮收尾，罕见
+- 追问阶段放弃作答时，答案行可能因历史被裁剪而跳过落库（评分行仍在），日志有 WARN
+- 模型偶发"总分 ≠ 五维之和"：落库与展示均按五维之和强制纠正，但 AI 气泡原文数字与页面可能对不上（提示词层面，未改）
+- 资源优化未做：JVM `-Xmx512m`、Ollama `OLLAMA_NUM_PARALLEL=1`，机器仅 7G 内存，建议尽快

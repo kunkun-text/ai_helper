@@ -65,6 +65,8 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 
 - AI 回复采用**管道格式**：`总分/50|表达|逻辑|专业|应变|创新|优点|建议|下一题`
   例：`36/50|8|7|8|6|7|概念清晰|多举例子|下一题`
+- ⚠️ **2026-09-14 起本轮答辩为「5 预设题 + 5 追问 = 10 轮」**，追问阶段模型也统一输出 **`下一题:`**（**不要用"追问:"**，前端 `defense.js parseSegmentFormat` 只匹配 下一题/下一问，不认"追问:"，用错会导致前端解析不到题、变"有分无题"）。
+- 结束条件已加**轮次硬上限兜底**：轮次按 `defense_score_record` 落库行数 +1 权威计数（2026-09-15 修复；旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 截断封顶在 6，兜底永不触发），第 `existingQuestionCount + EXTRA_QUESTION_LIMIT`（=10）次作答即收尾——模型输出"总结:"用总结，没输出则剥残留"下一题:"并补占位总结强制收尾，防止无限"下一题"死循环（这是内存崩溃根因，已修）。
 - 前端 `defense.js` 用 `parsePipeFormat()` 解析；`ScorePersistenceServiceImpl.parseScoresFromResponse()` 负责提取五维分
 - 会话记忆在 Redis，键按用户/答辩区分；`MAX_HISTORY_MESSAGES = 12`，超限裁剪最早消息
 - 进场时前端会调 `POST /api/chat/clear` 清空旧会话；答辩结束调 `POST /api/final-evaluate` 聚合总分
@@ -90,7 +92,13 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 4. 改 `chatController.java` / `defense.js` 这类大文件时先读再改，改动要克制，遵循现有代码风格。
 5. 后端报错时先看是否 Ollama 未启动 / 显存不足（用 `diagnose.ps1` 诊断），再查代码。
 
-## 八、当前进行中的事（2026-09-10）
+## 八、当前进行中的事（2026-09-15 更新）
 
-- chew303-cmd 已被加为协作者，2026-09-10 已成功推送：`6412937`（五维评分持久化 + 答辩页重试）及 8 个「重置 AI 追问额度」相关提交（`31b855f..d48e57e`，每个提交信息带改动日期 2026.9.5）。
-- 仓库主人的 GitHub 账号不是本机登录的账号，**不要尝试改写远程历史或强推**。
+**9-14 十轮答辩改造 + 9-15 轮次计数修复均已完成：编译通过、实测未复现 bug、已提交。**
+
+- 9-15 核心修复：轮次/收尾判断改按 `defense_score_record` 落库行数 +1 权威计数（旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 物理截断封顶在 6，导致轮次号落库卡死、防死循环兜底永不触发——9-14 晚两场实测实锤，根因与修复详见 `CHANGES.md`「2026-09-15 改动」）。
+- 实测遗留的小问题（非阻塞）见 `CHANGES.md` 9-15 节「遗留」：前端重试可产生重复评分行、追问阶段放弃作答的答案行可能跳过落库、模型偶发"总分≠五维之和"（落库/展示已按五维和纠正）。
+- 待办：JVM 加 `-Xmx512m`、Ollama `OLLAMA_NUM_PARALLEL=1` 并发限制仍未做，机器仅 7G 内存，建议尽快。
+- 编译注意：PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。
+
+**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（Ollama 模型 `qwen2.5:3b-16k`，RTX 3050 4G 显存勿换大模型）。
