@@ -11,6 +11,10 @@
                 #{professionalScore}, #{adaptabilityScore}, #{innovationScore}, #{comment}, NOW())
     </insert>
 
+    <select id="countByDefenseId" resultType="int">
+        SELECT COUNT(*) FROM defense_score_record WHERE defense_id = #{defenseId}
+    </select>
+
     <select id="getScoreRecordsByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord">
         SELECT id, defense_id, question_id, round_num,
                expression_score, logic_score, professional_score,

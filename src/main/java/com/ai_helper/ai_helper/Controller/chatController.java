@@ -1,5 +1,25 @@
 package com.ai_helper.ai_helper.Controller;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
 import com.ai_helper.ai_helper.Service.ScorePersistenceService;
@@ -13,23 +33,9 @@ import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.entity.DefenseStudentQuestions;
 import com.ai_helper.ai_helper.result.Result;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/api")
@@ -69,8 +75,8 @@ public class chatController {
     /** 标准答案截断长度 */
     private static final int ANSWER_TRUNCATE_LENGTH = 50;
 
-    /** 额外问题上限 */
-    private static final int EXTRA_QUESTION_LIMIT = 2;
+    /** 额外问题上限（AI 追问次数，5 预设题 + 5 追问 = 共 10 轮） */
+    private static final int EXTRA_QUESTION_LIMIT = 5;
 
     // ==================== /api/chat 核心接口 ====================
 
@@ -123,25 +129,42 @@ public class chatController {
                         log.info("找到 {} 个答辩题目，进入提问模式", questions.size());
 
                         int extraQuestionLimit = EXTRA_QUESTION_LIMIT;
-                        int extraAskedCount = countExtraQuestions(topicId, userId);
 
-                        // --- 获取当前轮次：基于历史中AI消息数 ---
-                        List<Message> history = chatMemory.get(finalSessionId);
-                        int currentRound = countAssistantMessages(history);
+                        // --- 权威轮次计数（2026-09-15 修复）---
+                        // Redis 会话记忆被 trimChatMemory 物理截断到 12 条，旧实现按"历史中的 assistant 消息数"
+                        // 计轮次会封顶在 6（实测轮次号 1,2,1,4,5,6,6,6…，收尾判断 followUpDone/hardCapReached 永远无法触发）。
+                        // 现改按 defense_score_record 落库行数计数：每次作答（含放弃0分）恰落一行，天然免疫记忆裁剪；
+                        // 异步落库极端延迟只会让计数少 1（答辩多走一轮才收尾），方向安全。
+                        Integer defenseIdEarly = null;
+                        int answeredCount = 0;
+                        try {
+                            defenseIdEarly = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
+                            if (defenseIdEarly != null) {
+                                answeredCount = scoreRecordMapper.countByDefenseId(defenseIdEarly);
+                            }
+                        } catch (Exception countEx) {
+                            log.warn("权威轮次计数失败，回退历史消息计数: {}", countEx.getMessage());
+                            answeredCount = Math.max(countAssistantMessages(chatMemory.get(finalSessionId)) - 1, 0);
+                        }
+                        // extraAskedCount 旧值来自 countExtraQuestions（按 DB 追问题条数统计，追问题在两个入库点
+                        // 各登记一次而虚高≈2倍），一并纠正为"本轮之前已完成的追问次数"
+                        int extraAskedCount = Math.max(answeredCount - existingQuestionCount, 0);
+                        // currentRound 保留旧口径 = 本次作答序号（首轮后端出题的 greeting 占 1 条 assistant，故 = 已答次数 + 1）
+                        int currentRound = answeredCount + 1;
 
                         StringBuilder contextPrompt = buildQuestionModePrompt(
                                 topicResult.getData(), questions, topicId, finalUserInput, userId,
                                 extraAskedCount, extraQuestionLimit, currentRound, existingQuestionIds);
 
                         return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, extraAskedCount, userId, topicId,
-                                contextPrompt.toString(), finalSessionId, finalUserInput));
+                                contextPrompt.toString(), finalSessionId, finalUserInput, answeredCount));
                     } else {
                         log.info("该题目下暂无问题，进入视频内容辅助回答模式");
                         StringBuilder contextPrompt = buildVideoAssistModePrompt(
                                 topicResult.getData(), topicId, finalUserInput);
 
                         return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, 0, userId, topicId,
-                                contextPrompt.toString(), finalSessionId, finalUserInput));
+                                contextPrompt.toString(), finalSessionId, finalUserInput, 0));
                     }
                 } else {
                     log.warn("查询题目信息失败，topicId: {}, code: {}, msg: {}",
@@ -155,7 +178,7 @@ public class chatController {
             }
         } else {
             log.info("无 topicId，使用通用模式回答");
-            return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, null, finalUserInput, finalSessionId, finalUserInput));
+            return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, null, finalUserInput, finalSessionId, finalUserInput, 0));
         }
     }
 
@@ -243,13 +266,14 @@ public class chatController {
         int remainingExtra = extraQuestionLimit - extraAskedCount;
         StringBuilder p = new StringBuilder();
 
-        p.append("你是答辩评委，正在对学生进行一对一答辩考核。除首轮外，你必须严格按照以下三行格式输出，顺序不可颠倒，每行以固定标签开头，不要任何多余内容：\n");
+        p.append("你是答辩评委，正在对学生进行一对一答辩考核。本场答辩共约10轮：5道预设题 + 至多5次AI追问。除首轮外，你必须严格按照以下三行格式输出，顺序不可颠倒，每行以固定标签开头，不要任何多余内容：\n");
         p.append("点评:（40字以内，先一句话肯定优点，再具体指出不足和一条改进建议，必须结合学生刚才的实际回答，禁止空话套话）\n");
         p.append("评分:总分/50|表达分|逻辑分|专业分|应变分|创新分（各0-10整数，五维分数相加必须等于总分）\n");
         p.append("下一题:（30字以内，提问下一道题目）\n");
         p.append("示例：\n点评:概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用。\n\n");
+        p.append("【轮次铁律】5道预设题未全部答完前，必须逐题输出『下一题:』提问下一道预设题；预设题答完后，最多允许5次AI追问，追问阶段每轮仍输出『下一题:』（30字以内）由你自拟追问。只有『预设题全部答完且追问已达5次』时，最后一行才允许输出『总结:』。任何情况下严禁提前输出『总结:』或提前结束答辩；只要还剩预设题或追问额度，最后一行必须输出『下一题:』，严禁输出『总结:』。每轮末尾会附带 [进度: 第X题/共Y题, 已追问Z/5次]，请据此判断当前进度并输出正确标签。\n\n");
         p.append("打分必须客观公正：学生回答正确、完整、条理清晰才给高分；回答错误、答非所问、含糊其辞或直接说“不知道”必须给低分（对应维度只给0-4分，总分不超过25/50），严禁凭印象乱给高分。\n\n");
-        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语时，本题五维全部给0分，点评后必须照常输出『下一题』继续提问；严禁因此输出『总结』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
+        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语时，本题五维全部给0分，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
 
         if (isFirstRound) {
             p.append("共").append(questions.size()).append("题:\n");
@@ -293,6 +317,14 @@ public class chatController {
             p.append("\n学生答:").append(prompt).append("\n");
         }
 
+        // --- 动态段末尾进度说明（结构化标签由 sendMessageWithMemory 统一附加） ---
+        int progressX = currentRound + 1;
+        p.append("\n当前进度：第").append(progressX)
+                .append("题/共").append(questions.size() + EXTRA_QUESTION_LIMIT)
+                .append("题，已追问").append(extraAskedCount)
+                .append("/").append(EXTRA_QUESTION_LIMIT)
+                .append("次，请严格据此决定本轮最后一行输出『下一题:』还是『总结:』，追问阶段同样用『下一题:』标签。\n");
+
         return p;
     }
 
@@ -300,7 +332,7 @@ public class chatController {
 
     private String sendMessageWithMemory(List<Integer> existingQuestionIds, int existingQuestionCount,
                                                 int extraAskedCount, String userId, Integer topicId, String fullPrompt,
-                                                String sessionId, String userInput) {
+                                                String sessionId, String userInput, int answeredCount) {
         List<Message> history = chatMemory.get(sessionId);
 
         // --- 首轮出题：直接由题库提供，不调用模型（零延迟、无答案泄露、题目完整） ---
@@ -323,7 +355,7 @@ public class chatController {
         // --- 学生放弃作答（"不知道/不会"类短语）：不调用评分模型，本题零分并直接进入下一题 ---
         if (topicId != null && userId != null && isGiveUpAnswer(userInput)) {
             String fixedResponse = handleGiveUpAnswer(existingQuestionIds, existingQuestionCount,
-                    extraAskedCount, userId, topicId, userInput, sessionId, history);
+                    userId, topicId, userInput, sessionId, history, answeredCount);
             if (fixedResponse != null) {
                 return fixedResponse;
             }
@@ -366,6 +398,17 @@ public class chatController {
 
         completePrompt.append(fullPrompt);
 
+        // --- 进度标签：附加到用户消息末尾，让模型无需回看历史也知道当前轮次（10 轮改造） ---
+        // 权威口径（2026-09-15 修复）：进度行序号与 buildQuestionModePrompt 保持一致 = 下一题序号（已答次数 + 2）
+        if (topicId != null) {
+            int progressTotal = existingQuestionCount + EXTRA_QUESTION_LIMIT;
+            int progressX = Math.min(Math.max(answeredCount + 2, 1), progressTotal);
+            completePrompt.append("\n[进度: 第").append(progressX)
+                    .append("题/共").append(progressTotal)
+                    .append("题, 已追问").append(extraAskedCount)
+                    .append("/").append(EXTRA_QUESTION_LIMIT).append("次]");
+        }
+
         // --- 阻塞调用模型（强制 maxTokens） ---
         String aiResponse = chatClient.prompt()
                 .user(completePrompt.toString())
@@ -382,8 +425,12 @@ public class chatController {
 
         try {
             if (topicId != null && userId != null) {
-                // 轮次口径与 chat() 一致：基于未裁剪历史统计，避免裁剪到12条后轮次封顶错乱
-                int assistantCountInHistory = countAssistantMessages(history);
+                // 轮次口径（2026-09-15 修复）：权威计数 = 评分落库行数 + 1（answeredCount 由 chat() 传入）。
+                // 旧实现按"历史中的 assistant 消息数"计数，Redis 记忆被 trimChatMemory 物理截断到 12 条后
+                // 封顶在 6 —— 实测轮次号 1,2,1,4,5,6,6,6…、收尾判断 followUpDone/hardCapReached 永远无法触发，
+                // 防死循环兜底形同虚设。评分表每次作答（含放弃0分）恰落一行，天然免疫记忆裁剪；
+                // 异步落库极端延迟只会让计数少 1（答辩多走一轮才收尾），方向安全。
+                int assistantCountInHistory = answeredCount + 1;
 
                 if (userInput != null && !userInput.trim().isEmpty()) {
                     Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
@@ -469,10 +516,36 @@ public class chatController {
                     }
 
                     // 最后一轮总结生成后收尾：聚合五维平均分写入 defense_records，供前端答辩记录展示
+                    // 权威口径（2026-09-15 修复）：assistantCountInHistory = 本次作答序号（评分落库行数+1，免疫记忆裁剪）。
+                    // 共 existingQuestionCount + EXTRA_QUESTION_LIMIT = 10 轮，第 10 次作答即收尾：
+                    // ① 模型输出"总结:" → 正常收尾；② 模型仍输出"下一题:" → 剥离残留提问并补占位总结强制收尾（防死循环兜底）。
+                    // 旧实现的两个收尾条件都按"历史消息中的 assistant 数"计数，被裁剪封顶在 6，两个分支均永远无法触发。
                     boolean hasSummary = aiResponse != null
                             && (aiResponse.contains("总结:") || aiResponse.contains("总结："));
-                    if (hasSummary && extraAskedCount >= EXTRA_QUESTION_LIMIT) {
-                        finishDefenseAggregation(defenseId, extractSummaryText(aiResponse));
+                    int totalRounds = existingQuestionCount + EXTRA_QUESTION_LIMIT;
+                    boolean lastRound = assistantCountInHistory >= totalRounds;
+                    if (lastRound) {
+                        if (!hasSummary) {
+                            // 到最后一轮模型仍未输出总结：剥离残留"下一题"并补占位总结，保证前端收到"总结:"信号正常结束
+                            aiResponse = stripNextQuestionFromText(aiResponse);
+                            aiResponse = (aiResponse == null ? "" : aiResponse)
+                                    + "\n总结:本轮答辩已进行" + assistantCountInHistory + "轮，已自动结束。";
+                            log.warn("硬上限兜底收尾：第{}轮未见总结，已强制收尾", assistantCountInHistory);
+                        }
+                        if (defenseId != null) {
+                            finishDefenseAggregation(defenseId, extractSummaryText(aiResponse));
+                        }
+                    } else {
+                        // 未到最后一轮：剥离提前出现的总结，防止前端误判答辩提前结束
+                        String stripped = stripSummaryFromText(aiResponse);
+                        if (!stripped.equals(aiResponse)) {
+                            aiResponse = stripped;
+                            log.warn("硬校验拦截提前总结：当前第{}轮/共{}轮，已剥离总结行",
+                                    assistantCountInHistory, totalRounds);
+                        }
+                        // 兜底：剥离后若无"下一题/追问"，按阶段补一行干净标签，避免前端"有分无题"
+                        aiResponse = appendNextQuestionFallback(aiResponse, assistantCountInHistory >= existingQuestionCount,
+                                topicId, assistantCountInHistory);
                     }
                 }
             }
@@ -759,7 +832,10 @@ public class chatController {
     private String stripPrematureSummary(String aiResponse, int existingQuestionCount, int extraAskedCount) {
         if (aiResponse == null || aiResponse.isEmpty()) return aiResponse;
         if (existingQuestionCount <= 0) return aiResponse;
-        if (extraAskedCount >= EXTRA_QUESTION_LIMIT) return aiResponse;
+        // 权威口径（2026-09-15 修复）：extraAskedCount = 本轮之前已完成的追问次数。最后一次追问
+        // （第 EXTRA_QUESTION_LIMIT 次）作答时该值恰为 EXTRA_QUESTION_LIMIT - 1，此时模型的"总结:"
+        // 是合法收尾信号，不能剥离（旧阈值会把它剥掉，导致最后一轮只能走占位总结兜底）
+        if (extraAskedCount >= EXTRA_QUESTION_LIMIT - 1) return aiResponse;
 
         int pos = aiResponse.indexOf("总结:");
         int posFull = aiResponse.indexOf("总结：");
@@ -775,11 +851,70 @@ public class chatController {
         return aiResponse.substring(0, pos).trim();
     }
 
+    /**
+     * 纯文本剥离函数：移除回复中"总结:"（含全角）及其后内容。
+     * 供硬校验兜底使用（区别于 stripPrematureSummary 的额度判断）。
+     */
+    private String stripSummaryFromText(String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) return aiResponse;
+        int pos = aiResponse.indexOf("总结:");
+        int posFull = aiResponse.indexOf("总结：");
+        if (pos == -1 || (posFull != -1 && posFull < pos)) pos = posFull;
+        if (pos == -1 || pos == 0) return aiResponse;
+        return aiResponse.substring(0, pos).trim();
+    }
+
+    /**
+     * 纯文本剥离函数：移除回复中"下一题:"（含全角）及其后内容。
+     * 供最后一轮强制收尾使用：模型到第 10 轮仍输出"下一题:"时，先剥掉残留提问再补占位总结，
+     * 保证前端收到的收尾消息干净（只有点评/评分/总结）。
+     */
+    private String stripNextQuestionFromText(String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) return aiResponse;
+        int pos = aiResponse.indexOf("下一题:");
+        int posFull = aiResponse.indexOf("下一题：");
+        if (pos == -1 || (posFull != -1 && posFull < pos)) pos = posFull;
+        if (pos == -1 || pos == 0) return aiResponse;
+        return aiResponse.substring(0, pos).trim();
+    }
+
+    /**
+     * 硬校验兜底的补充行：剥离总结后，若 aiResponse 未携带"下一题/追问"标签，
+     * 按阶段补一行，保证前端始终能拿到下一题/追问：
+     *  - 预设未答完：从题库取下一题
+     *  - 追问阶段：调 generateFollowUpQuestion 生成
+     *  统一拼"下一题:"标签（前端 parseSegmentFormat 只认 下一题/下一问，不认"追问:"）。
+     */
+    private String appendNextQuestionFallback(String aiResponse, boolean presetDone, Integer topicId,
+                                              int assistantCountInHistory) {
+        if (aiResponse == null) return null;
+        // 已含下一题或追问标签则不用补
+        if (aiResponse.contains("下一题:") || aiResponse.contains("下一题：")
+                || aiResponse.contains("追问:") || aiResponse.contains("追问：")) {
+            return aiResponse;
+        }
+        String nextQuestion;
+        if (!presetDone) {
+            // 预设阶段：取题库中当前轮次的下一道题（assistantCountInHistory 同样用于该下标）
+            nextQuestion = fetchPresetQuestionText(topicId, assistantCountInHistory);
+        } else {
+            nextQuestion = generateFollowUpQuestion(topicId);
+        }
+        if (nextQuestion == null || nextQuestion.trim().isEmpty()) {
+            return aiResponse;
+        }
+        // 统一用"下一题:"标签：前端 parseSegmentFormat 只认 下一题/下一问，不认"追问:"
+        return aiResponse + "\n下一题:" + nextQuestion.trim();
+    }
+
     // ==================== 放弃作答（"不知道/不会"）固定流程 ====================
 
     /** 判定为放弃作答的短语 */
     private static final String[] GIVE_UP_PHRASES = {
-            "不知道", "不会", "不清楚", "不了解", "不懂", "没学过", "没复习", "没准备", "没印象", "跳过"
+            "不知道", "不会", "不清楚", "不了解", "不懂", "没学过", "没复习", "没准备", "没印象", "跳过",
+            // 2026-09-15 补充：contains 匹配要求连续子串，"不太清楚/不太会"等带语气词的变体原本漏判
+            // （实测同一"不太清楚"三次得分 25/0/20 口径不一），故显式补充常见变体
+            "不太清楚", "太不清楚", "不太懂", "不太会"
     };
 
     /** 放弃作答判定的最大回答长度（过长回答不视为放弃，走正常评分） */
@@ -801,28 +936,32 @@ public class chatController {
      * @return 固定模板响应；返回 null 表示轮次/题库异常，需回退正常模型流程
      */
     private String handleGiveUpAnswer(List<Integer> existingQuestionIds, int existingQuestionCount,
-                                      int extraAskedCount, String userId, Integer topicId,
-                                      String userInput, String sessionId, List<Message> history) {
+                                      String userId, Integer topicId,
+                                      String userInput, String sessionId, List<Message> history, int answeredCount) {
         try {
-            int currentRound = countAssistantMessages(history);
-            int qi = currentRound - 1;
-            boolean inPresetPhase = qi >= 0 && qi < existingQuestionCount;
-            boolean quotaRemains = extraAskedCount < EXTRA_QUESTION_LIMIT;
-
             Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
             if (defenseId == null) {
                 log.warn("放弃作答处理：无法获取答辩记录，回退正常流程 - topicId: {}, userId: {}", topicId, userId);
                 return null;
             }
 
+            // 权威轮次（2026-09-15 修复）：本次作答序号 = 已落库行数 + 1。旧实现按"历史中的 assistant 消息数"
+            // 计数，被记忆裁剪封顶在 6（实测放弃轮次号全部卡在 6）。
+            int currentRound = answeredCount + 1;
+            int qi = currentRound - 1;
+            boolean inPresetPhase = qi >= 0 && qi < existingQuestionCount;
+            // 本轮已是最后一轮（第 existingQuestionCount + EXTRA_QUESTION_LIMIT 次作答）→ 本题0分后直接收尾总结
+            boolean lastRound = currentRound >= existingQuestionCount + EXTRA_QUESTION_LIMIT;
+
             String zeroComment = "学生表示不知道该题，本题计0分，建议课后补强该知识点。";
 
-            // 先确定下一题：预设题未问完 → 题库取下一题；追问额度未用完 → 模型生成追问；否则收尾
+            // 先确定下一题：预设题未问完 → 题库取下一题；未到最后一轮 → 模型生成追问；否则收尾。
+            // 旧实现的 quotaRemains 基于 countExtraQuestions（DB 追问题条数虚高≈2倍），会导致提前收尾。
             boolean terminal = false;
             String nextQuestion = null;
             if (inPresetPhase && qi + 1 < existingQuestionCount) {
                 nextQuestion = fetchPresetQuestionText(topicId, qi + 1);
-            } else if (quotaRemains) {
+            } else if (!lastRound) {
                 nextQuestion = generateFollowUpQuestion(topicId);
             } else {
                 terminal = true;
@@ -1109,7 +1248,7 @@ public class chatController {
     private Flux<String> handleFallback(String userId, Integer topicId, String prompt, String reason,
                                          String sessionId, String userInput) {
         String fallbackPrompt = reason + "，直接回答问题。\n\n" + prompt;
-        return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, topicId, fallbackPrompt, sessionId, userInput));
+        return toFlux(sendMessageWithMemory(new ArrayList<>(), 0, 0, userId, topicId, fallbackPrompt, sessionId, userInput, 0));
     }
 
     // ==================== 视频辅助模式 Prompt ====================

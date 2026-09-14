@@ -36,6 +36,7 @@ build/
 *.log
 hs_err_pid*
 replay_pid*
+logs/
 
 ### 本地配置（含密码/个人信息，不入库） ###
 src/main/resources/application.yml

@@ -144,7 +144,10 @@
         LIMIT 1
     </select>
 
-    <insert id="createDefenseRecord" useGeneratedKeys="true" keyProperty="defenseId">
+    <!-- 2026-09-15：移除 useGeneratedKeys —— 本方法有多个 @Param 参数，MyBatis 无法确定生成键回填到哪个参数，
+         每次开局必抛 ExecutorException（被 catch 后靠重新 SELECT 兜底，产生错误日志噪音）。
+         两处调用方（getOrCreateDefenseRecord / startNewDefenseRecord）均不使用生成键，靠 getDefenseIdByUserAndTopic 回查。 -->
+    <insert id="createDefenseRecord">
         INSERT INTO defense_records (user_id, topic_id, status, defense_date, created_at, updated_at)
         VALUES (#{userId}, #{topicId}, 'pending', NOW(), NOW(), NOW())
     </insert>
