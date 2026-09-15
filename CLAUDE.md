@@ -91,6 +91,7 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 3. **Git**：远程是 `github.com/kunkun-text/ai_helper`（别人的仓库！本机凭据账号是 chew303-cmd，尚未被加为协作者，推送会 403）。提交信息用中文一行标题 + 可选正文，风格参考历史（如「完善答辩」）。
 4. 改 `chatController.java` / `defense.js` 这类大文件时先读再改，改动要克制，遵循现有代码风格。
 5. 后端报错时先看是否 Ollama 未启动 / 显存不足（用 `diagnose.ps1` 诊断），再查代码。
+6. 开发协作流程（提问、review、开发标准）见 `.claude/skills/ai-defense-dev/SKILL.md`
 
 ## 八、当前进行中的事（2026-09-15 更新）
 
