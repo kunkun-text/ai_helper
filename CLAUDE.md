@@ -97,9 +97,11 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 
 **9-14 十轮答辩改造 + 9-15 轮次计数修复均已完成：编译通过、实测未复现 bug、已提交。**
 
+- 9-15 下午新增（编译通过，**待重启实测**）：前端题目序号（第1~5题/追问1~5）+ 顶栏进度 X/10；开场白改三段式修复纯文本 UI 与序号撞号；敷衍判定补网（"我是250"类）、追问题去重、题目文本清洗（？…？？）、总结带总评（总分+五维）。详见 `CHANGES.md`「2026-09-15 改动（题目序号与顶部进度 + 开场白修复 + 答辩体验四项优化）」。
+
 - 9-15 核心修复：轮次/收尾判断改按 `defense_score_record` 落库行数 +1 权威计数（旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 物理截断封顶在 6，导致轮次号落库卡死、防死循环兜底永不触发——9-14 晚两场实测实锤，根因与修复详见 `CHANGES.md`「2026-09-15 改动」）。
 - 实测遗留的小问题（非阻塞）见 `CHANGES.md` 9-15 节「遗留」：前端重试可产生重复评分行、追问阶段放弃作答的答案行可能跳过落库、模型偶发"总分≠五维之和"（落库/展示已按五维和纠正）。
-- 待办：JVM 加 `-Xmx512m`、Ollama `OLLAMA_NUM_PARALLEL=1` 并发限制仍未做，机器仅 7G 内存，建议尽快。
+- 待办（2026-09-15 用户确认暂不做，仅挂账）：① JVM 内存上限——pom.xml 的 spring-boot-maven-plugin 加 `<jvmArguments>-Xmx512m</jvmArguments>` 或启动命令加 `-Dspring-boot.run.jvmArguments=-Xmx512m`；② Ollama 并发限制——管理员命令行 `setx OLLAMA_NUM_PARALLEL 1` 后重启 Ollama 生效。机器仅 7G 内存，答辩现场多开前建议完成（历史 JVM 崩溃见根目录 hs_err_pid*.log，源于 8b 模型实验）。
 - 编译注意：PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。
 
 **历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（Ollama 模型 `qwen2.5:3b-16k`，RTX 3050 4G 显存勿换大模型）。

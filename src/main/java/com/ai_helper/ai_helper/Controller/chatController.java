@@ -3,8 +3,10 @@ package com.ai_helper.ai_helper.Controller;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -273,7 +275,7 @@ public class chatController {
         p.append("示例：\n点评:概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用。\n\n");
         p.append("【轮次铁律】5道预设题未全部答完前，必须逐题输出『下一题:』提问下一道预设题；预设题答完后，最多允许5次AI追问，追问阶段每轮仍输出『下一题:』（30字以内）由你自拟追问。只有『预设题全部答完且追问已达5次』时，最后一行才允许输出『总结:』。任何情况下严禁提前输出『总结:』或提前结束答辩；只要还剩预设题或追问额度，最后一行必须输出『下一题:』，严禁输出『总结:』。每轮末尾会附带 [进度: 第X题/共Y题, 已追问Z/5次]，请据此判断当前进度并输出正确标签。\n\n");
         p.append("打分必须客观公正：学生回答正确、完整、条理清晰才给高分；回答错误、答非所问、含糊其辞或直接说“不知道”必须给低分（对应维度只给0-4分，总分不超过25/50），严禁凭印象乱给高分。\n\n");
-        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语，或回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、纯标点、与问题完全无关的跑题内容）时，本题五维必须全部给0分，点评中明确说明回答无实质内容，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
+        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语，或回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、报数玩笑（如“我是250”）、纯标点、骂人或与课题无关的玩笑、与问题完全无关的跑题内容）时，本题五维必须全部给0分，点评中明确说明回答无实质内容，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
 
         if (isFirstRound) {
             p.append("共").append(questions.size()).append("题:\n");
@@ -341,7 +343,9 @@ public class chatController {
                 Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
                 if (qr.getCode() == 1 && qr.getData() != null && !qr.getData().isEmpty()) {
                     String firstQuestion = qr.getData().get(0).getQuestion();
-                    String greeting = "你好，我是本次答辩的AI考官。现在我们开始第1题：" + firstQuestion;
+                    // 与常规轮次统一为三段式（点评:/下一题:），前端才能解析出题目区块并正确计数；
+                    // 旧纯文本开场白导致前端渲染成普通气泡、且不计数使下一轮撞号"第1题"（2026.9.15 修复）
+                    String greeting = "点评:你好，我是本次答辩的AI考官。请开始作答。\n下一题:" + firstQuestion;
                     chatMemory.add(sessionId, List.of(new AssistantMessage(greeting)));
                     trimChatMemory(sessionId);
                     log.info("首轮由后端直接出题: {}", firstQuestion);
@@ -495,6 +499,19 @@ public class chatController {
                         }
                         // 清洗：防止模型把"答案要点"混入下一题
                         nextQuestion = cleanNextQuestion(nextQuestion);
+                        // 追问阶段去重（2026.9.15 实测"并行处理"类追问连问两遍）：
+                        // 模型自拟下一题若与已问题目重复/高度相似，则重新生成一道
+                        if (nextQuestion != null && !nextQuestion.isEmpty()
+                                && assistantCountInHistory >= existingQuestionCount) {
+                            List<String> askedQuestions = collectAskedQuestions(topicId, assistantCountInHistory - 1, defenseId);
+                            if (isSimilarToAnyQuestion(nextQuestion, askedQuestions)) {
+                                log.warn("模型下一题与已问题目重复/高度相似，重新生成: {}", nextQuestion);
+                                String regenerated = generateFollowUpQuestion(topicId, askedQuestions);
+                                if (regenerated != null && !regenerated.isEmpty()) {
+                                    nextQuestion = regenerated;
+                                }
+                            }
+                        }
                         // 兜底：预设题阶段解析不到下一题时，直接从题库取
                         if ((nextQuestion == null || nextQuestion.isEmpty())
                                 && assistantCountInHistory < existingQuestionCount) {
@@ -512,6 +529,9 @@ public class chatController {
                                 log.warn("题库兜底获取下一题失败", ex);
                             }
                         }
+                        // 回写规范后的题目文本到回复（2026.9.15）：前端展示的是 aiResponse 里的"下一题:"行，
+                        // 清洗/去重/兜底替换后的题目要同步写回，避免"展示脏字符、落库干净题"两张皮
+                        aiResponse = rewriteNextQuestionInResponse(aiResponse, nextQuestion);
                         if (nextQuestion != null && !nextQuestion.isEmpty()
                                 && assistantCountInHistory >= existingQuestionCount) {
                             // 仅追问阶段由模型自拟的下一题才登记入库；预设题阶段不动，避免污染追问额度计数
@@ -537,6 +557,12 @@ public class chatController {
                             log.warn("硬上限兜底收尾：第{}轮未见总结，已强制收尾", assistantCountInHistory);
                         }
                         if (defenseId != null) {
+                            // 总结带总评（2026.9.15）：总结末尾追加总分与五维汇总，学生收尾即可见成绩
+                            // （总结必为回复最后一行，直接拼接即可；"总分"判重防止模型自己已输出时重复）
+                            String finalScoreText = buildFinalScoreText(defenseId);
+                            if (!finalScoreText.isEmpty() && !aiResponse.contains("总分")) {
+                                aiResponse = aiResponse + finalScoreText;
+                            }
                             finishDefenseAggregation(defenseId, extractSummaryText(aiResponse));
                         }
                     } else {
@@ -825,8 +851,27 @@ public class chatController {
         if (nl > -1) cleaned = cleaned.substring(0, nl).trim();
         int idx = cleaned.indexOf("要点");
         if (idx > 0) cleaned = cleaned.substring(0, idx).trim();
+        // 2026-09-15 题目文本清洗（实测模型输出"？如何…？？"类脏字符）：
+        // 开头杂标点剥掉；结尾连续问号收敛为一个"？"（保留疑问句式）；结尾其他杂标点去掉
+        cleaned = cleaned.replaceAll("^[？?。，,、：:；;．.\\s～~·]+", "");
+        cleaned = cleaned.replaceAll("[？?][\\s]*[？?]+[\\s]*$", "？");
+        cleaned = cleaned.replaceAll("[。，,、：:；;．.\\s～~·]+$", "");
         if (cleaned.isEmpty() || "无".equals(cleaned)) return null;
         return cleaned;
+    }
+
+    /**
+     * 将规范后的题目文本回写到回复的"下一题:"行（含全角冒号，2026.9.15 配套题目清洗/追问去重）：
+     * 前端展示与记忆里的都是 aiResponse 原文，清洗/去重/兜底替换后的题目必须写回，否则"展示脏题、落库净题"两张皮。
+     * 回复中没有"下一题"标记时不动作（该场景由 appendNextQuestionFallback 补行）。
+     */
+    private String rewriteNextQuestionInResponse(String aiResponse, String question) {
+        if (aiResponse == null || question == null || question.isEmpty()) return aiResponse;
+        int pos = aiResponse.indexOf("下一题:");
+        int posFull = aiResponse.indexOf("下一题：");
+        if (pos == -1 || (posFull != -1 && posFull < pos)) pos = posFull;
+        if (pos == -1) return aiResponse;
+        return aiResponse.substring(0, pos + 4) + question;
     }
 
     /**
@@ -902,7 +947,8 @@ public class chatController {
             // 预设阶段：取题库中当前轮次的下一道题（assistantCountInHistory 同样用于该下标）
             nextQuestion = fetchPresetQuestionText(topicId, assistantCountInHistory);
         } else {
-            nextQuestion = generateFollowUpQuestion(topicId);
+            nextQuestion = generateFollowUpQuestion(topicId,
+                    collectAskedQuestions(topicId, assistantCountInHistory - 1, null));
         }
         if (nextQuestion == null || nextQuestion.trim().isEmpty()) {
             return aiResponse;
@@ -942,6 +988,8 @@ public class chatController {
             "我会这道题", "这题我会", "我会", "我会做", "我知道", "我知道这个", "我知道答案",
             "简单", "很简单", "挺简单", "太简单", "很容易", "没问题",
             "说不上来", "答不上来", "忘了", "忘记了",
+            // 2026-09-15 实测补网：报数式玩笑（"我是250"曾漏判得8分）、骂人单字（精确相等匹配，不会误伤正常回答）
+            "我是250", "250", "滚",
             "ok", "okay", "next", "emm", "emmm"
     };
 
@@ -1011,7 +1059,8 @@ public class chatController {
             if (inPresetPhase && qi + 1 < existingQuestionCount) {
                 nextQuestion = fetchPresetQuestionText(topicId, qi + 1);
             } else if (!lastRound) {
-                nextQuestion = generateFollowUpQuestion(topicId);
+                nextQuestion = generateFollowUpQuestion(topicId,
+                        collectAskedQuestions(topicId, currentRound - 1, defenseId));
             } else {
                 terminal = true;
             }
@@ -1038,7 +1087,9 @@ public class chatController {
 
             String fixedResponse;
             if (terminal) {
-                String summary = "本次答辩到此结束，系统已按各轮评分汇总最终成绩，可在答辩记录中查看。";
+                // 总结带总评（2026.9.15）：追加分总分与五维汇总
+                String summary = "本次答辩到此结束，系统已按各轮评分汇总最终成绩，可在答辩记录中查看。"
+                        + buildFinalScoreText(defenseId);
                 fixedResponse = "点评:" + zeroComment + "\n评分:0/50|0|0|0|0|0\n总结:" + summary;
                 finishDefenseAggregation(defenseId, summary);
             } else {
@@ -1075,6 +1126,15 @@ public class chatController {
 
     /** 追问阶段：让模型围绕课题出一个新的追问问题（仅输出问题本身） */
     private String generateFollowUpQuestion(Integer topicId) {
+        return generateFollowUpQuestion(topicId, new ArrayList<>());
+    }
+
+    /**
+     * 追问阶段：让模型围绕课题出一个新的追问问题（仅输出问题本身）。
+     * excludeQuestions 为已问过的题目（2026.9.15 追问去重）：prompt 中声明排除，生成结果仍相似时最多重试一次，
+     * 两次都相似则改用兜底题（优先取与已问题目不相似的兜底题）。
+     */
+    private String generateFollowUpQuestion(Integer topicId, List<String> excludeQuestions) {
         String topicName = "";
         try {
             Result<Object> topicResult = defenseTopicsService.getTopicById(topicId);
@@ -1085,20 +1145,30 @@ public class chatController {
             log.warn("获取课题名称失败: {}", e.getMessage());
         }
 
-        String prompt = "你是一名答辩考官，正在考核学生的课题《" + topicName + "》。"
-                + "请提出一个新的追问问题，只输出问题本身（30字以内，以？结尾），不要输出其他任何内容。";
+        StringBuilder pb = new StringBuilder("你是一名答辩考官，正在考核学生的课题《" + topicName + "》。"
+                + "请提出一个新的追问问题，只输出问题本身（30字以内，以？结尾），不要输出其他任何内容。");
+        if (excludeQuestions != null && !excludeQuestions.isEmpty()) {
+            pb.append("以下问题已经问过，新问题不得与它们重复或高度相似：");
+            for (String q : excludeQuestions) {
+                pb.append("\n- ").append(q);
+            }
+        }
         try {
-            String resp = chatClient.prompt()
-                    .user(prompt)
-                    .options(OpenAiChatOptions.builder()
-                            .model("qwen2.5:3b-16k")
-                            .maxTokens(60)
-                            .build())
-                    .call()
-                    .content();
-            String question = cleanNextQuestion(resp);
-            if (question != null && !question.isEmpty()) {
-                return question;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                String resp = chatClient.prompt()
+                        .user(pb.toString())
+                        .options(OpenAiChatOptions.builder()
+                                .model("qwen2.5:3b-16k")
+                                .maxTokens(60)
+                                .build())
+                        .call()
+                        .content();
+                String question = cleanNextQuestion(resp);
+                if (question != null && !question.isEmpty()
+                        && !isSimilarToAnyQuestion(question, excludeQuestions)) {
+                    return question;
+                }
+                log.warn("追问生成与已问题目相似或为空（第{}次尝试），重试", attempt + 1);
             }
         } catch (Exception e) {
             log.warn("模型生成追问失败，使用兜底问题: {}", e.getMessage());
@@ -1109,7 +1179,91 @@ public class chatController {
                 "针对你刚才的回答，请补充说明关键的实现细节？",
                 "如果时间或资源受限，你会如何调整该课题的方案？"
         };
+        // 兜底题也优先选与已问题目不相似的，避免兜底题撞上刚问过的题
+        List<String> available = new ArrayList<>();
+        for (String f : fallbacks) {
+            if (!isSimilarToAnyQuestion(f, excludeQuestions)) {
+                available.add(f);
+            }
+        }
+        if (!available.isEmpty()) {
+            return available.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(available.size()));
+        }
         return fallbacks[java.util.concurrent.ThreadLocalRandom.current().nextInt(fallbacks.length)];
+    }
+
+    /**
+     * 收集已问过的题目（2026.9.15 追问去重用）：预设题已问部分（前 askedPresetCount 道）+ 该答辩已登记的追问题。
+     * defenseId 为 null 时只收集预设题（如 appendNextQuestionFallback 路径拿不到 defenseId）。
+     */
+    private List<String> collectAskedQuestions(Integer topicId, int askedPresetCount, Integer defenseId) {
+        List<String> asked = new ArrayList<>();
+        try {
+            Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (qr.getCode() == 1 && qr.getData() != null) {
+                for (int i = 0; i < Math.min(askedPresetCount, qr.getData().size()); i++) {
+                    asked.add(qr.getData().get(i).getQuestion());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("收集已问预设题失败: {}", e.getMessage());
+        }
+        if (defenseId != null) {
+            try {
+                List<DefenseStudentQuestions> customs = defenseStudentQuestionsMapper.getQuestionsByDefenseId(defenseId);
+                if (customs != null) {
+                    for (DefenseStudentQuestions q : customs) {
+                        if (q.getCustomQuestion() != null && !q.getCustomQuestion().isEmpty()) {
+                            asked.add(q.getCustomQuestion());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("收集已登记追问题失败: {}", e.getMessage());
+            }
+        }
+        return asked;
+    }
+
+    /**
+     * 题目相似判定（2026.9.15 追问去重用）：归一化（去标点/空白、转小写）后，
+     * 完全相等、互为包含、或字符二元组重合度（Dice 系数）> 0.5 视为相似。
+     */
+    private boolean isSimilarToAnyQuestion(String question, List<String> askedList) {
+        if (question == null || askedList == null || askedList.isEmpty()) return false;
+        String a = normalizeForCompare(question);
+        if (a.isEmpty()) return false;
+        for (String asked : askedList) {
+            String b = normalizeForCompare(asked);
+            if (b.isEmpty()) continue;
+            if (a.equals(b) || a.contains(b) || b.contains(a)) return true;
+            if (bigramDice(a, b) > 0.5) return true;
+        }
+        return false;
+    }
+
+    private String normalizeForCompare(String s) {
+        return s == null ? "" : s.toLowerCase().replaceAll("[\\s\\p{P}\\p{S}]+", "");
+    }
+
+    /** 字符二元组 Dice 相似度：2*|A∩B| / (|A|+|B|)；单字符串按单字符集合参与比较 */
+    private double bigramDice(String a, String b) {
+        Set<String> sa = new HashSet<>();
+        for (int i = 0; i < a.length() - 1; i++) {
+            sa.add(a.substring(i, i + 2));
+        }
+        if (sa.isEmpty() && a.length() == 1) sa.add(a);
+        Set<String> sb = new HashSet<>();
+        for (int i = 0; i < b.length() - 1; i++) {
+            sb.add(b.substring(i, i + 2));
+        }
+        if (sb.isEmpty() && b.length() == 1) sb.add(b);
+        if (sa.isEmpty() || sb.isEmpty()) return 0;
+        int overlap = 0;
+        for (String g : sa) {
+            if (sb.contains(g)) overlap++;
+        }
+        return 2.0 * overlap / (sa.size() + sb.size());
     }
 
     /** 放弃作答的固定零分评分记录（五维全0） */
@@ -1200,6 +1354,43 @@ public class chatController {
 
     private double nvl(BigDecimal v) {
         return v == null ? 0.0 : v.doubleValue();
+    }
+
+    /**
+     * 聚合各轮评分生成总评分数文案（2026.9.15 总结带总评）："总分X/50（表达A 逻辑B 专业C 应变D 创新E）。"
+     * 总分口径与 finishDefenseAggregation 一致：各轮五维之和的平均值，四舍五入 1 位小数。
+     * 注意：评分为异步落库，极端情况下末轮记录可能尚未写入导致总分少算——与既有收尾聚合同口径，方向安全。
+     */
+    @SuppressWarnings("unchecked")
+    private String buildFinalScoreText(Integer defenseId) {
+        try {
+            if (defenseId == null) return "";
+            Map<String, Object> aggregated = scorePersistenceService.aggregateScores(defenseId);
+            List<DefenseScoreRecord> records = (List<DefenseScoreRecord>) aggregated.get("records");
+            if (records == null || records.isEmpty()) return "";
+            double expr = 0, logic = 0, prof = 0, adap = 0, inn = 0;
+            for (DefenseScoreRecord r : records) {
+                expr += nvl(r.getExpressionScore());
+                logic += nvl(r.getLogicScore());
+                prof += nvl(r.getProfessionalScore());
+                adap += nvl(r.getAdaptabilityScore());
+                inn += nvl(r.getInnovationScore());
+            }
+            int n = records.size();
+            double total = Math.round((expr + logic + prof + adap + inn) / n * 10) / 10.0;
+            return "总分" + fmtScore(total) + "/50（表达" + fmtScore(expr / n)
+                    + " 逻辑" + fmtScore(logic / n) + " 专业" + fmtScore(prof / n)
+                    + " 应变" + fmtScore(adap / n) + " 创新" + fmtScore(inn / n) + "）。";
+        } catch (Exception e) {
+            log.warn("总结总评分聚合失败 - defenseId: {}, error: {}", defenseId, e.getMessage());
+            return "";
+        }
+    }
+
+    /** 分数展示：整数不带小数位，非整数保留 1 位（8.0→8，7.5→7.5） */
+    private String fmtScore(double v) {
+        double r = Math.round(v * 10) / 10.0;
+        return r == Math.floor(r) ? String.valueOf((long) r) : String.valueOf(r);
     }
 
     /** 从AI回复中提取"总结:"后的文本 */

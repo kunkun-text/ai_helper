@@ -20,6 +20,8 @@ Page({
 
     lastAiMessage: null,
     questionCount: 0,
+    presetRounds: 5, // 预设题数量（十轮答辩 = 5 预设题 + 5 追问）
+    totalRounds: 10, // 总轮次，顶栏进度显示用
     lastError: '',
     showRetry: false,
 
@@ -102,6 +104,7 @@ Page({
       evaluation: parsed.evaluation || '',
       score: parsed.score,
       question: parsed.question || '',
+      questionLabel: parsed.questionLabel || '',
       summary: parsed.summary || '',
       videoAnalysis: parsed.videoAnalysis || '',
       reportAnalysis: parsed.reportAnalysis || '',
@@ -213,7 +216,7 @@ Page({
     }
     result.displayText = firstIdx > 0 ? text.substring(0, firstIdx).trim() : (firstIdx === -1 ? text : '');
 
-    if (result.question) this.setData({ questionCount: this.data.questionCount + 1 });
+    if (result.question) this.markQuestionNumber(result);
     return result;
   },
 
@@ -252,10 +255,11 @@ Page({
     // 展示总分一律 = 五维之和，保证"加起来对得上总分"
     result.score = hasScore ? sum : null;
     result.totalScore = result.score;
-    result.evaluation = dims.map((v, i) => `${dimLabels[i]}:${v}`).join(' ');
+    // 无评分行的回复（如开场白）不展示五维评价，避免渲染出"表达:0 逻辑:0…"的全 0 区块
+    result.evaluation = hasScore ? dims.map((v, i) => `${dimLabels[i]}:${v}`).join(' ') : '';
     // 气泡只显示点评（自然语言），评分/下一题走下方结构化区块，避免重复
     result.displayText = comment || result.evaluation;
-    if (result.question) this.setData({ questionCount: this.data.questionCount + 1 });
+    if (result.question) this.markQuestionNumber(result);
     return result;
   },
 
@@ -276,8 +280,16 @@ Page({
     } else {
       result.displayText = line;
     }
-    if (result.question) this.setData({ questionCount: this.data.questionCount + 1 });
+    if (result.question) this.markQuestionNumber(result);
     return result;
+  },
+
+  /** 题目序号标注：每解析出一道题计数 +1。1~presetRounds 显示"第N题"，之后为追问轮显示"追问M" */
+  markQuestionNumber(result) {
+    const no = this.data.questionCount + 1;
+    result.questionNo = no;
+    result.questionLabel = no <= this.data.presetRounds ? `第${no}题` : `追问${no - this.data.presetRounds}`;
+    this.setData({ questionCount: no });
   },
 
   extractMarkedText(text, marker, endMarkers) {

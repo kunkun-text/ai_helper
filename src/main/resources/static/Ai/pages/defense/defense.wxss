@@ -85,6 +85,12 @@
   color: #999;
 }
 
+.header-progress {
+  font-size: 22rpx;
+  color: #666;
+  margin-left: 16rpx;
+}
+
 /* ======== Message List ======== */
 .msg-list {
   flex: 1;

@@ -9,6 +9,7 @@
       <view class="header-status">
         <text class="status-dot {{status}}"></text>
         <text class="status-text">{{statusText}}</text>
+        <text class="header-progress">进度 {{questionCount}}/{{totalRounds}}</text>
       </view>
     </view>
   </view>
@@ -32,7 +33,7 @@
 
             <!-- 结构化展示 -->
             <view wx:if="{{item.question}}" class="msg-section section-question">
-              <text class="section-label-question">下一问</text>
+              <text class="section-label-question">{{item.questionLabel}}</text>
               <text class="section-text">{{item.question}}</text>
             </view>
 
