@@ -267,13 +267,13 @@ public class chatController {
         StringBuilder p = new StringBuilder();
 
         p.append("你是答辩评委，正在对学生进行一对一答辩考核。本场答辩共约10轮：5道预设题 + 至多5次AI追问。除首轮外，你必须严格按照以下三行格式输出，顺序不可颠倒，每行以固定标签开头，不要任何多余内容：\n");
-        p.append("点评:（40字以内，先一句话肯定优点，再具体指出不足和一条改进建议，必须结合学生刚才的实际回答，禁止空话套话）\n");
+        p.append("点评:（40字以内，必须基于学生回答的真实内容：回答有实质内容才先一句话肯定优点，再指出不足和一条改进建议；回答是敷衍/语气词/未实际作答时，必须直接写明回答无实质内容，严禁虚构“思路清晰”“回答完整”等与实际不符的肯定，禁止空话套话）\n");
         p.append("评分:总分/50|表达分|逻辑分|专业分|应变分|创新分（各0-10整数，五维分数相加必须等于总分）\n");
         p.append("下一题:（30字以内，提问下一道题目）\n");
         p.append("示例：\n点评:概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用。\n\n");
         p.append("【轮次铁律】5道预设题未全部答完前，必须逐题输出『下一题:』提问下一道预设题；预设题答完后，最多允许5次AI追问，追问阶段每轮仍输出『下一题:』（30字以内）由你自拟追问。只有『预设题全部答完且追问已达5次』时，最后一行才允许输出『总结:』。任何情况下严禁提前输出『总结:』或提前结束答辩；只要还剩预设题或追问额度，最后一行必须输出『下一题:』，严禁输出『总结:』。每轮末尾会附带 [进度: 第X题/共Y题, 已追问Z/5次]，请据此判断当前进度并输出正确标签。\n\n");
         p.append("打分必须客观公正：学生回答正确、完整、条理清晰才给高分；回答错误、答非所问、含糊其辞或直接说“不知道”必须给低分（对应维度只给0-4分，总分不超过25/50），严禁凭印象乱给高分。\n\n");
-        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语时，本题五维全部给0分，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
+        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语，或回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、纯标点、与问题完全无关的跑题内容）时，本题五维必须全部给0分，点评中明确说明回答无实质内容，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
 
         if (isFirstRound) {
             p.append("共").append(questions.size()).append("题:\n");
@@ -352,10 +352,14 @@ public class chatController {
             }
         }
 
-        // --- 学生放弃作答（"不知道/不会"类短语）：不调用评分模型，本题零分并直接进入下一题 ---
-        if (topicId != null && userId != null && isGiveUpAnswer(userInput)) {
+        // --- 学生放弃作答（"不知道/不会"类短语）或敷衍作答（"开始/1/一般"等无实质内容，2026-09-15 新增）：不调用评分模型，本题零分并直接进入下一题 ---
+        if (topicId != null && userId != null && (isGiveUpAnswer(userInput) || isJunkAnswer(userInput))) {
+            // 点评文案按判定来源区分：放弃作答=明确表示不会；敷衍作答=回答无实质内容
+            String zeroComment = isGiveUpAnswer(userInput)
+                    ? "学生表示不知道该题，本题计0分，建议课后补强该知识点。"
+                    : "学生未给出实质回答，本题计0分，建议结合问题认真作答。";
             String fixedResponse = handleGiveUpAnswer(existingQuestionIds, existingQuestionCount,
-                    userId, topicId, userInput, sessionId, history, answeredCount);
+                    userId, topicId, userInput, sessionId, history, answeredCount, zeroComment);
             if (fixedResponse != null) {
                 return fixedResponse;
             }
@@ -930,14 +934,61 @@ public class chatController {
         return false;
     }
 
+    /** 判定为敷衍/无实质作答的短语（归一化+首尾修饰剥离后精确相等才命中，避免子串误伤正常回答，如"一般用快排"） */
+    private static final String[] JUNK_ANSWER_PHRASES = {
+            "开始", "一般", "一般般", "差不多", "还好", "还行", "还可以", "就这样", "就这", "随便", "过",
+            "好的", "知道了", "明白了", "没什么", "没啥说的",
+            "不太行", "不行", "你是对的", "我是对的", "你说的对", "你说得对", "有道理", "对的", "是的", "没错",
+            "我会这道题", "这题我会", "我会", "我会做", "我知道", "我知道这个", "我知道答案",
+            "简单", "很简单", "挺简单", "太简单", "很容易", "没问题",
+            "说不上来", "答不上来", "忘了", "忘记了",
+            "ok", "okay", "next", "emm", "emmm"
+    };
+
+    /** 语气词/填充字符：回答仅由这些字符组成（"额""嗯嗯""额啊"等任意组合）视为敷衍输入 */
+    private static final String FILLER_CHARS = "嗯哦啊呃额唔哎嘿诶唉噢喔哈呀哇";
+
+    /**
+     * 敷衍/无实质作答判定（2026-09-15 新增，同日实测后二次加强）：与放弃作答同走固定零分流程，不调用评分模型。
+     * 归一化：转小写、去空白/标点/符号，再剥离开头缓和语（感觉/我觉得/我认为）与结尾语气词（吧/呢/啊…），
+     * 覆盖"一般吧""还好吧""感觉不太行"等实测漏网变体。判定：①剥离后为空（纯标点/纯语气词，如"？？""额"）；
+     * ②1~2位纯数字（如"1"）；③仅由语气词字符组成；④与敷衍短语精确相等（含"我会这道题"等只声称会但不回答）。
+     * 3位及以上纯数字（如端口号"3306"）可能是有效简答，不在此判定，交由评分模型按提示词规则给分。
+     */
+    private boolean isJunkAnswer(String userInput) {
+        if (userInput == null) return false;
+        String trimmed = userInput.trim();
+        if (trimmed.isEmpty()) return false;
+        String text = trimmed.toLowerCase().replaceAll("[\\s\\p{P}\\p{S}]+", "");
+        text = text.replaceAll("^(感觉|我觉得|我认为)+", "");
+        text = text.replaceAll("[吧呢啊呀哦嘛呗啦哟唷哇哈]+$", "");
+        if (text.isEmpty()) return true;
+        if (text.matches("[0-9]{1,2}")) return true;
+        boolean allFiller = true;
+        for (int i = 0; i < text.length(); i++) {
+            if (FILLER_CHARS.indexOf(text.charAt(i)) < 0) { allFiller = false; break; }
+        }
+        if (allFiller) return true;
+        // 复读型敷衍（15:44 实测漏网补网）："对对对""嗯嗯""666"（同一字符重复）与"对的对的""是的是的"（双字单元重复）
+        if (text.length() >= 2 && text.chars().distinct().count() == 1) return true;
+        if (text.length() >= 4 && text.length() % 2 == 0
+                && text.substring(0, text.length() / 2).equals(text.substring(text.length() / 2))) return true;
+        for (String phrase : JUNK_ANSWER_PHRASES) {
+            if (text.equals(phrase)) return true;
+        }
+        return false;
+    }
+
     /**
      * 学生放弃作答的固定处理：本题五维0分、不调用评分模型，直接给出下一题或收尾总结。
      *
+     * @param zeroComment 固定零分点评文案（按判定来源区分：放弃作答/敷衍作答）
      * @return 固定模板响应；返回 null 表示轮次/题库异常，需回退正常模型流程
      */
     private String handleGiveUpAnswer(List<Integer> existingQuestionIds, int existingQuestionCount,
                                       String userId, Integer topicId,
-                                      String userInput, String sessionId, List<Message> history, int answeredCount) {
+                                      String userInput, String sessionId, List<Message> history, int answeredCount,
+                                      String zeroComment) {
         try {
             Integer defenseId = defenseRecordsService.getOrCreateDefenseRecord(topicId, userId);
             if (defenseId == null) {
@@ -952,8 +1003,6 @@ public class chatController {
             boolean inPresetPhase = qi >= 0 && qi < existingQuestionCount;
             // 本轮已是最后一轮（第 existingQuestionCount + EXTRA_QUESTION_LIMIT 次作答）→ 本题0分后直接收尾总结
             boolean lastRound = currentRound >= existingQuestionCount + EXTRA_QUESTION_LIMIT;
-
-            String zeroComment = "学生表示不知道该题，本题计0分，建议课后补强该知识点。";
 
             // 先确定下一题：预设题未问完 → 题库取下一题；未到最后一轮 → 模型生成追问；否则收尾。
             // 旧实现的 quotaRemains 基于 countExtraQuestions（DB 追问题条数虚高≈2倍），会导致提前收尾。
@@ -1002,8 +1051,8 @@ public class chatController {
             ));
             trimChatMemory(sessionId);
 
-            log.info("学生放弃作答，走固定零分流程 - defenseId: {}, round: {}, terminal: {}",
-                    defenseId, currentRound, terminal);
+            log.info("学生放弃/敷衍作答，走固定零分流程 - defenseId: {}, round: {}, terminal: {}, 点评: {}",
+                    defenseId, currentRound, terminal, zeroComment);
             return fixedResponse;
         } catch (Exception e) {
             log.error("放弃作答固定流程异常，回退正常模型流程", e);
