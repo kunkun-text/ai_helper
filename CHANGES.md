@@ -492,3 +492,65 @@ if ((presetDone && followUpDone && hasSummary) || hardCapReached) {   // ① 正
 - 总结总分依赖异步落库：极端情况下末轮评分行未写入时总分少算（与既有 finishDefenseAggregation 同口径，方向安全）
 - 追问去重相似度阈值（Dice>0.5）为经验值；3B 模型对"不得相似"指令遵循有限，重试一次 + 兜底题保底
 - 既有遗留（前端重试重复评分行、追问放弃答案行跳过落库、模型总分≠五维和）不变
+
+---
+
+# 2026-09-16 改动（前端体验优化：微信式输入框 + 渲染错乱根治 + 登录键盘流转）
+
+> 改动日期：2026.9.16，涉及 defense.wxml/wxss/js、student.wxss、login.wxml/js。**已完整走通答辩流程验证（开发者工具环境），阶段成果，待真机复核。**
+
+## 一、答辩输入框 → 微信式对话框（P0，定稿形态）
+
+| 项 | 定稿 |
+|---|---|
+| 组件 | 多行 `<textarea>`，`auto-height`（min 176rpx/3 行起步，max 288rpx/6 行封顶，超出内部滚动） |
+| 换行 | Enter（PC 物理键盘 / 真机软键盘"换行"键）；**发送只走右侧按钮**（微信手机版模式） |
+| 字数 | `maxlength="2000"`（原需求 200，为支持复制粘贴题目/长回答放宽，用户确认） |
+| 复制 | AI 消息题目标签行右侧"复制"按钮（`wx.setClipboardData`）；消息文本全部 `user-select`（真机长按可选） |
+| 其他 | `cursor-spacing="20"`、`show-confirm-bar="{{false}}"`、固定行高 42rpx |
+
+**交互演进记录**：曾短暂启用 `confirm-type="send"+bindconfirm`（Enter 发送），实测 PC 工具把 Enter/Shift+Enter 都转发为 confirm 且无法区分修饰键（小程序无键盘事件），换行能力丢失；界面 ↵ 换行按钮方案因 focus 回焦干扰打字被否。最终按用户决策：**视觉/打字体验优先，舍弃 Enter 发送**。
+
+## 二、登录页键盘流转（P0，已实测）
+
+| 文件 | 改动 |
+|---|---|
+| login.wxml | 账号框 `confirm-type="next"` + `bindconfirm="onAccountConfirm"`；密码框 `focus="{{pwdFocus}}"` + `confirm-type="send"` + `bindconfirm="handleLogin"` |
+| login.js | 新增 `onAccountConfirm()` → 置 `pwdFocus:true` |
+
+账号 Enter → 跳密码框；密码 Enter → 登录；失败报错机制不变。**用户已实测通过。**
+
+## 三、渲染错乱 bug：根因链与修复全过程（已解决）
+
+**现象演进**（同一根因链的三个表现）：
+1. 答辩页输入框换行+输入 → 页面错乱重叠（student 首页底部导航叠入答辩页底部）
+2. 修复过程中残影转移 → student 首页顶部标题"课程考核AI答辩辅助"叠入答辩页顶部
+3. 粘贴长文（≥3 行内容）→ 发送按钮附近渲染异常，清空输入框即恢复；触发阈值随输入框可视行数增加而后移（3 行时 37 字触发，加余量后 50~70 字触发）
+
+**根因（两个，叠加作用）**：
+- **根因 A：fixed 悬浮层 + 原生组件的渲染合成缺陷**。残影宿主是各页面的 `position:fixed` 元素（student 页 header/tab-bar、defense 页 input-bar），页面切换/重绘时悬浮层内容残留、串位。最初"textarea 原生组件层级穿透"的假设不准确。
+- **根因 B：textarea 内部滚动 + 相邻按钮的合成错乱**。内容超出可视行数触发内部滚动时，重绘与发送按钮区域冲突（异常位置在发送按钮、清空恢复、阈值随行数后移三条证据链锁定）。
+
+**修复链**（v1→v6，含无效尝试）：
+- v1 换回 input 验证 → 无效（input 单行构造不出触发条件，对照组不成立）
+- v2 去掉 max-height → 无效（auto-height×max-height 冲突假设被否）
+- v3 固定 3 行高去 auto-height → 缓解（内部滚动推迟到第 4 行），未根治
+- v4 题目"复制"按钮 + 消息文本 user-select（PC 工具不支持鼠标选择文本，user-select 仅真机长按生效）
+- v5 **文档流改造（根治根因 A）**：defense 与 student 两页统一改为"固定 100vh 视口 + flex 三段式"——`.page` height:100vh+overflow:hidden，header/输入栏/tab-bar 全部回归文档流，消息/内容区 `flex:1 + min-height:0`（min-height:0 缺失会导致 scroll-view 按内容撑开、把底栏顶出屏幕——修复过程中出现过，已加）。modal-mask 保留 fixed（纯 view 无原生组件，不受影响）
+- v6 **auto-height 回归（根治根因 B）**：文档流下高度变化不再引发错乱，重新启用 auto-height 让 6 行内内容全展开、不触发内部滚动
+
+**验证状态**：开发者工具全流程通过（短句/换行/粘贴/发送/清空/页面切换/答题 10 轮）；**真机尚未验证**。
+
+## 四、遗留与待办
+
+- **真机验证**：本版全部结论来自开发者工具；答辩前需真机走一场（尤其输入框、页面切换残影）
+- 200 字以上回答（>6 行）仍会内部滚动，理论上仍可能触发根因 B,实测待观察；如复发可调大 max-height 或再议
+- **teacher 页 4 处 fixed**（teacher.wxss:14/697/726/893）与 student/defense 同款隐患，建议同款文档流改造
+- 模型行为：复制题目文本当回答，判定不一致（有的 0 分"无实质内容"，有的 27/50"思路清晰"）——答辩防作弊场景需留意
+- 需求清单挂账不变：JVM/Ollama 资源加固、答辩记录详情页、语音输入
+- 排查自动化备料：miniprogram-automator 已装（`C:\Users\Administrator\.trae-cn\builtin\work\mp-repro`），需在开发者工具 设置→安全设置 开启服务端口后可用
+
+## 五、其他状态
+
+- 后端正常：topic 28 第 10 轮兜底正常触发（总分 12.9/50）、Redis 记忆裁剪 14→12、锁正常、无异常报错
+- 本节改动已提交 git
