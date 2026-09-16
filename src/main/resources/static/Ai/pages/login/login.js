@@ -60,6 +60,11 @@ Page({
     this.setData({ pwdFocus: false });
   },
 
+  // 账号输入框按确认键（Enter）→ 光标跳到密码输入框
+  onAccountConfirm() {
+    this.setData({ pwdFocus: true });
+  },
+
   // 点击切换密码显隐
   togglePwd() {
     this.setData({ showPwd: !this.data.showPwd });

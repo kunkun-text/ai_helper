@@ -1,5 +1,8 @@
 .page {
-  min-height: 100vh;
+  /* 结构性修复：整页固定视口高 + 内部 flex 滚动，header/tab-bar 回归文档流，
+     消除 fixed 悬浮层在页面切换后的渲染残留（残影叠到答辩页的根因） */
+  height: 100vh;
+  overflow: hidden;
   background: #f4f6f9;
   display: flex;
   flex-direction: column;
@@ -11,11 +14,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
+  position: relative; /* header-title 为 absolute 定位，需保留定位祖先 */
+  flex-shrink: 0;
   box-shadow: 0 2rpx 8rpx rgba(13, 1, 1, 0.1);
 }
 
@@ -32,7 +32,9 @@
 
 .content {
   flex: 1;
-  padding: 140rpx 24rpx 140rpx;
+  min-height: 0; /* 关键：约束 scroll-view 不得超出 flex 分配的高度，否则内容撑开把 tab-bar 顶出屏幕 */
+  /* header/tab-bar 已回归文档流，无需再预留悬浮层空间 */
+  padding: 24rpx 24rpx 30rpx;
   box-sizing: border-box;
 }
 
@@ -491,14 +493,12 @@
 }
 
 .tab-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* 回归文档流：作为 .page 的最后一个 flex 子项贴底 */
   background: #ffffff;
   border-top: 2rpx solid #e8e8e8;
   display: flex;
   padding: 16rpx 0;
+  flex-shrink: 0;
 }
 
 .tab-item {

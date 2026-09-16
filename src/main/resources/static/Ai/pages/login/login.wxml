@@ -29,6 +29,8 @@
         bindinput="onAccountInput"
         bindfocus="onAccountFocus"
         bindblur="onAccountBlur"
+        confirm-type="next"
+        bindconfirm="onAccountConfirm"
       />
     </view>
     <view class="input-item {{pwdFocus ? 'input-focus' : ''}}">
@@ -41,6 +43,9 @@
         bindinput="onPasswordInput"
         bindfocus="onPwdFocus"
         bindblur="onPwdBlur"
+        focus="{{pwdFocus}}"
+        confirm-type="send"
+        bindconfirm="handleLogin"
       />
 
       </view>

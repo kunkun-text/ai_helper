@@ -322,6 +322,13 @@ Page({
     this.setData({ inputText: e.detail.value });
   },
 
+  // 复制题目文本：PC 工具模拟器不支持鼠标选择文本，user-select 只在真机长按生效，故给显式复制入口
+  copyQuestion(e) {
+    const text = e.currentTarget.dataset.text;
+    if (!text) return;
+    wx.setClipboardData({ data: text });
+  },
+
   sendMessage() {
     const text = this.data.inputText.trim();
     if (!text) { wx.showToast({ title: '请输入回答', icon: 'none' }); return; }

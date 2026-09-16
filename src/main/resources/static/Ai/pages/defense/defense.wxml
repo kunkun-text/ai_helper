@@ -29,17 +29,21 @@
         <view class="msg-avatar ai-avatar">AI</view>
         <view class="msg-content">
           <view class="msg-bubble ai-bubble">
-            <text class="msg-text">{{item.displayText}}</text>
+            <text class="msg-text" user-select="{{true}}">{{item.displayText}}</text>
 
             <!-- 结构化展示 -->
             <view wx:if="{{item.question}}" class="msg-section section-question">
-              <text class="section-label-question">{{item.questionLabel}}</text>
-              <text class="section-text">{{item.question}}</text>
+              <view class="question-head">
+                <text class="section-label-question">{{item.questionLabel}}</text>
+                <!-- PC 工具不支持长按选择文本，给显式复制入口 -->
+                <text class="copy-link" catchtap="copyQuestion" data-text="{{item.question}}">复制</text>
+              </view>
+              <text class="section-text" user-select="{{true}}">{{item.question}}</text>
             </view>
 
             <view wx:if="{{item.evaluation}}" class="msg-section section-eval">
               <text class="section-label">评价</text>
-              <text class="section-text">{{item.evaluation}}</text>
+              <text class="section-text" user-select="{{true}}">{{item.evaluation}}</text>
             </view>
 
             <view wx:if="{{item.score !== null}}" class="msg-section section-score">
@@ -48,15 +52,15 @@
 
             <view wx:if="{{item.summary}}" class="msg-section section-summary">
               <text class="section-label">📋 总结</text>
-              <text class="section-text">{{item.summary}}</text>
+              <text class="section-text" user-select="{{true}}">{{item.summary}}</text>
             </view>
             <view wx:if="{{item.videoAnalysis}}" class="msg-section section-analysis">
               <text class="section-label">🎥 视频分析</text>
-              <text class="section-text">{{item.videoAnalysis}}</text>
+              <text class="section-text" user-select="{{true}}">{{item.videoAnalysis}}</text>
             </view>
             <view wx:if="{{item.reportAnalysis}}" class="msg-section section-analysis">
               <text class="section-label">📄 报告分析</text>
-              <text class="section-text">{{item.reportAnalysis}}</text>
+              <text class="section-text" user-select="{{true}}">{{item.reportAnalysis}}</text>
             </view>
 
             <view wx:if="{{item.totalScore !== null}}" class="msg-section section-total-score">
@@ -70,7 +74,7 @@
       <view wx:elif="{{item.type === 'user'}}" class="msg-row msg-user" id="msg-{{item.id}}">
         <view class="msg-content user-content">
           <view class="msg-bubble user-bubble">
-            <text class="msg-text user-text">{{item.text}}</text>
+            <text class="msg-text user-text" user-select="{{true}}">{{item.text}}</text>
           </view>
         </view>
       </view>
@@ -100,13 +104,13 @@
     <button class="retry-btn" bindtap="retryLastMessage">重试</button>
   </view>
 
-  <!-- 底部输入栏 -->
+  <!-- 底部输入栏（定稿：textarea 固定 3 行，Enter=换行，发送只走右侧按钮；固定高防原生组件渲染错乱） -->
   <view class="input-bar {{isFinished ? 'input-bar-hidden' : ''}}">
-    <input class="msg-input" placeholder="输入你的回答..."
+    <textarea class="msg-input" placeholder="输入你的回答..."
       value="{{inputText}}" bindinput="onInput"
       disabled="{{isAiThinking || isFinished}}"
-      confirm-type="send" bindconfirm="sendMessage"
-      maxlength="2000" />
+      maxlength="2000" auto-height="{{true}}"
+      cursor-spacing="20" show-confirm-bar="{{false}}" />
     <button class="send-btn {{inputText && !isAiThinking && !isFinished ? 'send-active' : ''}}"
       bindtap="sendMessage"
       disabled="{{!inputText || isAiThinking || isFinished}}">
