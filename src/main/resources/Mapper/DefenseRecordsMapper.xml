@@ -19,6 +19,31 @@
         where defense_id = #{recordId}
     </update>
 
+    <!-- 按 defense_id 显式更新/清空附件字段。
+         不再依赖 (user_id, topic_id) 上的 ON DUPLICATE KEY ——
+         该唯一索引已在 2026-09-10 被改为普通索引，导致 upsert 实际退化成纯 INSERT，
+         每次上传都会新建一条 defense_records 记录。 -->
+    <update id="updateReportUrlById">
+        update defense_records
+        set report_url = #{reportUrl},
+            updated_at = now()
+        where defense_id = #{recordId}
+    </update>
+
+    <update id="clearVideoUrlByDefenseId">
+        update defense_records
+        set video_url = null,
+            updated_at = now()
+        where defense_id = #{defenseId}
+    </update>
+
+    <update id="clearReportUrlByDefenseId">
+        update defense_records
+        set report_url = null,
+            updated_at = now()
+        where defense_id = #{defenseId}
+    </update>
+
     <select id="getDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
         SELECT
             dr.defense_id as defenseRecordId,
@@ -205,6 +230,24 @@
     </insert>
 
     <!-- 每次答辩独立成一条记录：只取进行中（pending）的最新一条，全部已完成则由调用方创建新记录 -->
+    <!-- 归属校验：该答辩记录是否属于该用户（不 join 用户表，直接用 user_id 比对，避免表名/字段差异） -->
+    <select id="countOwnedDefenseRecord" resultType="int">
+        SELECT COUNT(1)
+        FROM defense_records
+        WHERE defense_id = #{defenseId}
+          AND user_id = #{userId}
+    </select>
+
+    <!-- 附件（视频/报告）上传与删除的目标记录：取最新一条，不区分状态 -->
+    <select id="getLatestDefenseIdByUserAndTopic" resultType="java.lang.Integer">
+        SELECT defense_id
+        FROM defense_records
+        WHERE user_id = #{userId}
+          AND topic_id = #{topicId}
+        ORDER BY defense_id DESC
+        LIMIT 1
+    </select>
+
     <select id="getDefenseIdByUserAndTopic" resultType="java.lang.Integer">
         SELECT defense_id FROM defense_records
         WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'

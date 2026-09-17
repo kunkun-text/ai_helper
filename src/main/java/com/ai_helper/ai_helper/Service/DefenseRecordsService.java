@@ -41,6 +41,17 @@ public interface DefenseRecordsService {
     Integer getOrCreateDefenseRecord(Integer topicId, String userId);
 
     /**
+     * 取该用户在该题目下的最新答辩记录（不区分状态），不存在时按需创建。
+     *
+     * <p>用于附件（视频/报告）的读写：附件应挂到已有记录上，
+     * 而不是像 {@link #getOrCreateDefenseRecord} 那样、记录已完成时再新建一条空壳。</p>
+     *
+     * @param createIfMissing 不存在时是否新建；删除类操传 false，避免为了删文件而凭空建记录
+     * @return 答辩记录 ID，定位不到且不创建时返回 null
+     */
+    Integer getOrCreateLatestDefenseRecord(Integer topicId, String userNumber, boolean createIfMissing);
+
+    /**
      * 开始新答辩：清理该学生该课题遗留的空壳记录（一题未答），并创建本次答辩的独立记录
      */
     void startNewDefenseRecord(Integer topicId, String userId);

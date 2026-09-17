@@ -1,115 +1,70 @@
 package com.ai_helper.ai_helper.Service.Impl;
 
-import com.ai_helper.ai_helper.Service.AliyunOssService;
+import com.ai_helper.ai_helper.Service.FileStorageService;
 import com.ai_helper.ai_helper.Service.VideoProcessingService;
-import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
-import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Duration;
 
-@Service
+/**
+ * 视频后处理（占位实现）。
+ *
+ * <p>说明：分片上传的 complete 阶段已经把 video_url 写入答辩记录，
+ * 本类不再重复写库，只负责「后续处理」这件事本身与状态维护。</p>
+ *
+ * <p>状态存 Redis（原先存进程内 ConcurrentHashMap，进程重启即丢，
+ * 且 processingId 由本类内部生成、调用方拿不到，导致前端查询永远 not_found）。</p>
+ */
 @Slf4j
+@Service
+@RequiredArgsConstructor
 public class VideoProcessingServiceImpl implements VideoProcessingService {
-    
-    // 模拟处理状态存储（生产环境应使用Redis）
-    private static final ConcurrentHashMap<String, String> processingStatus = new ConcurrentHashMap<>();
-    
-    @Resource
-    private DefenseRecordsMapper defenseRecordsMapper;
-    
-    @Resource
-    private AliyunOssService aliyunOssService;
-    
+
+    private static final String PROCESSING_KEY_PREFIX = "upload:video:processing:";
+    private static final Duration STATUS_TTL = Duration.ofHours(24);
+
+    private final StringRedisTemplate stringRedisTemplate;
+    private final FileStorageService fileStorageService;
+
     @Override
     @Async("taskExecutor")
-    public void processVideoAsync(String videoUrl, String userNumber, Long recordId, Long topicId) {
-        String processingId = "proc_" + System.currentTimeMillis() + "_" + userNumber;
-        processingStatus.put(processingId, "processing");
-        
+    public void processVideoAsync(String processingId, String relativePath, String userNumber, Integer topicId) {
         try {
-            log.info("开始异步处理视频：{}, userNumber: {}, recordId: {}, topicId: {}", videoUrl, userNumber, recordId, topicId);
-            
-            // 1. 视频转码（这里只是模拟，实际可以调用 FFmpeg 或其他转码服务）
-            processingStatus.put(processingId, "transcoding");
-            
-            // 2. AI 视频分析（模拟）
-            processingStatus.put(processingId, "ai_analysis");
+            updateStatus(processingId, "PROCESSING");
 
-            //根据 userId 查询 defenseRecords 中的 userId
-            String userId = defenseRecordsMapper.getUserIdByUserNumber(userNumber);
-            
-            // 3. 更新或创建数据库记录
-            if (topicId != null && userNumber != null) {
-                try {
-                    // 先查旧 video_url（用于删除旧文件）
-                    String oldVideoUrl = userId != null
-                        ? defenseRecordsMapper.getVideoUrlByUserIdAndTopicId(userId, topicId)
-                        : null;
-
-                    // 原子化 upsert（线程安全）：不存在则插入，存在则更新
-                    if (userId != null) {
-                        defenseRecordsMapper.upsertVideoUrl(userId, topicId, videoUrl);
-                        log.info("视频 URL 保存成功 - userId: {}, topicId: {}", userId, topicId);
-                    } else {
-                        log.warn("未找到用户: {}", userNumber);
-                    }
-
-                    // 删除阿里云原视频（异步删除，不阻塞主流程）
-                    deleteOldVideoAsync(oldVideoUrl, videoUrl);
-                } catch (Exception e) {
-                    log.error("数据库操作失败 - userId: {}, topicId: {}, videoUrl: {}", userId, topicId, videoUrl, e);
-                    throw e; // 重新抛出异常，确保处理状态正确设置为失败
-                }
-            } else if (recordId != null) {
-                
-                // 更新 videoUrl
-                defenseRecordsMapper.updateVideoUrlById(recordId, videoUrl);
-                log.info("视频处理完成，更新记录 ID: {}", recordId);
-
-            } else {
-                log.warn("无法保存视频记录：缺少必要的参数 (userId: {}, topicId: {}, recordId: {})", userId, topicId, recordId);
+            long size = fileStorageService.size(relativePath);
+            if (size <= 0) {
+                throw new IllegalStateException("视频文件不存在或为空：" + relativePath);
             }
-            
-            processingStatus.put(processingId, "completed");
-            log.info("视频处理完成：{}", videoUrl);
-            
+
+            // TODO 预留：FFmpeg 转码 / AI 视频分析。当前不做实际转码，避免引入额外依赖与显存开销。
+
+            updateStatus(processingId, "COMPLETED");
+            log.info("视频处理完成（占位实现）- path: {}, size: {} 字节, user: {}, topic: {}",
+                    relativePath, size, userNumber, topicId);
         } catch (Exception e) {
-            log.error("视频处理失败：{}", videoUrl, e);
-            processingStatus.put(processingId, "failed");
+            updateStatus(processingId, "FAILED");
+            log.error("视频处理失败 - path: {}, processingId: {}", relativePath, processingId, e);
         }
     }
-    
-    /**
-     * 异步删除旧视频文件
-     * @param oldVideoUrl 旧视频 URL
-     * @param newVideoUrl 新视频 URL（用于校验，避免误删）
-     */
-    private void deleteOldVideoAsync(String oldVideoUrl, String newVideoUrl) {
-        if (oldVideoUrl != null && !oldVideoUrl.isEmpty() && 
-            !oldVideoUrl.equals(newVideoUrl)) {
-            try {
-                // 异步删除，不阻塞主流程
-                CompletableFuture.runAsync(() -> {
-                    boolean success = aliyunOssService.deleteFile(oldVideoUrl);
-                    if (success) {
-                        log.info("旧视频删除成功：{}", oldVideoUrl);
-                    } else {
-                        log.warn("旧视频删除失败或无需删除：{}", oldVideoUrl);
-                    }
-                });
-            } catch (Exception e) {
-                log.error("异步删除旧视频失败：{}", oldVideoUrl, e);
-                // 不抛出异常，避免影响主流程
-            }
-        }
-    }
-    
+
     @Override
     public String getProcessingStatus(String processingId) {
-        return processingStatus.getOrDefault(processingId, "not_found");
+        if (processingId == null || processingId.trim().isEmpty()) {
+            return "not_found";
+        }
+        String status = stringRedisTemplate.opsForValue().get(PROCESSING_KEY_PREFIX + processingId.trim());
+        return status == null ? "not_found" : status;
+    }
+
+    private void updateStatus(String processingId, String status) {
+        if (processingId == null || processingId.trim().isEmpty()) {
+            return;
+        }
+        stringRedisTemplate.opsForValue().set(PROCESSING_KEY_PREFIX + processingId.trim(), status, STATUS_TTL);
     }
 }

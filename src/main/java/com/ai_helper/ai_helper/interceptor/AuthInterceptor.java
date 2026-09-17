@@ -5,18 +5,18 @@ import com.ai_helper.ai_helper.result.Result;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
-    private final RedisTemplate<String, String> redisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
 
-    public AuthInterceptor(RedisTemplate<String, String> redisTemplate, ObjectMapper objectMapper) {
-        this.redisTemplate = redisTemplate;
+    public AuthInterceptor(StringRedisTemplate stringRedisTemplate, ObjectMapper objectMapper) {
+        this.stringRedisTemplate = stringRedisTemplate;
         this.objectMapper = objectMapper;
     }
 
@@ -39,7 +39,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         // 从 Redis 中验证 token
-        String userNumber = redisTemplate.opsForValue().get("login:token:" + token);
+        String userNumber = stringRedisTemplate.opsForValue().get("login:token:" + token);
 
         if (userNumber == null) {
             response.setContentType("application/json;charset=UTF-8");

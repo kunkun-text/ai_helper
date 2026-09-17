@@ -61,14 +61,14 @@ Page({
     }
 
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/api/forgot-password`;
 
     wx.request({
       url: requestUrl,
       method: 'POST',
       data: {
-        email: email
+        email: this.data.email
       },
       header: {
         'content-type': 'application/json'

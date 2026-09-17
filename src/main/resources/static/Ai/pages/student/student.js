@@ -1,5 +1,27 @@
-// 引入全局配置
+// 引入全局配置与通用上传模块
 const config = require('../../utils/config.js');
+const uploader = require('../../utils/uploader.js');
+
+/**
+ * 登录态失效统一处理。
+ *
+ * 后端启用登录校验后，token 过期会让 /student/** 全部返回 401。
+ * 若不处理，页面表现为「答辩记录、回答详情全部空白」，极易被误判成数据丢失。
+ * 这里改为明确提示并回到登录页；写成模块级函数，避免依赖各回调里的 this。
+ */
+function handleAuthExpired() {
+  wx.showModal({
+    title: '登录已过期',
+    content: '登录状态已失效，请重新登录后继续使用',
+    showCancel: false,
+    confirmText: '去登录',
+    success: () => {
+      wx.removeStorageSync('token');
+      wx.removeStorageSync('userInfo');
+      wx.redirectTo({ url: '/pages/login/login' });
+    }
+  });
+}
 
 Page({
   data: {
@@ -45,10 +67,29 @@ Page({
     currentUploadId: '',
     currentFileName: '',
     currentFileSize: 0,
+    currentFileSizeReadable: '',
     currentTotalChunks: 0,
     currentChunkIndex: 0,
+    currentProcessingId: '',
+    currentVideoPath: '',
+    uploadStageText: '',
     transcriptionRecordId: null,
     transcriptionStatus: null,
+
+    // 附件所属的答辩题目（学生可切换，默认取题目列表第一项）
+    uploadTopicIndex: 0,
+    uploadTopicName: '',
+
+    // 已上传附件的对外地址：用于预览 / 下载 / 删除
+    uploadedVideoUrl: '',
+    uploadedReportUrl: '',
+
+    // 顶部提示条状态（上传成功/失败统一走它，5 秒自动消失）
+    banner: {
+      visible: false,
+      type: 'success',
+      text: ''
+    },
     
     // 分页相关数据
     pageNum: 1,
@@ -202,7 +243,7 @@ Page({
     
     // 调用后端接口更新用户信息
     wx.request({
-      url: config.serverUrl + '/editUserInfo', // 使用学生专用接口
+      url: config.getBaseUrl() + '/editUserInfo', // 使用学生专用接口
       method: 'POST',
       data: {
         id: user.id, // 添加用户ID
@@ -300,66 +341,80 @@ Page({
 
   // 更新视频上传状态
   updateVideoUploadStatus() {
-    let hasUploadedVideo = false;
-    
-    // 检查是否有答辩题目和答辩记录
-    if (this.data.defenseTopics && this.data.defenseTopics.length > 0 && 
-        this.data.defenseRecords && this.data.defenseRecords.length > 0) {
-      
-      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
-      
-      console.log('检查视频上传状态:');
-      console.log('currentTopicId:', currentTopicId);
-      console.log('defenseTopics[0]:', this.data.defenseTopics[0]);
-      console.log('defenseRecords:', this.data.defenseRecords);
-      
-      // 检查答辩记录中是否有对应当前题目的有效视频
-      const existingRecord = this.data.defenseRecords.find(record => {
-        // 根据实际的数据结构判断，这里假设record有topicId字段
-        // 如果没有topicId，可能需要通过其他方式匹配
-        const recordTopicId = record.topicId || record.id; // 尝试不同的字段名
-        const hasValidVideo = record.defenseVideoUrl && 
-                             record.defenseVideoUrl !== 'abc' && 
-                             record.defenseVideoUrl.trim() !== '';
-        console.log('检查记录:', record, 'recordTopicId:', recordTopicId, 'hasValidVideo:', hasValidVideo);
-        return recordTopicId === currentTopicId && hasValidVideo;
-      });
-      
-      hasUploadedVideo = !!existingRecord;
-      console.log('hasUploadedVideo:', hasUploadedVideo, 'existingRecord:', existingRecord);
-    } else {
-      console.log('缺少必要数据: defenseTopics长度:', this.data.defenseTopics?.length, 
-                  'defenseRecords长度:', this.data.defenseRecords?.length);
-    }
-    
-    this.setData({
-      hasUploadedVideo: hasUploadedVideo
-    });
+    // 改为直接向后端查询附件状态，见 refreshUploadStatus()。
+    // 原先靠分页的 defenseRecords 列表去猜"有没有传过"，列表翻页后判断会失准。
+    this.refreshUploadStatus();
   },
   
   // 更新报告上传状态
   updateReportUploadStatus() {
-    let hasUploadedReport = false;
+    this.refreshUploadStatus();
+  },
 
-    if (this.data.defenseTopics && this.data.defenseTopics.length > 0 &&
-        this.data.defenseRecords && this.data.defenseRecords.length > 0) {
-
-      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
-
-      const existingRecord = this.data.defenseRecords.find(record => {
-        const recordTopicId = record.topicId || record.id;
-        const hasValidReport = record.defenseReportUrl &&
-                               record.defenseReportUrl !== 'abc' &&
-                               record.defenseReportUrl.trim() !== '';
-        return recordTopicId === currentTopicId && hasValidReport;
-      });
-
-      hasUploadedReport = !!existingRecord;
+  /**
+   * 查询当前题目下已上传的附件（视频/报告）。
+   *
+   * 直接问后端，比翻分页的 defenseRecords 列表更准；同一时刻多处调用只发一轮请求。
+   */
+  refreshUploadStatus() {
+    const topics = this.data.defenseTopics || [];
+    if (topics.length === 0 || !this.data.token) {
+      return;
     }
+    if (this._statusRefreshing) {
+      return;
+    }
+    this._statusRefreshing = true;
+    setTimeout(() => { this._statusRefreshing = false; }, 300);
 
-    this.setData({
-      hasUploadedReport: hasUploadedReport
+    const topic = topics[this.data.uploadTopicIndex] || topics[0];
+    const topicId = topic.topicId || topic.id;
+    const token = this.data.token;
+
+    Promise.all([
+      uploader.getMediaUrl('video', topicId, token).catch(() => ({})),
+      uploader.getMediaUrl('report', topicId, token).catch(() => ({}))
+    ]).then((results) => {
+      const video = results[0] || {};
+      const report = results[1] || {};
+      this.setData({
+        uploadedVideoUrl: video.videoUrl || '',
+        hasUploadedVideo: !!video.hasVideo,
+        uploadedReportUrl: report.reportUrl || '',
+        hasUploadedReport: !!report.hasReport
+      });
     });
+  },
+
+  /**
+   * 切换附件所属的答辩题目。
+   *
+   * 原先视频与报告都硬编码取 defenseTopics[0]，学生若有多道题目，
+   * 附件会被挂到错误的那一道上。
+   */
+  onUploadTopicChange(e) {
+    const index = Number(e.detail.value) || 0;
+    const topics = this.data.defenseTopics || [];
+    const topic = topics[index];
+    this.setData({
+      uploadTopicIndex: index,
+      uploadTopicName: topic ? topic.topicName : '',
+      isUploading: false,
+      uploadStatus: 'idle',
+      uploadProgress: 0,
+      uploadStageText: '',
+      currentUploadId: '',
+      reportStatus: 'idle',
+      reportUploadProgress: 0
+    });
+    this.refreshUploadStatus();
+  },
+
+  /** 当前选中的答辩题目 ID */
+  currentUploadTopicId() {
+    const topics = this.data.defenseTopics || [];
+    const topic = topics[this.data.uploadTopicIndex] || topics[0];
+    return topic ? (topic.topicId || topic.id) : null;
   },
 
   // 选择报告文件
@@ -380,44 +435,11 @@ Page({
       success: function(res) {
         if (res.tempFiles && res.tempFiles.length > 0) {
           const file = res.tempFiles[0];
-          const fileName = file.name;
-          const fileSize = file.size;
-          const filePath = file.path;
-
-          // 校验文件类型（只允许文档类型）
-          const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-          const allowedExts = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'];
-          if (allowedExts.indexOf(ext) === -1) {
-            wx.showToast({
-              title: '不支持的文件格式，请上传PDF或Word文档',
-              icon: 'none',
-              duration: 3000
-            });
-            return;
-          }
-
-          // 校验文件大小（最大 50MB）
-          const MAX_SIZE = 50 * 1024 * 1024;
-          if (fileSize > MAX_SIZE) {
-            wx.showToast({
-              title: '文件过大，请上传小于50MB的文件',
-              icon: 'none',
-              duration: 3000
-            });
-            return;
-          }
-
-          that.setData({
-            reportFileName: fileName,
-            reportFileSizeReadable: that.formatFileSize(fileSize)
-          });
-
-          that.uploadReport(filePath, fileName);
+          that.uploadReport(file.path, file.name, file.size);
         }
       },
       fail: function(err) {
-        console.error('选择文件失败:', err);
-        if (err.errMsg && !err.errMsg.includes('cancel')) {
+        if (err.errMsg && err.errMsg.indexOf('cancel') === -1) {
           wx.showToast({
             title: '选择文件失败',
             icon: 'error'
@@ -427,9 +449,21 @@ Page({
     });
   },
 
-  // 上传报告
-  uploadReport(filePath, fileName) {
+  /**
+   * 上传报告。
+   *
+   * 格式与大小校验改为读取服务端规则（/api/report/policy），
+   * 避免前后端各写一份硬编码白名单导致标准不一致；
+   * 进度改用 wx.uploadFile 的真实进度回调，不再用定时器伪造。
+   */
+  uploadReport(filePath, fileName, fileSize) {
     const that = this;
+    const topicId = this.currentUploadTopicId();
+
+    if (!topicId) {
+      wx.showToast({ title: '请先选择对应的答辩题目', icon: 'none' });
+      return;
+    }
 
     this.setData({
       isReportUploading: true,
@@ -437,76 +471,49 @@ Page({
       reportUploadProgress: 0
     });
 
-    // 模拟进度（wx.uploadFile 不支持实时进度）
-    let progressInterval = setInterval(() => {
-      let current = that.data.reportUploadProgress;
-      if (current < 90) {
-        that.setData({
-          reportUploadProgress: current + 5
-        });
-      } else {
-        clearInterval(progressInterval);
-      }
-    }, 200);
-
-    let topicId = null;
-    if (this.data.defenseTopics && this.data.defenseTopics.length > 0) {
-      topicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
-    }
-
-    wx.uploadFile({
-      url: config.serverUrl + '/api/report/upload',
-      filePath: filePath,
-      name: 'file',
-      formData: {
-        userId: this.data.user.userNumber,
-        topicId: topicId || ''
-      },
-      header: {
-        'Authorization': 'Bearer ' + this.data.token
-      },
-      success: function(res) {
-        clearInterval(progressInterval);
-
-        console.log('报告上传响应:', res);
-
-        if (res.statusCode === 200) {
-          try {
-            const data = JSON.parse(res.data);
-            if (data.code === 1) {
-              that.setData({
-                reportStatus: 'completed',
-                isReportUploading: false,
-                reportUploadProgress: 100,
-                hasUploadedReport: true
-              });
-
-              wx.showToast({
-                title: '报告上传成功！',
-                icon: 'success'
-              });
-
-              // 延迟刷新报告状态
-              setTimeout(() => {
-                that.updateReportUploadStatus();
-                that.loadDefenseRecords(true);
-              }, 1000);
-            } else {
-              that.handleReportUploadError(data.msg || '上传失败');
-            }
-          } catch (e) {
-            that.handleReportUploadError('解析响应失败');
-          }
-        } else {
-          that.handleReportUploadError('服务器错误：' + res.statusCode);
+    uploader.fetchPolicy('report', that.data.token)
+      .then((policy) => {
+        const ext = uploader.extensionOf(fileName);
+        if ((policy.allowedExts || []).indexOf(ext) === -1) {
+          throw {
+            code: -1,
+            msg: '不支持的格式' + (ext ? '（.' + ext + '）' : '')
+              + '，仅支持：' + (policy.allowedExts || []).join(' / ')
+          };
         }
-      },
-      fail: function(err) {
-        clearInterval(progressInterval);
-        console.error('报告上传请求失败:', err);
-        that.handleReportUploadError('网络请求失败');
-      }
-    });
+        if (fileSize > policy.maxSize) {
+          throw {
+            code: -1,
+            msg: '文件过大：' + uploader.readableSize(fileSize) + '，上限 ' + policy.maxSizeText
+          };
+        }
+        return uploader.uploadWholeFile({
+          kind: 'report',
+          topicId: topicId,
+          filePath: filePath,
+          token: that.data.token,
+          onProgress: (percent) => {
+            that.setData({ reportUploadProgress: percent });
+          }
+        });
+      })
+      .then((data) => {
+        that.setData({
+          reportStatus: 'completed',
+          isReportUploading: false,
+          reportUploadProgress: 100,
+          reportFileName: fileName,
+          reportFileSizeReadable: uploader.readableSize(fileSize),
+          uploadedReportUrl: (data && data.url) || '',
+          hasUploadedReport: true
+        });
+        that.showBanner('success', '报告上传成功');
+        that.refreshUploadStatus();
+        that.loadDefenseRecords(true);
+      })
+      .catch((err) => {
+        that.handleReportUploadError((err && err.msg) || '上传失败');
+      });
   },
 
   // 处理报告上传错误
@@ -517,11 +524,7 @@ Page({
       isReportUploading: false,
       reportUploadProgress: 0
     });
-    wx.showToast({
-      title: errorMsg,
-      icon: 'error',
-      duration: 3000
-    });
+    this.showBanner('error', errorMsg);
   },
 
   // 加载答辩题目
@@ -530,13 +533,18 @@ Page({
     const token = this.data.token;
     
     wx.request({
-      url: config.serverUrl + '/student/getDefenseTopic',
+      url: uploader.getBaseUrl() + '/student/getDefenseTopic',
       method: 'GET',
       header: {
         'Authorization': 'Bearer ' + token
       },
       success: (res) => {
         console.log('答辩题目接口响应:', res);
+
+        if (res.statusCode === 401) {
+          handleAuthExpired();
+          return;
+        }
         
         if (res.statusCode === 200 && res.data.code === 1) {
           const topics = res.data.data || [];
@@ -546,14 +554,16 @@ Page({
             defenseTopics: topics
           });
           
-          // 如果有题目，设置下一轮答辩为第一个（最新的）
+          // 如果有题目，设置下一轮答辩为第一个（最新的），并初始化附件所属题目
           if (topics.length > 0) {
             const latestTopic = topics[0];
             this.setData({
               nextDefense: {
                 topic: latestTopic.topicName,
                 date: latestTopic.defenseTime
-              }
+              },
+              uploadTopicIndex: 0,
+              uploadTopicName: latestTopic.topicName
             });
           }
         } else {
@@ -571,10 +581,8 @@ Page({
         });
       },
       complete: () => {
-        // 更新视频上传状态
-        this.updateVideoUploadStatus();
-        // 更新报告上传状态
-        this.updateReportUploadStatus();
+        // 题目列表就绪后刷新附件状态（视频 + 报告一次查完）
+        this.refreshUploadStatus();
       }
     });
   },
@@ -631,7 +639,7 @@ Page({
     } else {
       // 如果没有加载题目列表，重新获取
       wx.request({
-        url: config.serverUrl + '/student/getDefenseTopic',
+        url: config.getBaseUrl() + '/student/getDefenseTopic',
         method: 'GET',
         header: {
           'Authorization': 'Bearer ' + token
@@ -763,7 +771,7 @@ Page({
     
     // 调用后端接口获取答辩记录
     wx.request({
-      url: config.serverUrl + '/student/DefenseRecords', // 使用实际的接口路径
+      url: config.getBaseUrl() + '/student/DefenseRecords', // 使用实际的接口路径
       method: 'GET',
       data: {
         pageNum: pageNumToUse,
@@ -775,6 +783,11 @@ Page({
       },
       success(res) {
         console.log('答辩记录接口响应:', res);
+
+        if (res.statusCode === 401) {
+          handleAuthExpired();
+          return;
+        }
         
         if (res.statusCode === 200 && res.data.code === 1) {
           // 后端返回的实际数据结构
@@ -875,7 +888,7 @@ Page({
     });
     
     wx.request({
-      url: config.serverUrl + '/student/DefenseDetailRecords',
+      url: config.getBaseUrl() + '/student/DefenseDetailRecords',
       method: 'GET',
       data: {
         defenseRecordId: defenseId
@@ -885,6 +898,12 @@ Page({
       },
       success(res) {
         console.log('答辩详情接口响应:', res);
+        wx.hideLoading();
+
+        if (res.statusCode === 401) {
+          handleAuthExpired();
+          return;
+        }
         
         if (res.statusCode === 200 && res.data.code === 1) {
           const detailData = res.data.data;
@@ -898,8 +917,8 @@ Page({
             score: detailData.score ? parseFloat(detailData.score) : 0,
             studentName: detailData.studentName || '',
             studentNumber: detailData.studentNumber || '',
-            defenseVideoUrl: detailData.defenseVideoUrl || '',
-            defenseReportUrl: detailData.defenseReportUrl || '',
+            defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl || ''),
+            defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl || ''),
             aiVideoAnalysis: detailData.aiVideoAnalysis || '暂无视频分析',
             aiReportAnalysis: detailData.aiReportAnalysis || '暂无报告分析',
             aiAllAnalysis: detailData.aiAllAnalysis || '暂无综合评价',
@@ -1082,13 +1101,19 @@ Page({
     });
     
     wx.request({
-      url: config.serverUrl + '/student/questions/' + defenseId,
+      url: config.getBaseUrl() + '/student/questions/' + defenseId,
       method: 'GET',
       header: {
         'Authorization': 'Bearer ' + this.data.token
       },
       success(res) {
         console.log('回答详情接口响应:', res);
+        wx.hideLoading();
+
+        if (res.statusCode === 401) {
+          handleAuthExpired();
+          return;
+        }
         
         if (res.statusCode === 200 && res.data.code === 1) {
           const answers = res.data.data || [];
@@ -1210,10 +1235,12 @@ Page({
         if (res.tempFiles && res.tempFiles.length > 0) {
           const videoFile = res.tempFiles[0];
           const videoPath = videoFile.tempFilePath;
-          // 生成可靠的文件名
+          // 从临时路径取真实扩展名：原先一律硬编码成 .mp4，
+          // 会把 mov/avi 等格式错误地当成 mp4 存下来
+          const ext = uploader.extensionOf(videoPath.split('?')[0]) || 'mp4';
           const timestamp = Date.now();
           const randomStr = Math.random().toString(36).substring(2, 8);
-          const fileName = `video_${timestamp}_${randomStr}.mp4`;
+          const fileName = `video_${timestamp}_${randomStr}.${ext}`;
           const fileSize = videoFile.size;
           
           // 开始上传流程
@@ -1297,257 +1324,150 @@ Page({
     }
   },
 
-  // 开始上传流程
+  // 开始上传流程（分片细节全部交给 utils/uploader.js，页面只负责状态与提示）
   startUpload(videoPath, fileName, fileSize) {
     const that = this;
-    
-    // 设置上传状态
+    const topicId = this.currentUploadTopicId();
+
+    if (!topicId) {
+      wx.showToast({ title: '请先选择对应的答辩题目', icon: 'none' });
+      return;
+    }
+
     this.setData({
-        isUploading: true,
-        uploadStatus: 'init',
-        currentFileName: fileName,
-        currentFileSize: fileSize,
-        currentFileSizeReadable: this.formatFileSize(fileSize),
-        uploadProgress: 0,
-        currentChunkIndex: 0
+      isUploading: true,
+      uploadStatus: 'init',
+      currentFileName: fileName,
+      currentFileSize: fileSize,
+      currentFileSizeReadable: uploader.readableSize(fileSize),
+      uploadProgress: 0,
+      currentChunkIndex: 0,
+      uploadStageText: '正在准备上传...',
+      currentVideoPath: videoPath,
+      currentUploadId: ''
     });
 
-    // 第一步：初始化上传
-    wx.request({
-        url: config.serverUrl + '/api/video/init',
-        method: 'POST',
-        data: {
-            fileName: fileName
-        },
-        header: {
-            'Authorization': 'Bearer ' + this.data.token,
-            'content-type': 'application/x-www-form-urlencoded'
-        },
-        success: function(res) {
-            console.log('初始化上传响应:', res);
-            
-            if (res.statusCode === 200 && res.data.code === 1) {
-                // 直接从 data 对象获取
-                const data = res.data.data;
-                const uploadId = data.uploadId;
-                const uniqueFileName = data.fileName;
-                
-                if (uploadId && uniqueFileName) {
-                    that.setData({
-                        currentUploadId: uploadId,
-                        currentFileName: uniqueFileName
-                    });
-                    
-                    // 计算分片数量（每片 20MB）
-                    const PART_SIZE = 20 * 1024 * 1024; // 20MB
-                    const totalChunks = Math.ceil(fileSize / PART_SIZE);
-                    
-                    that.setData({
-                        currentTotalChunks: totalChunks,
-                        uploadStatus: 'uploading'
-                    });
-                    
-                    // 开始上传第一个分片
-                    that.uploadChunk(videoPath, uploadId, uniqueFileName, 1, totalChunks);
-                } else {
-                    that.handleUploadError('初始化失败：无法解析 uploadId');
-                }
+    uploader.fetchPolicy('video', that.data.token)
+      .then((policy) => {
+        const ext = uploader.extensionOf(fileName);
+        if ((policy.allowedExts || []).indexOf(ext) === -1) {
+          throw {
+            code: -1,
+            msg: '不支持的视频格式' + (ext ? '（.' + ext + '）' : '')
+              + '，仅支持：' + (policy.allowedExts || []).join(' / ')
+          };
+        }
+        if (fileSize > policy.maxSize) {
+          throw {
+            code: -1,
+            msg: '视频过大：' + uploader.readableSize(fileSize) + '，上限 ' + policy.maxSizeText
+          };
+        }
+        return uploader.uploadVideo({
+          topicId: topicId,
+          filePath: videoPath,
+          fileName: fileName,
+          fileSize: fileSize,
+          token: that.data.token,
+          uploadId: that.data.currentUploadId || '',
+          onStage: (stage) => {
+            if (stage === 'merging') {
+              that.setData({ uploadStatus: 'merging', uploadStageText: '正在合并视频...' });
+            } else if (stage === 'init') {
+              that.setData({ uploadStatus: 'init', uploadStageText: '正在准备上传...' });
             } else {
-                // 增强错误信息显示
-                let errorMsg = '初始化失败';
-                if (res.data && typeof res.data === 'string') {
-                    errorMsg += '：' + res.data;
-                } else if (res.data && res.data.msg) {
-                    errorMsg += '：' + res.data.msg;
-                } else {
-                    errorMsg += '：HTTP ' + res.statusCode;
-                }
-                that.handleUploadError(errorMsg);
+              that.setData({ uploadStatus: 'uploading', uploadStageText: '正在上传分片...' });
             }
-        },
-        fail: function(err) {
-            console.error('初始化上传失败:', err);
-            let errorMsg = '初始化失败：网络错误';
-            if (err.errMsg) {
-                errorMsg += ' - ' + err.errMsg;
-            }
-            that.handleUploadError(errorMsg);
-        }
-    });
-  },
-
-  // 上传单个分片
-  uploadChunk(videoPath, uploadId, fileName, chunkIndex, totalChunks) {
-    const that = this;
-    
-    // 更新进度
-    const progress = Math.floor((chunkIndex - 1) / totalChunks * 100);
-    this.setData({
-      uploadProgress: progress,
-      currentChunkIndex: chunkIndex
-    });
-
-    // 创建分片上传任务
-    wx.uploadFile({
-      url: config.serverUrl + '/api/video/upload',
-      filePath: videoPath,
-      name: 'file',
-      formData: {
-        uploadId: uploadId,
-        fileName: fileName,
-        partNumber: chunkIndex
-      },
-      header: {
-        'Authorization': 'Bearer ' + this.data.token,
-        'content-type': 'multipart/form-data'
-      },
-      success: function(res) {
-        console.log(`分片 ${chunkIndex} 上传成功:`, res);
-        
-        if (res.statusCode === 200) {
-          // 如果还有更多分片，继续上传下一个
-          if (chunkIndex < totalChunks) {
-            that.uploadChunk(videoPath, uploadId, fileName, chunkIndex + 1, totalChunks);
-          } else {
-            // 所有分片上传完成，开始合并
-            that.completeUpload(uploadId, fileName);
+          },
+          onProgress: (percent) => {
+            that.setData({ uploadProgress: percent });
           }
+        });
+      })
+      .then((data) => {
+        that.setData({
+          uploadStatus: 'completed',
+          isUploading: false,
+          uploadProgress: 100,
+          uploadStageText: '',
+          currentUploadId: '',
+          currentProcessingId: (data && data.processingId) || '',
+          uploadedVideoUrl: (data && data.videoUrl) || '',
+          hasUploadedVideo: true
+        });
+        // 成功提示统一走顶部提示条（原先卡片内那行绿色文字不会消失）
+        if (data && data.degraded) {
+          that.showBanner('success', '视频上传成功（当前环境不支持分片，已整文件上传）');
         } else {
-          that.handleUploadError(`分片 ${chunkIndex} 上传失败：${res.data || '未知错误'}`);
+          that.showBanner('success', '视频上传成功');
         }
-      },
-      fail: function(err) {
-        console.error(`分片 ${chunkIndex} 上传失败:`, err);
-        that.handleUploadError(`分片 ${chunkIndex} 上传失败：网络错误`);
-      }
-    });
-  },
-
-  // 完成上传（合并分片）
-  completeUpload(uploadId, fileName) {
-    const that = this;
-    
-    this.setData({
-      uploadStatus: 'merging',
-      uploadProgress: 100
-    });
-
-    // 获取当前答辩题目的topicId
-    let topicId = null;
-    if (this.data.defenseTopics && this.data.defenseTopics.length > 0) {
-      topicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
-    }
-    
-    // 添加调试日志
-    console.log('准备上传视频，参数信息:');
-    console.log('userId:', this.data.user.userNumber);
-    console.log('topicId:', topicId);
-    console.log('defenseTopics[0]:', this.data.defenseTopics[0]);
-    
-    wx.request({
-      url: config.serverUrl + '/api/video/complete',
-      method: 'POST',
-      data: {
-        uploadId: uploadId,
-        fileName: fileName,
-        userId: this.data.user.userNumber,
-        topicId: topicId // 添加topicId参数
-      },
-      header: {
-        'Authorization': 'Bearer ' + this.data.token,
-        'content-type': 'application/x-www-form-urlencoded'
-      },
-      success: function(res) {
-        console.log('完成上传响应:', res);
-        
-        if (res.statusCode === 200 && res.data.code === 1) {
-          // 上传成功，但视频仍在后台处理
-          that.setData({
-            uploadStatus: 'completed',
-            isUploading: false,
-            currentProcessingId: res.data.data.processingId // 如果后端返回处理ID
-          });
-          
-          wx.showToast({
-            title: '上传成功！',
-            icon: 'success'
-          });
-          
-          // 更新视频上传状态（稍后更新，因为数据库可能还未完成）
-          setTimeout(() => {
-            that.updateVideoUploadStatus();
-            that.updateReportUploadStatus();
-          }, 3000);
-          
-          // 提示用户视频正在后台处理
-          wx.showModal({
-            title: '上传完成',
-            content: '视频已上传成功，正在后台进行转码和AI分析处理，请稍后查看处理结果。',
-            showCancel: false,
-            confirmText: '确定'
-          });
-          
-        } else {
-          // 增强错误信息显示
-          let errorMsg = '合并失败';
-          if (res.data && typeof res.data === 'string') {
-            errorMsg += '：' + res.data;
-          } else if (res.data && res.data.msg) {
-            errorMsg += '：' + res.data.msg;
-          } else {
-            errorMsg += '：HTTP ' + res.statusCode;
-          }
-          that.handleUploadError(errorMsg);
+        that.refreshUploadStatus();
+        that.loadDefenseRecords(true);
+        if (data && data.processingId) {
+          that.watchProcessingStatus(data.processingId);
         }
-      },
-      fail: function(err) {
-        console.error('完成上传失败:', err);
-        let errorMsg = '合并失败：网络错误';
-        if (err.errMsg) {
-          errorMsg += ' - ' + err.errMsg;
-        }
-        that.handleUploadError(errorMsg);
-      }
-    });
-  },
-
-  // 取消上传
-  cancelUpload() {
-    const that = this;
-    const { currentUploadId, currentFileName } = this.data;
-    
-    if (currentUploadId && currentFileName) {
-      wx.request({
-        url: config.serverUrl + '/api/video/abort',
-        method: 'POST',
-        data: {
-          uploadId: currentUploadId,
-          fileName: currentFileName
-        },
-        header: {
-          'Authorization': 'Bearer ' + this.data.token,
-          'content-type': 'application/x-www-form-urlencoded'
-        },
-        success: function(res) {
-          console.log('取消上传成功:', res);
-          that.resetUploadState();
-          wx.showToast({
-            title: '已取消上传',
-            icon: 'none'
-          });
-        },
-        fail: function(err) {
-          console.error('取消上传失败:', err);
-          that.resetUploadState();
-          wx.showToast({
-            title: '取消上传失败',
-            icon: 'error'
-          });
-        }
+      })
+      .catch((err) => {
+        // 打印原始错误对象：否则只剩"上传失败"这种无信息量的兜底文案，无法定位
+        console.error('[上传] 原始错误对象:', err);
+        // 记住 uploadId：用户点"重试"时可续传，不必重传已成功的分片
+        that.setData({ currentUploadId: (err && err.uploadId) || '' });
+        that.handleUploadError(
+          (err && err.msg) || (err && err.errMsg) || '上传失败，详见 Console 日志'
+        );
       });
-    } else {
-      this.resetUploadState();
+  },
+
+  /** 轮询视频后处理状态（后端异步处理，失败只记日志不影响主流程） */
+  watchProcessingStatus(processingId) {
+    let times = 0;
+    const timer = setInterval(() => {
+      times += 1;
+      if (times > 20) {
+        clearInterval(timer);
+        return;
+      }
+      uploader.getProcessingStatus(processingId, this.data.token)
+        .then((data) => {
+          if (!data || data.status === 'COMPLETED' || data.status === 'FAILED') {
+            clearInterval(timer);
+          }
+        })
+        .catch(() => {
+          clearInterval(timer);
+        });
+    }, 3000);
+  },
+
+  /** 重试上传：带上 uploadId 续传，已成功的分片不会重传 */
+  retryUploadVideo() {
+    if (!this.data.currentVideoPath) {
+      // 临时文件已被系统清理（例如中途退出过小程序），只能重新选择
+      this.selectVideo();
+      return;
     }
+    this.startUpload(this.data.currentVideoPath, this.data.currentFileName, this.data.currentFileSize);
+  },
+
+  // 取消上传（服务端会删除已落盘的半成品文件并清理会话）
+  cancelUpload() {
+    const uploadId = this.data.currentUploadId;
+
+    if (!uploadId) {
+      this.resetUploadState();
+      return;
+    }
+
+    uploader.abortUpload(uploadId, this.data.token)
+      .then(() => {
+        this.resetUploadState();
+        wx.showToast({ title: '已取消上传', icon: 'none' });
+      })
+      .catch((err) => {
+        console.error('取消上传失败:', err);
+        this.resetUploadState();
+        wx.showToast({ title: (err && err.msg) || '取消上传失败', icon: 'error' });
+      });
   },
 
   // 重置上传状态
@@ -1566,20 +1486,55 @@ Page({
     });
   },
 
+  /**
+   * 顶部提示条（成功 / 失败统一走这里）。
+   *
+   * 替代原先卡片内那条「上传成功后常驻、无法消去」的绿色文字：
+   * 现在统一在页面最上方提示，5 秒后自动消失，参考浏览器的成功/错误通知。
+   */
+  showBanner(type, text) {
+    if (this._bannerTimer) {
+      clearTimeout(this._bannerTimer);
+    }
+    this.setData({
+      banner: {
+        visible: true,
+        type: type === 'error' ? 'error' : 'success',
+        text: text || ''
+      }
+    });
+    this._bannerTimer = setTimeout(() => {
+      this.hideBanner();
+    }, 5000);
+  },
+
+  /** 收起提示条 */
+  hideBanner() {
+    if (this._bannerTimer) {
+      clearTimeout(this._bannerTimer);
+      this._bannerTimer = null;
+    }
+    this.setData({ 'banner.visible': false });
+  },
+
+  /** 页面卸载时清掉定时器，避免对已销毁的页面 setData */
+  onUnload() {
+    if (this._bannerTimer) {
+      clearTimeout(this._bannerTimer);
+      this._bannerTimer = null;
+    }
+  },
+
   // 处理上传错误
   handleUploadError(errorMsg) {
     console.error('上传错误:', errorMsg);
-    
+
     this.setData({
       uploadStatus: 'failed',
       isUploading: false
     });
-    
-    wx.showToast({
-      title: errorMsg,
-      icon: 'error',
-      duration: 3000
-    });
+
+    this.showBanner('error', errorMsg);
   },
 
   // 退出登录
@@ -1602,6 +1557,119 @@ Page({
             url: '/pages/login/login'
           });
         }
+      }
+    });
+  },
+
+  /** 预览已上传的视频 */
+  previewVideo() {
+    const url = uploader.resolveFileUrl(this.data.uploadedVideoUrl);
+    if (!url) {
+      wx.showToast({ title: '还没有上传视频', icon: 'none' });
+      return;
+    }
+    wx.previewMedia({
+      sources: [{ url: url, type: 'video' }],
+      fail: () => {
+        wx.showToast({ title: '当前微信版本不支持预览，请更新微信', icon: 'none' });
+      }
+    });
+  },
+
+  /** 查看已上传的报告（openDocument 右上角菜单可"保存到手机"，即下载） */
+  openUploadedReport() {
+    const url = uploader.resolveFileUrl(this.data.uploadedReportUrl);
+    if (!url) {
+      wx.showToast({ title: '还没有上传报告', icon: 'none' });
+      return;
+    }
+    wx.showLoading({ title: '正在打开...' });
+    wx.downloadFile({
+      url: url,
+      success: (res) => {
+        wx.hideLoading();
+        if (res.statusCode !== 200) {
+          wx.showToast({ title: '文件下载失败', icon: 'error' });
+          return;
+        }
+        wx.openDocument({
+          filePath: res.tempFilePath,
+          showMenu: true,
+          fail: () => {
+            wx.showToast({ title: '该格式暂不支持预览，可用右上角菜单保存', icon: 'none' });
+          }
+        });
+      },
+      fail: () => {
+        wx.hideLoading();
+        wx.showToast({ title: '文件下载失败', icon: 'error' });
+      }
+    });
+  },
+
+  /** 删除已上传的视频 */
+  deleteVideo() {
+    this.confirmDeleteMedia('video');
+  },
+
+  /** 删除已上传的报告 */
+  deleteReport() {
+    this.confirmDeleteMedia('report');
+  },
+
+  /** 删除附件：二次确认 → 删库并清理磁盘文件 → 刷新状态 */
+  confirmDeleteMedia(kind) {
+    const isVideo = kind === 'video';
+    const label = isVideo ? '答辩视频' : '答辩报告';
+    const hasFile = isVideo ? this.data.hasUploadedVideo : this.data.hasUploadedReport;
+
+    if (!hasFile) {
+      wx.showToast({ title: '还没有上传' + label, icon: 'none' });
+      return;
+    }
+    const topicId = this.currentUploadTopicId();
+    if (!topicId) {
+      wx.showToast({ title: '请先选择对应的答辩题目', icon: 'none' });
+      return;
+    }
+
+    wx.showModal({
+      title: '确认删除',
+      content: '确定要删除已上传的' + label + '吗？删除后需要重新上传。',
+      confirmText: '删除',
+      confirmColor: '#e64340',
+      success: (res) => {
+        if (!res.confirm) {
+          return;
+        }
+        wx.showLoading({ title: '正在删除...' });
+        uploader.deleteMedia(kind, topicId, this.data.token)
+          .then(() => {
+            wx.hideLoading();
+            this.setData(isVideo
+              ? {
+                uploadedVideoUrl: '',
+                hasUploadedVideo: false,
+                uploadStatus: 'idle',
+                uploadProgress: 0,
+                currentFileName: '',
+                currentFileSizeReadable: ''
+              }
+              : {
+                uploadedReportUrl: '',
+                hasUploadedReport: false,
+                reportStatus: 'idle',
+                reportUploadProgress: 0,
+                reportFileName: '',
+                reportFileSizeReadable: ''
+              });
+            wx.showToast({ title: label + '已删除', icon: 'success' });
+            this.loadDefenseRecords(true);
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            wx.showToast({ title: (err && err.msg) || '删除失败', icon: 'error' });
+          });
       }
     });
   }

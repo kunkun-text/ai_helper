@@ -1,0 +1,127 @@
+# ==========================================================================
+# application.yml 模板
+#
+# 【用法】复制本文件 → 重命名为同目录下的 application.yml → 把 TODO 处改成你机器的实际值。
+#   - application.yml 已在 .gitignore 中被排除（内含密码，不入库），所以每台机器都要自己放一份
+#   - 本模板文件会被 git 跟踪，供换机器 / 新同学按图索骥
+#
+# 【启动顺序】MySQL(3306) → Redis(6379) → Ollama(11434) → 本服务(8080)
+# 【数据库】需先建好数据库 ai_helper 并导入表结构（参考 docs/ 下的 ddl）
+# ==========================================================================
+
+server:
+  port: 8080
+  tomcat:
+    # 分片上传的请求体是原始二进制（最大 5MB/片），放宽请求体吞噬上限，避免异常时被截断
+    max-swallow-size: -1
+
+spring:
+  # ---- Ollama 本地大模型 ----
+  ai:
+    openai:
+      base-url: http://localhost:11434     # 本机跑 Ollama 就填这个
+      api-key: ollama                      # Ollama 不校验 key，占位即可
+      chat:
+        options:
+          # ⚠️ 硬件红线：本机 7G 内存 / RTX3050 4G 显存，只能用 3B 级别模型。
+          #    换成 7B/8B 会 OOM 崩溃（历史上留下过 hs_err_pid 崩溃日志），不要改大。
+          model: qwen2.5:3b-16k
+      connect-timeout: 30s
+      read-timeout: 180s                   # 10 轮答辩单次推理可能较慢
+
+  mvc:
+    async:
+      # 与前端答辩请求的 180s 超时对齐
+      request-timeout: 180000
+
+  # ---- MySQL ----
+  # TODO 改成你机器的账号与密码；库名 ai_helper 不要改
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/ai_helper?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: your-mysql-password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # ---- Redis（存登录 token 与对话记忆） ----
+  # TODO 改成你机器的密码；若 Redis 没设密码，请删掉 password 这一行
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: your-redis-password
+
+  # ---- 邮件（找回密码发验证码用） ----
+  # TODO 换成本人的 QQ 邮箱 + SMTP 授权码（注意：是"授权码"，不是 QQ 登录密码）
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: your-qq-mail@qq.com
+    password: your-qq-auth-code
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  # ---- 上传体积上限（与下方 app.upload.* 配合） ----
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
+mybatis:
+  mapper-locations: classpath:Mapper/*.xml
+  type-aliases-package: com.ai_helper.ai_helper.pojo
+  configuration:
+    map-underscore-to-camel-case: true
+
+pagehelper:
+  helper-dialect: mysql
+  reasonable: true
+
+logging:
+  file:
+    name: logs/ai-helper.log
+  level:
+    # 排查 SQL 时保留 DEBUG；平时想安静可改成 INFO
+    com.ai_helper.ai_helper.mapper: DEBUG
+
+# ==========================================================================
+# 应用自定义配置
+# ==========================================================================
+app:
+  storage:
+    # 文件存储根目录（答辩视频体积大，务必放在非系统盘）。
+    #
+    # 留空 = 自动选择：按下面 preferred-drives 的顺序挑第一个「存在且可写」的磁盘，
+    #                   并在其下创建 folder-name 文件夹。
+    #   - 开发机固定用 F 盘：写 F:/ai wordplace
+    #   - 换到没有 F 盘的电脑：保持留空即可，会自动落到 D 盘（不需要改任何配置）
+    #
+    # 即使这里写了某个盘、而目标机器没有该盘，也会自动降级为自动选择，不会启动失败。
+    root: ""
+    # 自动选择磁盘时创建的文件夹名
+    folder-name: ai wordplace
+    # 自动选择磁盘的优先顺序（不带冒号）
+    preferred-drives: F,D,E,C
+    # 对外访问 URL 前缀：由 WebConfig 映射到【最终选定】的根目录，
+    # 原生支持 HTTP Range，视频才能拖动进度条 / 边下边播
+    url-prefix: /files
+
+  upload:
+    # 答辩视频：分片上传（真分片，按字节区间写入目标文件对应偏移量）
+    # 不配置也可以用，代码里有同样的默认值（见 AppProperties.FileRule）
+    video:
+      max-size: 524288000        # 500MB
+      chunk-size: 5242880        # 5MB/片
+      allowed-exts: mp4,mov,avi,mkv,flv,wmv,m4v,3gp
+    # 答辩报告：单次直传
+    report:
+      max-size: 52428800         # 50MB
+      allowed-exts: pdf,doc,docx,xls,xlsx,ppt,pptx,txt
+
+  auth:
+    # 登录 token 有效期（分钟）。
+    # 一场答辩可能超过 30 分钟，设太短会把学生答到一半踢出去，故为 120
+    token-ttl-minutes: 120

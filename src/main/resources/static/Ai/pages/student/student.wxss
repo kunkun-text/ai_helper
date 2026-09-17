@@ -237,53 +237,40 @@
 }
 
 .progress-text {
-  font-size: 22rpx;
-  color: #666666;
-  margin-left: 12rpx;
+  /* 已把原先第二处重复定义的实际生效值合并到这里（后写会静默覆盖前写） */
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #1890ff;
   min-width: 40rpx;
 }
 
 .status-text {
-  font-size: 22rpx;
+  margin-top: 8rpx;
+  font-size: 24rpx;
   color: #666666;
   text-align: center;
-  margin-top: 8rpx;
 }
 
-.upload-success, .upload-error {
-  margin-top: 20rpx;
-  padding: 20rpx;
-  border-radius: 8rpx;
-  text-align: center;
-}
-
-.upload-success {
-  background: #f6ffed;
-  border: 2rpx solid #b7eb8f;
-}
-
+/* 上传成功/失败的文字提示已改由顶部提示条（.top-banner）承担。
+   原先的 .upload-success / .success-text / .error-text 三个类已无任何引用，故删除；
+   下方只保留仍在使用中的 .upload-error（"重试"按钮的容器）与 .retry-btn，
+   并已把重复定义的两套取值合并为一套（原先后一套会静默覆盖前一套）。 */
 .upload-error {
-  background: #fff2f0;
+  padding: 20rpx;
+  margin-top: 16rpx;
   border: 2rpx solid #ffccc7;
-}
-
-.success-text {
-  color: #52c41a;
-  font-size: 24rpx;
-}
-
-.error-text {
-  color: #ff4d4f;
-  font-size: 24rpx;
+  border-radius: 8rpx;
+  background: #fff2f0;
+  text-align: center;
 }
 
 .retry-btn {
-  margin-top: 12rpx;
-  background: #f44336;
-  color: #ffffff;
-  border-radius: 8rpx;
-  font-size: 22rpx;
   padding: 8rpx 20rpx;
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #ffffff;
+  background: #f44336;
+  border-radius: 8rpx;
 }
 
 .retry-btn::after {
@@ -518,65 +505,189 @@
   font-weight: 600;
 }
 
+/* ===== 弹层（答辩详情 / 回答详情 / 题目描述 / 所有答辩题目 共用） =====
+   结构前提：弹层节点必须放在 .content 滚动区之外（见 student.wxml 注释）。
+   左右留白统一由 .modal-mask 的 padding 承担，卡片 width:100% —— 结构上不可能横向溢出。 */
 .modal-mask {
   position: fixed;
+  top: 0;
   left: 0;
   right: 0;
-  top: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0 40rpx; /* 两侧留白（同时给阴影留出余量） */
+  box-sizing: border-box;
   z-index: 999;
 }
 
 .modal-card {
-  width: 86%;
+  width: 100%;
+  max-width: 670rpx; /* 750rpx - 两侧各 40rpx */
+  margin: 0;
+  padding: 0;
   background: #ffffff;
   border-radius: 24rpx;
-  padding: 0;
-  max-height: 85vh;
+  box-shadow: 0 16rpx 36rpx rgba(0, 0, 0, 0.15);
+  max-height: 86vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.15);
+  box-sizing: border-box;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0;
-  padding: 28rpx 28rpx 20rpx;
+  flex-shrink: 0;
+  padding: 32rpx 28rpx 20rpx;
   background: #ffffff;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  border-bottom: 2rpx solid #f0f0f0;
+  border-bottom: 1rpx solid #f0f0f0;
 }
 
 .modal-title {
-  font-size: 32rpx;
-  font-weight: 700;
-  color: #333333;
   flex: 1;
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #333333;
 }
 
 .modal-close {
-  font-size: 36rpx;
-  color: #888888;
+  flex-shrink: 0;
   margin-left: 20rpx;
-  width: 40rpx;
+  padding: 8rpx 12rpx;
+  font-size: 48rpx;
+  line-height: 1;
+  color: #999999;
   text-align: center;
-  font-weight: 300;
 }
 
 .modal-body {
   flex: 1;
+  min-height: 0; /* 允许在 max-height 内收缩，否则内容会把卡片撑破 */
   overflow-y: auto;
-  max-height: calc(90vh - 120rpx);
+  overflow-x: hidden;
   padding: 20rpx 28rpx 28rpx;
+  box-sizing: border-box;
+}
+
+/* ===== 附件上传：题目选择器 ===== */
+.topic-picker-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 28rpx;
+}
+
+.picker-label {
+  flex-shrink: 0;
+  font-size: 28rpx;
+  color: #333333;
+}
+
+.picker-value {
+  display: flex;
+  align-items: center;
+  max-width: 420rpx;
+}
+
+.picker-text {
+  font-size: 28rpx;
+  color: #1890ff;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.picker-arrow {
+  margin-left: 8rpx;
+  font-size: 32rpx;
+  color: #bbbbbb;
+}
+
+/* ===== 附件上传：预览 / 下载 / 删除按钮行 ===== */
+.media-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 16rpx;
+}
+
+.mini-btn {
+  flex: 1;
+  height: 64rpx;
+  line-height: 64rpx;
+  padding: 0;
+  font-size: 26rpx;
+  color: #1890ff;
+  background: #f2f8ff;
+  border: 1rpx solid #d6e8ff;
+  border-radius: 10rpx;
+}
+
+.mini-btn.danger {
+  color: #e64340;
+  background: #fff2f1;
+  border-color: #ffd9d7;
+}
+
+.mini-btn::after {
+  border: none;
+}
+
+/* ===== 提示条（上传成功 / 失败），5 秒后自动消失 =====
+   位置：header 下方的文档流内，不是 fixed 悬浮层。
+   这样既不会被状态栏/刘海屏遮挡，也不会出现"先看到一片白、再突然变绿"的观感。 */
+.top-banner {
+  flex-shrink: 0; /* 作为 .page 的 flex 子项，不被上方内容压缩 */
+  display: flex;
+  align-items: center;
+  padding: 20rpx 32rpx;
+  box-sizing: border-box;
+  color: #ffffff;
+  animation: banner-in 0.26s ease;
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.banner-success {
+  background: #07c160; /* 微信成功绿 */
+}
+
+.banner-error {
+  background: #fa5151; /* 微信错误红 */
+}
+
+.banner-icon {
+  flex-shrink: 0;
+  width: 34rpx;
+  height: 34rpx;
+  margin-right: 14rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 34rpx;
+  text-align: center;
+}
+
+.banner-text {
+  flex: 1;
+  font-size: 26rpx; /* 与页面正文同号，长文案可换行完整显示 */
+  line-height: 38rpx;
+  word-break: break-all;
 }
 
 /* 滚动条样式 */
@@ -665,52 +776,3 @@
 }
 
 /* 进度条容器 */
-.progress-container {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  margin-bottom: 12rpx;
-}
-
-.progress-text {
-  margin-left: 16rpx;
-  font-size: 24rpx;
-  color: #1890ff;
-  min-width: 40rpx;
-}
-
-/* 状态文本 */
-.status-text {
-  font-size: 24rpx;
-  color: #666;
-  text-align: center;
-}
-
-/* 上传成功状态 */
-.upload-success {
-  text-align: center;
-  margin-top: 16rpx;
-}
-
-.success-text {
-  color: #52c41a;
-  font-size: 28rpx;
-  font-weight: bold;
-}
-
-/* 上传失败状态 */
-.upload-error {
-  text-align: center;
-  margin-top: 16rpx;
-}
-
-.error-text {
-  color: #ff4d4f;
-  font-size: 28rpx;
-  font-weight: bold;
-}
-
-.retry-btn {
-  margin-top: 16rpx;
-  font-size: 24rpx;
-}

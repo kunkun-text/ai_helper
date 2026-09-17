@@ -225,7 +225,7 @@ Page({
   handleRegister() {
     const { currentRole, account, name, email, password } = this.data;
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/register/${currentRole}`;
 
     wx.showLoading({ title: '注册中...' });

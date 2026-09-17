@@ -231,6 +231,27 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     }
     
     @Override
+    public Integer getOrCreateLatestDefenseRecord(Integer topicId, String userNumber, boolean createIfMissing) {
+        if (topicId == null || userNumber == null || userNumber.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            String internalUserId = defenseRecordsMapper.getUserIdByUserNumber(userNumber.trim());
+            if (internalUserId == null) {
+                log.warn("定位答辩记录失败：未找到用户 {}", userNumber);
+                return null;
+            }
+            Integer defenseId = defenseRecordsMapper.getLatestDefenseIdByUserAndTopic(internalUserId, topicId);
+            if (defenseId != null) {
+                return defenseId;
+            }
+        } catch (Exception e) {
+            log.error("查询最新答辩记录失败 - userNumber: {}, topicId: {}", userNumber, topicId, e);
+        }
+        return createIfMissing ? getOrCreateDefenseRecord(topicId, userNumber) : null;
+    }
+
+    @Override
     public Integer getOrCreateDefenseRecord(Integer topicId, String userId) {
         try {
             if (userId == null || userId.trim().isEmpty()) {

@@ -17,9 +17,12 @@ public class SecurityConfig {
         http
                 // 1. 关闭 CSRF 防护（小程序/前后端分离场景无需开启）
                 .csrf(csrf -> csrf.disable())
-                // 2. 允许所有请求匿名访问（不拦截任何接口）
+                // 2. 允许所有请求通过 Spring Security 过滤器链
+                //    真正的登录校验由 AuthInterceptor（见 WebConfig.addInterceptors）承担，
+                //    它会把登录学号写入 request attribute 供业务层使用。
+                //    这里若再拦一层，会出现两套鉴权逻辑互相打架，故保持放行。
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/**").permitAll() // 所有接口都不需要认证
+                        .requestMatchers("/**").permitAll()
                 )
                 // 3. 关闭 HTTP Basic 认证（取消弹窗登录）
                 .httpBasic(basic -> basic.disable()); // 明确关闭 Basic 认证

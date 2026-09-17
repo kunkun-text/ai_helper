@@ -272,6 +272,9 @@
   border-radius: 12rpx;
   max-height: 200rpx; /* 限制最大高度，防止内容过多时占用整个弹窗 */
   overflow-y: auto; /* 启用垂直滚动 */
+  overflow-x: hidden; /* 防止长内容把容器横向撑破 */
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* 优化值显示样式，确保内容不会被截断 */
@@ -290,8 +293,9 @@
 }
 
 .questions-container {
-  max-height: 380rpx;
+  max-height: 400rpx;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 10rpx 0;
 }
 
@@ -722,65 +726,74 @@
   font-weight: 600;
 }
 
+/* ===== 弹层（添加题目 / 题目详情 / 答辩详情 / 回答详情 共用） =====
+   注意：以下为一套唯一定义，勿再追加同名重复规则（历史上有两套互相覆盖，
+   导致卡片宽度 90% + max-width 750rpx + margin 30rpx 打架，右侧被裁、阴影被切）。
+   左右留白统一由 .modal-mask 的 padding 承担，卡片 width:100% —— 结构上不可能横向溢出。 */
 .modal-mask {
   position: fixed;
+  top: 0;
   left: 0;
   right: 0;
-  top: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 999;
+  padding: 0 40rpx; /* 两侧留白（同时给阴影留出余量） */
+  box-sizing: border-box;
+  z-index: 1000;
 }
 
 .modal-card {
-  width: 86%;
+  width: 100%;
+  max-width: 670rpx; /* 750rpx - 两侧各 40rpx */
+  margin: 0;
+  padding: 0;
   background: #ffffff;
   border-radius: 24rpx;
-  padding: 0;
-  max-height: 90vh;
+  box-shadow: 0 16rpx 36rpx rgba(0, 0, 0, 0.15);
+  max-height: 86vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.15);
+  box-sizing: border-box;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0;
-  padding: 28rpx 28rpx 20rpx;
+  flex-shrink: 0;
+  padding: 32rpx 28rpx 20rpx;
   background: #ffffff;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  border-bottom: 2rpx solid #f0f0f0;
+  border-bottom: 1rpx solid #f0f0f0;
 }
 
 .modal-title {
-  font-size: 32rpx;
-  font-weight: 700;
-  color: #333333;
   flex: 1;
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #333333;
 }
 
 .modal-close {
-  font-size: 36rpx;
-  color: #888888;
+  flex-shrink: 0;
   margin-left: 20rpx;
-  width: 40rpx;
+  padding: 8rpx 12rpx;
+  font-size: 48rpx;
+  line-height: 1;
+  color: #999999;
   text-align: center;
-  font-weight: 300;
 }
 
 .modal-body {
   flex: 1;
+  min-height: 0; /* 允许在 max-height 内收缩，否则内容会把卡片撑破 */
   overflow-y: auto;
-  max-height: calc(90vh - 120rpx);
+  overflow-x: hidden;
   padding: 20rpx 28rpx 28rpx;
+  box-sizing: border-box;
 }
 
 /* 滚动条样式 */
@@ -872,63 +885,4 @@
   line-height: 1.5;
 }
 
-.questions-container {
-  max-height: 400rpx;
-  overflow-y: auto;
-  padding: 10rpx 0;
-}
 
-/* 弹框样式 */
-.modal-card {
-  width: 90%;
-  max-width: 750rpx;
-  background: #ffffff;
-  border-radius: 24rpx;
-  box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.15);
-  overflow: hidden;
-  margin: 0 30rpx;
-}
-
-.modal-mask {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-header {
-  padding: 32rpx 28rpx 20rpx;
-  border-bottom: 1rpx solid #f0f0f0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.modal-title {
-  font-size: 36rpx;
-  font-weight: 600;
-  color: #333333;
-}
-
-.modal-close {
-  font-size: 48rpx;
-  color: #999999;
-  padding: 8rpx;
-}
-
-.modal-body {
-  padding: 20rpx 28rpx;
-  max-height: 70vh;
-}
-
-.modal-actions {
-  padding: 20rpx 28rpx 32rpx;
-  display: flex;
-  gap: 20rpx;
-}

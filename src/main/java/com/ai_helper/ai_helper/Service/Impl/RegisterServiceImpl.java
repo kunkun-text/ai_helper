@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.Service.Impl;
 
+import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.RegisterService;
 import com.ai_helper.ai_helper.mapper.RegisterMapper;
 import com.ai_helper.ai_helper.pojo.dto.UserDto;
@@ -8,6 +9,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -26,6 +28,19 @@ public class RegisterServiceImpl implements RegisterService {
 
     @Resource
     private RedisTemplate<String, String> redisTemplate;
+
+    /**
+     * 登录 token 专用：纯字符串序列化。
+     *
+     * 容器里同时存在 JSON 序列化的 RedisTemplate 与 Spring 自带的 StringRedisTemplate，
+     * 两者都能匹配 RedisTemplate&lt;String,String&gt;，此前靠字段名兜底才选中前者，太隐晦。
+     * token 的写入（这里）与读取（AuthInterceptor）必须严格一致，故显式使用 StringRedisTemplate。
+     */
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private AppProperties appProperties;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -99,11 +114,13 @@ public class RegisterServiceImpl implements RegisterService {
             }
 
             // 4. 生成随机 token 并存入 Redis
+            //    有效期由 app.auth.token-ttl-minutes 控制：一场答辩可能远超 30 分钟，
+            //    token 过早失效会导致学生答到一半被踢出（改由配置驱动，不再写死 30 分钟）。
             String token = UUID.randomUUID().toString();
-            redisTemplate.opsForValue().set(
+            stringRedisTemplate.opsForValue().set(
                     "login:token:" + token,
                     dbUser.getUserNumber(),
-                    30, TimeUnit.MINUTES // 设置过期时间为 30 分钟
+                    appProperties.getAuth().getTokenTtlMinutes(), TimeUnit.MINUTES
             );
 
             Map<String, Object> resultMap = new HashMap<>();

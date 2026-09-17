@@ -3,6 +3,14 @@
     <text class="header-title">课程考核AI答辩辅助</text>
   </view>
 
+  <!-- 提示条：上传成功/失败在标题栏下方提示，5 秒后自动消失。
+       刻意放在文档流里而不是 fixed 悬浮层：既不会被状态栏/刘海屏遮挡，
+       也不会出现"只看到一片白、突然变绿"的观感。 -->
+  <view wx:if="{{banner.visible}}" class="top-banner {{banner.type === 'error' ? 'banner-error' : 'banner-success'}}">
+    <text class="banner-icon">{{banner.type === 'error' ? '!' : '✓'}}</text>
+    <text class="banner-text">{{banner.text}}</text>
+  </view>
+
   <scroll-view class="content" scroll-y>
     <view wx:if="{{activeTab === 'home'}}">
       <view class="welcome-card gradient-blue">
@@ -33,6 +41,18 @@
         </view>
       </view>
 
+      <!-- 附件所属答辩题目：视频与报告共用（原先两处都硬编码取题目列表第一项，会挂错题目） -->
+      <view class="card topic-picker-card">
+        <text class="picker-label">附件所属题目</text>
+        <picker mode="selector" range="{{defenseTopics}}" range-key="topicName"
+                value="{{uploadTopicIndex}}" bindchange="onUploadTopicChange">
+          <view class="picker-value">
+            <text class="picker-text">{{uploadTopicName || '请选择答辩题目'}}</text>
+            <text class="picker-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
       <view class="card">
         <view class="upload-box">
           <view class="upload-icon">视频</view>
@@ -49,8 +69,8 @@
             <button class="cancel-btn" wx:if="{{isUploading}}" bindtap="cancelUpload">取消上传</button>
           </view>
           
-          <!-- 上传状态显示 -->
-          <view wx:if="{{uploadStatus === 'uploading' || uploadStatus === 'merging'}}" class="upload-status">
+          <!-- 上传状态显示（进度与阶段文案均由通用上传模块回调驱动） -->
+          <view wx:if="{{uploadStatus === 'init' || uploadStatus === 'uploading' || uploadStatus === 'merging'}}" class="upload-status">
             <view class="progress-container">
               <progress 
                 percent="{{uploadProgress}}" 
@@ -61,24 +81,18 @@
               />
               <text class="progress-text">{{uploadProgress}}%</text>
             </view>
-            <text class="status-text" wx:if="{{uploadStatus === 'uploading'}}">
-              正在上传分片 {{currentChunkIndex}}/{{currentTotalChunks}}
-            </text>
-            <text class="status-text" wx:if="{{uploadStatus === 'merging'}}">
-              正在合并视频并启动后台处理...
-            </text>
+            <text class="status-text">{{uploadStageText}}</text>
           </view>
           
-          <!-- 上传完成状态 -->
-          <view wx:if="{{uploadStatus === 'completed'}}" class="upload-success">
-            <text class="success-text">上传成功！视频正在后台处理中...</text>
-            <text class="muted" style="font-size: 24rpx; margin-top: 8rpx;">请稍后查看AI分析结果</text>
+          <!-- 已上传时提供预览 / 删除（替换走上方"重新上传视频"） -->
+          <view wx:if="{{hasUploadedVideo && !isUploading}}" class="media-actions">
+            <button class="mini-btn" bindtap="previewVideo">预览视频</button>
+            <button class="mini-btn danger" bindtap="deleteVideo">删除视频</button>
           </view>
           
-          <!-- 上传失败状态 -->
+          <!-- 失败原因由页面顶部提示条展示，这里只保留"重试"入口 -->
           <view wx:if="{{uploadStatus === 'failed'}}" class="upload-error">
-            <text class="error-text">上传失败，请重试</text>
-            <button class="retry-btn" bindtap="selectVideo">重新上传</button>
+            <button class="retry-btn" bindtap="retryUploadVideo">{{currentUploadId ? '继续上传（跳过已传分片）' : '重新上传'}}</button>
           </view>
         </view>
       </view>
@@ -112,14 +126,14 @@
             </view>
           </view>
 
-          <!-- 上传成功 -->
-          <view wx:if="{{reportStatus === 'completed'}}" class="upload-success">
-            <text class="success-text">报告上传成功！</text>
+          <!-- 已上传时提供查看/下载 / 删除 -->
+          <view wx:if="{{hasUploadedReport && !isReportUploading}}" class="media-actions">
+            <button class="mini-btn" bindtap="openUploadedReport">查看 / 下载</button>
+            <button class="mini-btn danger" bindtap="deleteReport">删除报告</button>
           </view>
 
-          <!-- 上传失败 -->
+          <!-- 失败原因由页面顶部提示条展示，这里只保留"重试"入口 -->
           <view wx:if="{{reportStatus === 'failed'}}" class="upload-error">
-            <text class="error-text">上传失败，请重试</text>
             <button class="retry-btn" bindtap="selectReport">重新上传</button>
           </view>
         </view>
@@ -241,7 +255,12 @@
       </view>
     </view>
 
-    <!-- 答辩记录详情弹窗 -->
+  </scroll-view>
+
+  <!-- ⚠️ 以下弹层必须放在 .content 滚动区之外：
+       scroll-view 为优化滚动会给自身加 transform，会使其内部 position:fixed
+       退化为相对 scroll-view 定位，弹层被裁剪、右侧显示不全。 -->
+  <!-- 答辩记录详情弹窗 -->
     <view wx:if="{{selectedRecord}}" class="modal-mask" bindtap="closeRecord">
       <view class="modal-card" catchtap>
         <view class="modal-header">
@@ -370,8 +389,7 @@
         </scroll-view>
       </view>
     </view>
-  </scroll-view>
-  
+
   <!-- 题目描述弹窗 -->
   <view class="modal-mask" wx:if="{{showTopicDescription}}" bindtap="closeTopicDescription">
     <view class="modal-card" catchtap>
@@ -439,4 +457,5 @@
       <text class="tab-text">我的</text>
     </view>
   </view>
+
 </view>

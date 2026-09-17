@@ -1,18 +1,28 @@
 // 全局配置文件
 const config = {
-  // 开发环境服务器地址（真机调试时使用）
-  // 请将此IP地址修改为你开发机器的实际IP地址
-  // 在Windows命令行中运行 ipconfig 查看IPv4地址
-  // 在Mac/Linux终端中运行 ifconfig 或 ip addr 查看IP地址
-  //serverUrl: 'http://10.77.7.152:8080',
-  serverUrl: 'http://localhost:8080',
-  // 本地开发服务器地址（开发者工具调试时使用）
+  // 【真机调试地址】本机无线网卡(WLAN)的 IPv4 地址
+  // ⚠️ 换网络 / 重启路由器后 IP 会变；真机连不上时，先跑 `ipconfig` 核对这里再改
+  // 2026-09-17 确认：WLAN = 10.203.8.251（网关 10.203.255.254）
+  // 注意：其余 172.31.112.1 / 192.168.109.1 / 192.168.137.1 是 Hyper-V/VMware 虚拟网卡，不要用
+  serverUrl: 'http://10.203.8.251:8080',
+
+  // 【开发者工具地址】开发者工具与后端跑在同一台机器上，用 localhost 即可
   localServerUrl: 'http://localhost:8080',
-  
+
   // 当前使用的服务器地址配置
-  // true: 使用真机调试地址（serverUrl），适用于手机真机调试
-  // false: 使用本地地址（localServerUrl），适用于开发者工具调试
-  useRemoteServer: true
+  // true : 使用 serverUrl（手机真机调试）—— 做真机测试前改成 true
+  // false: 使用 localServerUrl（微信开发者工具调试）—— 默认，最稳
+  useRemoteServer: false
+};
+
+/**
+ * 统一取后端基地址。
+ *
+ * 以前各页面直接写 config.serverUrl，导致 useRemoteServer 开关对部分页面完全无效
+ * （切地址时这些页面不跟随）。所有请求一律走这里。
+ */
+config.getBaseUrl = function () {
+  return config.useRemoteServer ? config.serverUrl : config.localServerUrl;
 };
 
 module.exports = config;

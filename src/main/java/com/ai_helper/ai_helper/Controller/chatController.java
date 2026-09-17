@@ -154,9 +154,13 @@ public class chatController {
                         // currentRound 保留旧口径 = 本次作答序号（首轮后端出题的 greeting 占 1 条 assistant，故 = 已答次数 + 1）
                         int currentRound = answeredCount + 1;
 
+                        // 追问阶段需要"上一轮 AI 提出的题目"：拼进 prompt 让模型能判断是否切题
+                        // （旧实现追问阶段完全不给题目，模型只能闭眼打分）。
+                        String lastAskedQuestion = extractQuestionFromLastAiMessage(chatMemory.get(finalSessionId));
                         StringBuilder contextPrompt = buildQuestionModePrompt(
                                 topicResult.getData(), questions, topicId, finalUserInput, userId,
-                                extraAskedCount, extraQuestionLimit, currentRound, existingQuestionIds);
+                                extraAskedCount, extraQuestionLimit, currentRound, existingQuestionIds,
+                                lastAskedQuestion);
 
                         return toFlux(sendMessageWithMemory(existingQuestionIds, existingQuestionCount, extraAskedCount, userId, topicId,
                                 contextPrompt.toString(), finalSessionId, finalUserInput, answeredCount));
@@ -263,19 +267,22 @@ public class chatController {
     private StringBuilder buildQuestionModePrompt(Object topicData, List<DefenseQuestions> questions,
                                                    Integer topicId, String prompt, String userId,
                                                    int extraAskedCount, int extraQuestionLimit,
-                                                   int currentRound, List<Integer> existingQuestionIds) {
+                                                   int currentRound, List<Integer> existingQuestionIds,
+                                                   String lastAskedQuestion) {
         boolean isFirstRound = (currentRound == 0);
         int remainingExtra = extraQuestionLimit - extraAskedCount;
         StringBuilder p = new StringBuilder();
 
         p.append("你是答辩评委，正在对学生进行一对一答辩考核。本场答辩共约10轮：5道预设题 + 至多5次AI追问。除首轮外，你必须严格按照以下三行格式输出，顺序不可颠倒，每行以固定标签开头，不要任何多余内容：\n");
-        p.append("点评:（40字以内，必须基于学生回答的真实内容：回答有实质内容才先一句话肯定优点，再指出不足和一条改进建议；回答是敷衍/语气词/未实际作答时，必须直接写明回答无实质内容，严禁虚构“思路清晰”“回答完整”等与实际不符的肯定，禁止空话套话）\n");
+        p.append("点评:（40字以内，必须以 [切题] 或 [跑题] 开头。[切题]后再一句话肯定优点、指出一条改进建议；[跑题]时只说明回答与本题无关，严禁虚构“思路清晰”“回答完整”等与实际不符的肯定，禁止空话套话）\n");
         p.append("评分:总分/50|表达分|逻辑分|专业分|应变分|创新分（各0-10整数，五维分数相加必须等于总分）\n");
         p.append("下一题:（30字以内，提问下一道题目）\n");
-        p.append("示例：\n点评:概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用。\n\n");
+        p.append("示例1（切题，回答有内容）：\n点评:[切题]概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用？\n\n");
+        p.append("示例2（跑题，回答与本题无关）：\n点评:[跑题]回答内容与本题无关，未正面回应所问内容。\n评分:0/50|0|0|0|0|0\n下一题:请解释HDFS中NameNode的作用？\n\n");
         p.append("【轮次铁律】5道预设题未全部答完前，必须逐题输出『下一题:』提问下一道预设题；预设题答完后，最多允许5次AI追问，追问阶段每轮仍输出『下一题:』（30字以内）由你自拟追问。只有『预设题全部答完且追问已达5次』时，最后一行才允许输出『总结:』。任何情况下严禁提前输出『总结:』或提前结束答辩；只要还剩预设题或追问额度，最后一行必须输出『下一题:』，严禁输出『总结:』。每轮末尾会附带 [进度: 第X题/共Y题, 已追问Z/5次]，请据此判断当前进度并输出正确标签。\n\n");
-        p.append("打分必须客观公正：学生回答正确、完整、条理清晰才给高分；回答错误、答非所问、含糊其辞或直接说“不知道”必须给低分（对应维度只给0-4分，总分不超过25/50），严禁凭印象乱给高分。\n\n");
-        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语，或回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、报数玩笑（如“我是250”）、纯标点、骂人或与课题无关的玩笑、与问题完全无关的跑题内容）时，本题五维必须全部给0分，点评中明确说明回答无实质内容，点评后必须照常输出『下一题:』继续提问；严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
+        p.append("【判分第一步·先判是否切题】拿学生这段回答去对照上面给出的【当前题】：① 没有正面回应本题所问的内容（例如问“如何判断AQI等级”，却大段讲HBase如何存储数据）；② 只有泛泛而谈的套话；③ 仅个别词与题目重合但没回答所问 —— 以上任一情况都判为跑题，点评必须以[跑题]开头，评分固定为 0/50|0|0|0|0|0。只有答案正面回应了本题、且包含与本题相关的具体事实/步骤/数据，才判为切题，点评以[切题]开头。\n");
+        p.append("【判分第二步·切题才给分】正确完整、条理清晰 = 35~50；基本正确但不完整 = 20~34；有明显错误或关键缺漏 = 5~19；答非所问、含糊其辞、“不知道” = 0。严禁凭印象乱给高分。\n\n");
+        p.append("特别注意：学生回答“不知道/不会/不清楚”类短语，或回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、报数玩笑（如“我是250”）、纯标点、骂人）时，本题五维必须全部给0分，点评以[跑题]开头并写明回答无实质内容；之后必须照常输出『下一题:』继续提问，严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。\n\n");
 
         if (isFirstRound) {
             p.append("共").append(questions.size()).append("题:\n");
@@ -306,7 +313,14 @@ public class chatController {
                     p.append("本题为整场答辩的最后一轮。学生回答完后请给出总结。注意：本轮不要输出『下一题』，最后一行改为：总结:（100字以内，对整场答辩的总体评价，先肯定优点，再指出整体不足和建议）\n");
                 }
             } else {
-                // 预设题已问完的追问阶段：明确剩余额度，额度用完则要求本轮总结
+                // 预设题已问完的追问阶段：明确剩余额度，额度用完则要求本轮总结。
+                // 【关键】必须把"上一轮提出的追问"作为【当前题】显式给出：
+                // 旧实现此分支完全不给题目，模型手里只有答案、没有题目，只能闭眼打分 ——
+                // 实测同一段与题目无关的 513 字文字连续 6 轮拿到 28~36 分（满分 50）。
+                boolean hasLastAsked = lastAskedQuestion != null && !lastAskedQuestion.trim().isEmpty();
+                p.append("当前题:")
+                        .append(hasLastAsked ? lastAskedQuestion.trim() : "即你上一轮提出的那道追问（见对话历史）")
+                        .append("\n");
                 if (remainingExtra > 0) {
                     p.append("预设题已全部问完，还可追问").append(remainingExtra).append("个。请按格式输出点评/评分/下一题，“下一题”由你提出。\n");
                 } else {
@@ -417,11 +431,14 @@ public class chatController {
                     .append("/").append(EXTRA_QUESTION_LIMIT).append("次]");
         }
 
-        // --- 阻塞调用模型（强制 maxTokens） ---
+        // --- 阻塞调用模型（强制 maxTokens + temperature=0） ---
+        // temperature=0：同一份回答的评分必须可复现。实测同一段答案在不同题目下得 32/28/36/34（±4 分），
+        // 属于采样随机性导致的评分不稳（待办 N7）。
         String aiResponse = chatClient.prompt()
                 .user(completePrompt.toString())
                 .options(OpenAiChatOptions.builder()
                         .model("qwen2.5:3b-16k")
+                        .temperature(0.0)
                         .maxTokens(320)
                         .build())
                 .call()
@@ -447,6 +464,32 @@ public class chatController {
                     Map<String, Object> scores = scorePersistenceService.parseScoresFromResponse(aiResponse);
                     String comment = (String) scores.getOrDefault("comment",
                             extractFeedbackFromResponse(aiResponse));
+
+                    // 【切题判定兜底 · 2026-09-17】点评以 [跑题] 开头时，无条件把五维分数强制归零。
+                    // 为什么不依赖模型自觉：提示词里早就写了"答非所问必须给低分"，但实测 3B 模型对一段
+                    // 与题目无关的 513 字文字仍连续给出 28~36 分。于是改为——让模型只回答"切题/跑题"这个
+                    // 二选一（它做得到），最终分值由服务端按判定结果决定（确定性，不留给模型发挥）。
+                    if (isOffTopicMarked(comment) || isOffTopicMarkedInResponse(aiResponse)) {
+                        log.info("切题判定为跑题，强制五维归零 - defenseId: {}, 模型原总分: {}",
+                                defenseId, scores.get("totalScore"));
+                        Map<String, Object> zeroed = new java.util.HashMap<>(scores);
+                        zeroed.put("expression", 0.0);
+                        zeroed.put("logic", 0.0);
+                        zeroed.put("professional", 0.0);
+                        zeroed.put("adaptability", 0.0);
+                        zeroed.put("innovation", 0.0);
+                        zeroed.put("totalScore", 0.0);
+                        scores = zeroed;
+                        // 同步改写返回给前端的评分行，避免"气泡里显示 35 分、库中却是 0 分"
+                        aiResponse = forceZeroScoreLine(aiResponse);
+                        String stripped = stripTopicMarker(comment);
+                        comment = (stripped == null || stripped.isEmpty())
+                                ? "回答内容与本题无关，未正面回应所问内容。"
+                                : stripped;
+                    } else {
+                        // 非跑题：去掉点评开头的 [切题] 标记，只把正文给用户看
+                        comment = stripTopicMarker(comment);
+                    }
 
                     if (defenseId != null && !scores.isEmpty()) {
                         DefenseScoreRecord record = new DefenseScoreRecord();
@@ -1403,17 +1446,71 @@ public class chatController {
         return aiResponse.substring(pos + 3).trim();
     }
 
+    /** 点评是否以「跑题」标记开头（[跑题] / 【跑题】 / 跑题） */
+    private boolean isOffTopicMarked(String text) {
+        if (text == null) return false;
+        String t = text.trim();
+        return t.startsWith("[跑题]") || t.startsWith("【跑题】") || t.startsWith("跑题");
+    }
+
+    /**
+     * 从整段回复里精确匹配“点评:跑题”。
+     * 作为 {@link #isOffTopicMarked} 的补充信号：万一 comment 解析失败，兜底仍能命中。
+     */
+    private boolean isOffTopicMarkedInResponse(String aiResponse) {
+        if (aiResponse == null) return false;
+        return java.util.regex.Pattern.compile("点评[:：]\\s*[\\[【]?\\s*跑题").matcher(aiResponse).find();
+    }
+
+    /** 去掉点评开头的 [切题]/[跑题] 标记，只把正文展示给用户 */
+    private String stripTopicMarker(String comment) {
+        if (comment == null) return null;
+        String c = comment.trim();
+        String[] markers = {"[切题]", "【切题】", "[跑题]", "【跑题】", "切题", "跑题"};
+        for (String m : markers) {
+            if (c.startsWith(m)) {
+                return c.substring(m.length()).replaceFirst("^[:：,，。\\s]+", "").trim();
+            }
+        }
+        return c;
+    }
+
+    /** 把回复中的评分行整体改写为 0 分（五维全 0），保证前端展示与落库口径一致 */
+    private String forceZeroScoreLine(String aiResponse) {
+        if (aiResponse == null) return null;
+        return aiResponse.replaceAll("评分[:：]\\s*\\d+(?:\\.\\d+)?\\s*/\\s*50[^\\n]*", "评分:0/50|0|0|0|0|0");
+    }
+
     private String extractQuestionFromLastAiMessage(List<Message> history) {
         if (history == null || history.isEmpty()) return null;
         for (int i = history.size() - 1; i >= 0; i--) {
             Message msg = history.get(i);
             if (msg instanceof AssistantMessage) {
                 String text = ((AssistantMessage) msg).getText();
-                if (text != null && text.contains("【问题】")) {
+                if (text == null || text.isEmpty()) break;
+                // ① 当前三段式：取「下一题:」（含全角冒号）之后的整行。
+                //    注意：追问通常是"请说明HBase的读写流程"这类陈述句、**不带问号**，
+                //    旧实现只认含 ?/？ 的行，导致追问轮取不到题目 →
+                //    题目与对应的答案行被一起跳过、均不落库（遗留问题 N5 的根因）。
+                int idx = text.lastIndexOf("下一题:");
+                if (idx < 0) {
+                    idx = text.lastIndexOf("下一题：");
+                }
+                if (idx >= 0) {
+                    String q = text.substring(idx + 4).trim();
+                    int nl = q.indexOf('\n');
+                    if (nl >= 0) {
+                        q = q.substring(0, nl).trim();
+                    }
+                    if (!q.isEmpty()) return q;
+                }
+                // ② 旧格式
+                if (text.contains("【问题】")) {
                     int start = text.indexOf("【问题】") + 4;
                     String q = text.substring(start).trim();
                     if (!q.isEmpty()) return q;
                 }
+                // ③ 兜底：最后一个含问号的行
                 String[] lines = text.split("\n");
                 for (int j = lines.length - 1; j >= 0; j--) {
                     String line = lines[j].trim();

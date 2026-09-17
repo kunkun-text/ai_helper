@@ -408,18 +408,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0 40rpx; /* 两侧留白（同时给阴影留出余量，避免卡片/阴影被裁） */
+  box-sizing: border-box;
   z-index: 999;
 }
 
 .finish-card {
-  width: 86%;
+  width: 100%;
+  max-width: 670rpx; /* 750rpx - 两侧各 40rpx */
   max-height: 80vh;
   background: #ffffff;
   border-radius: 28rpx;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 16rpx 48rpx rgba(0, 0, 0, 0.2);
+  box-sizing: border-box;
+  box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.2);
 }
 
 .finish-header {
@@ -442,8 +446,11 @@
 
 .finish-body {
   flex: 1;
+  min-height: 0; /* 允许在卡片 max-height 内收缩，否则内容撑破卡片使 max-height 失效 */
   padding: 24rpx 32rpx;
   overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .finish-total-score {

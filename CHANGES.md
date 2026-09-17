@@ -554,3 +554,338 @@ if ((presetDone && followUpDone && hasSummary) || hardCapReached) {   // ① 正
 
 - 后端正常：topic 28 第 10 轮兜底正常触发（总分 12.9/50）、Redis 记忆裁剪 14→12、锁正常、无异常报错
 - 本节改动已提交 git
+
+---
+
+# 2026-09-17 改动（教师端 / 学生端 / 答辩端 弹层遮挡修复）
+
+> 改动日期：2026.9.17，涉及 teacher.wxss / student.wxml / student.wxss / defense.wxss。
+> **状态：微信开发者工具实测通过（教师端确认，学生端待复验）。真机待验。**
+
+## 一、问题现象（用户报告）
+
+教师端「答辩题目 → 学生答辩记录 → 某条记录 → 查看回答详情」：弹层右侧显示不全（如应显示"评分: 29分"，实际只显示到"评分: 29"，末位数字被裁一部分），弹层卡片右侧阴影被遮挡，**左侧正常**。学生端同款现象。
+
+## 二、根因（两端不是同一个原因）
+
+### 教师端：`.modal-*` 样式被重复定义、静默互相覆盖
+
+`teacher.wxss` 中 `.modal-mask` / `.modal-card` / `.modal-header` / `.modal-title` / `.modal-close` / `.modal-body` / `.modal-actions` / `.questions-container` 各有**两套**定义（`:725-804` 与 `:882-934`，已删除后者），后写的静默覆盖前面的。合并后的实际生效值互相打架：
+
+- `.modal-card` = `width: 90%`（后）+ `max-width: 750rpx`（后，等于满屏宽）+ `margin: 0 30rpx`（后）→ 三者冲突
+- `.modal-body` 的 `max-height: calc(90vh - 120rpx)`（前）被 `70vh`（后）覆盖，与卡片 `90vh` 不匹配
+- `.modal-close` = `width: 40rpx`（前）+ `font-size: 48rpx`（后）→ 40rpx 的框装 48rpx 的 ×，自身就在被裁
+- 卡片阴影 `0 16rpx 40rpx` 需要 40rpx 外侧空间，而卡片两侧只剩约 37.5rpx，靠 flex 余量分配，左右极易失衡
+
+### 学生端：两个弹层被写在 `<scroll-view>` 内部（结构调整）
+
+`student.wxml` 中「答辩记录详情」「回答详情」两个 `.modal-mask` 原位于 `<scroll-view class="content">` **内部**（原 244~372 行）。`scroll-view` 为优化滚动会给自身加 `transform`，而 `transform` 会使内部的 `position: fixed` **退化为相对 scroll-view 定位** → 弹层被 scroll-view 的边界/内边距裁剪，右侧显示不全，且会随内容一起滚动。
+
+（「题目描述」「所有答辩题目」两个弹层本来就在滚动区**外面**，故未受影响——与"只有部分弹层出问题"的现象吻合。）
+
+## 三、修复内容
+
+| 文件 | 改动 |
+|---|---|
+| `pages/teacher/teacher.wxss` | ① 删除第二套重复的 `.modal-*` / `.questions-container` 定义（约 60 行），每个类名只保留一处；② `.modal-mask` 加 `padding: 0 40rpx` + `box-sizing: border-box`，左右留白改由遮罩承担；③ `.modal-card` 由 `width:86%/90% + max-width:750rpx + margin:0 30rpx` 改为 `width:100% + max-width:670rpx + margin:0 + box-sizing:border-box`（**结构上不可能横向溢出**）；④ 阴影 `40rpx→36rpx` 留余量；⑤ 移除 `.modal-header` 的 `position: sticky`（真正滚动的是 `.modal-body`，sticky 本无效果，只多一层合成）；⑥ `.modal-body` 删除自相矛盾的 `max-height`，改由卡片 `max-height: 86vh` 统一控制，并补 `min-height:0`（否则内容会撑破卡片使 max-height 失效）+ `overflow-x:hidden` + `box-sizing`；⑦ `.modal-close` 去掉 `width: 40rpx`，改 `flex-shrink:0 + line-height:1`，点击区增大；⑧ `.long-text-scroll` 补 `width:100% + box-sizing:border-box + overflow-x:hidden`；⑨ `.questions-container` 保留原生效值 `max-height: 400rpx` 并补 `overflow-x:hidden` |
+| `pages/student/student.wxml` | 把 `</scroll-view>` 的收口位置移到两个弹层**之前**，使 4 个弹层统归 `.page` 直属子节点（**弹层内容一行未动，仅挪边界**），与 teacher / defense 结构对齐。已做标签平衡校验：`<view>` 98/98、`<scroll-view>` 13/13 |
+| `pages/student/student.wxss` | 同款样式加固（与 teacher 保持一致）：遮罩加 `padding: 0 40rpx` 留白 + 卡片 `width:100% / max-width:670rpx / margin:0 / box-sizing`；移除 `.modal-header` 的 `position: sticky`；删除冲突的 `max-height: calc(90vh - 120rpx)`，改由卡片 `max-height: 86vh`（原 85vh）统一控制；`.modal-body` 补 `min-height:0 / overflow-x:hidden / box-sizing`；`.modal-close` 去掉 `width: 40rpx`（原 36rpx 字号同样存在被裁风险） |
+| `pages/defense/defense.wxss` | 答辩完成弹窗（`.modal-mask` + `.finish-card`）同款处理：遮罩加留白、卡片改 `width:100% + max-width:670rpx + box-sizing`、阴影 `48rpx→40rpx`；`.finish-body` 补 `min-height:0 / overflow-x:hidden / box-sizing`。（答辩页弹层本就在滚动区外，仅样式调整） |
+
+## 四、验证结果
+
+- 微信开发者工具：**教师端弹层遮挡已解决（用户实测确认）**；学生端同步修复，待复验。
+- 结构校验：`student.wxml` 标签开闭平衡（`<view>` 98/98、`<scroll-view>` 13/13）；`teacher.wxss` / `student.wxss` / `defense.wxss` 中每个 `.modal-*` / `.finish-card` 类名**仅一处定义**（杜绝再次被静默覆盖）。
+- **真机尚未验证。**
+
+## 五、已知的可见变化（预期内）
+
+- 卡片最大高度：学生端 `85vh → 86vh`；教师端 `90vh → 86vh`；答辩端 `80vh` 不变
+- 卡片宽度：由 `86%/90%` 改为「两侧各留 40rpx」，视觉接近
+- 关闭按钮 × 由 36rpx/48rpx 统一为 48rpx 且不再被 40rpx 的框裁剪，点击区更大
+- 添加题目弹层底部按钮行的上边距收紧（原为重复规则带来的双重内边距）
+
+## 六、遗留与后续
+
+- `teacher` 页仍有 2 处 `position: fixed`（`.header-fixed` `teacher.wxss:14`、`.tab-bar` `teacher.wxss:701`）未做文档流改造（对应需求清单 **N3**）。本次只修弹层，未动整页布局。
+- 弹层内仍存在嵌套 `scroll-view`（`.modal-body` 内套 `.long-text-scroll`）。本次未改；若后续再出现遮挡/错位，下一步去掉嵌套滚动。
+- 学生端弹层节点仍保持原 4 空格缩进（仅视觉，WXML 不关心缩进），未做纯格式重排，以把 diff 控制在 10 行内。
+- 本次同步做了一次**全项目代码审计**，新发现的问题已写入 `需求清单-2026-09-15.md` 第九、十节。
+
+---
+
+# 2026-09-17 改动（二）（忘记密码修复 + 服务器地址统一 + 小程序残留清理）
+
+> 改动日期：2026.9.17。对应需求清单 **N23 / N29 / N39**（批次 A）。
+> 状态：前端 JS 语法校验通过；用户实测忘记密码可正常发起、开发者工具功能无回归。
+
+## 一、N23 忘记密码页请求体恒为空（功能不可用，1 行修复）
+
+**问题**：`pages/forgetPassword/forgetPassword.js` 提交请求体写的是 `email: email`，而 `email` 在该函数作用域内**从未声明**（正确来源是 `this.data.email`）。
+
+**影响比"传了 undefined"更严重**：引用未声明变量会直接抛 `ReferenceError`，`wx.request` **根本不会执行** —— 点"发送"表现为**静默失败**（控制台报错、界面无任何反应），找回密码整条链路不可用。
+
+**修复**：改为 `email: this.data.email`。
+
+## 二、N29 服务器地址统一（真机不可达 + 一处真实回归）
+
+**问题**：
+1. `utils/config.js` 的 `serverUrl` 是 `http://localhost:8080`，真机调试必须用局域网 IP → **真机必然连不上**；
+2. 更关键的是取地址方式不统一：`login / register / forgetPassword / teacher` 走 `useRemoteServer ? serverUrl : localServerUrl`，而 **`student.js`（5 处）与 `defense.js`（2 处）无视该开关、直接裸用 `config.serverUrl`**（共 7 处）。
+
+**踩坑记录（真实回归）**：中途把 `config.js` 的 `serverUrl` 改成局域网 IP 后，学生端记录列表等请求被这批"裸用"代码带去了局域网地址，一度表现为**答辩记录 / 回答详情全部空白**（后端实际正常）。已修复。
+
+**修复**：
+- `config.js` 新增统一出口 `getBaseUrl()`；`serverUrl` 填入真实 WLAN IP `10.203.8.251`（由 `ipconfig` + `route print -4` 确认主网卡，其余 3 个是 Hyper-V/VMware 虚拟网卡）；`useRemoteServer` 默认置为 `false`（开发者工具走 localhost，与改造前行为一致，零风险）
+- 全项目页面一律改为 `config.getBaseUrl()`：修正上述 7 处裸用，另把 `teacher.js`(9) / `login.js` / `register.js` / `forgetPassword.js` 的三元表达式一并统一 —— **现在全项目页面 0 处硬编码地址**
+
+## 三、N39 小程序模板残留清理
+
+删除**确认零引用**的残留（删除前已全量检索核对）：
+- `pages/logs/`、`pages/index/`、`pages/reset/`（官方模板页，`app.json` 未注册其中任何一页）
+- `utils/util.js`（仅被 `pages/logs/logs.js:2` 引用，随模板页一起成为死文件）
+- `app.js` 中 4 行模板的 `logs` 存储逻辑
+
+清理后 `pages/` 恰为 `app.json` 注册的 7 个页面。所有删除项均在 git 跟踪中，可随时 `git checkout -- <路径>` 恢复。
+
+## 四、未处理
+
+- `static/Ai/docuument/`（Figma 导出的 React 设计稿，52 个 tsx）**保留未删**，待用户确认是否还有参考价值
+- `static/Ai/.codebuddy/` 按工具规则不允许删除
+
+---
+
+# 2026-09-17 改动（三）上传功能改造（本地存储 + 真分片 + 越权修复 + 前端上传模块 + 提示条）
+
+> 改动日期：2026.9.17。
+> **状态**：后端 `mvn -o compile` **BUILD SUCCESS**（`target/classes` 共 77 个 class）；前端 JS 语法校验全部通过；分片链路用 Node 打桩**真实执行** 8 项断言全通过；用户实测「可上传、文件确实落在 `F:\ai wordplace`」。
+> **背景**：用户要求「添加视频上传与答辩报告上传功能」。项目**本来就有**这两条链路，实际工作是**补全 + 修 bug**，而不是从零新增。
+
+## 一、改造前排查出的既有缺陷
+
+**视频侧**
+
+| 编号 | 问题 | 严重度 |
+|---|---|---|
+| V1 | **「分片」是假的**：前端把**整个视频文件**传给 `/api/video/upload`（小程序 `wx.uploadFile` 不支持字节区间），后端 `uploadPart` 读的也是整个文件、`setPartSize(file.getSize())` 同样按整个文件算 → **>20MB 的视频会被把同一个文件传 N 遍，合并出 N 倍大小、内容重复的损坏文件**（≤20MB 时只有 1 片，侥幸正常，因此长期未被发现） | 🔴 严重 |
+| V2 | 无格式校验：文件名被硬编码成 `.mp4`，用户选 mov/avi 一律按 mp4 存 | 🔴 |
+| V3 | 无大小校验（`fileSize` 读了但从未比对上限） | 🔴 |
+| V4 | 进度算法错：`floor((chunkIndex-1)/totalChunks*100)`，开始传第 N 片时显示的是第 N-1 片进度；且无分片内进度 | 🟠 |
+| V5 | 失败只能从头重传，不支持续传 / 单分片重试 | 🟠 |
+| V6 | **topicId 取错**：视频与报告都取 `defenseTopics[0]`（永远是列表第一项），不是"当前要上传的题目" → **附件挂错题目** | 🟠 |
+| V7 | `processingId` 整条链路是死的：前端读 `res.data.data.processingId` 但后端不返回；后端自己生成 ID 也不返回 → `/api/video/processing-status` 永远 `not_found` | 🟠 |
+| V8~V14 | 无删除、无预览、空文件名崩、接口返回裸字符串、Redis 残留 24h、类型强转依赖序列化、后端无二次校验 | 🟡 |
+
+**报告侧**：R1 后端无类型校验（任意后缀都能传）· R2 **先传云端再查用户** → 孤儿文件 · R3 流未关闭 · R4 **进度是假的**（定时器 +5% 到 90% 停）· R5 topicId 取错 · R6 替换旧报告不清理旧文件 · R7 无删除 · R8 无下载
+
+**越权**：N18 —— 上传与学生记录接口的 `userId / userNumber / topicId` **全部来自前端传参**，改参数即可读写他人附件与答辩记录
+
+**阻塞项**：`application.yml` 中阿里云 OSS 三项凭证均为**占位符**（`your-access-key-id` 等）→ **上传不可能成功**
+
+## 二、改造决策（用户拍板）
+
+1. **存储改用本地磁盘**（不走阿里云）：校内实际使用场景，文件落在本机 F 盘最合适
+2. 视频**做真分片**
+3. **上传相关越权一起修**
+
+## 三、后端改造
+
+### 3.1 存储抽象（新增 6 个类）
+
+| 新增文件 | 作用 |
+|---|---|
+| `Config/AppProperties.java` | `app.storage / upload / auth` 三段配置绑定 |
+| `Service/FileStorageService.java` + `Impl/LocalFileStorageServiceImpl.java` | 存储抽象 + 本地磁盘实现 |
+| `Service/MediaFileService.java` + `Impl/MediaFileServiceImpl.java` | 附件统一读写（校验→落盘→写库→清理旧文件） |
+| `Service/ChunkUploadService.java` + `Impl/ChunkUploadServiceImpl.java` | 分片上传会话 |
+| `util/UploadUtils.java` | 扩展名解析 / 可读大小 |
+| `pojo/enums/MediaKind.java` | 附件类型枚举（新增类型只加一个枚举项） |
+| `exception/BusinessException.java` | 业务异常，错误文案不透传 SQL 细节 |
+
+**关键设计**：
+- 根目录 `F:\ai wordplace`，子目录 `videos/` `reports/`（配置化 `app.storage.root`）
+- `resolveSafe()` **拦截目录穿越**（目标路径必须落在根目录内）
+- **库中只存 `/files/videos/xxx.mp4` 这种相对 URL**，服务器 IP 变化不会让全库数据失效；`toRelativePath()` 可反解，同时**兼容历史 OSS 绝对地址（识别后跳过删除）**
+- 用 `ResourceHandler` 映射 `/files/**` → 原生支持 **HTTP Range**，`<video>` 才能拖进度条
+
+### 3.2 真分片（从根本上消除 V1）
+
+- 接口：`init / part（原始二进制流）/ status / complete / abort`
+- **分片按真实字节区间用 `FileChannel.write(buf, offset)` 写入目标文件的对应偏移量** —— 不再出现"同一文件重复上传 N 遍"
+- Redis 记录已收分片号（24h）→ **失败可续传**，重试只补缺失分片
+- `complete` 校验**最终文件大小 == 声明大小**，不符则作废并清理磁盘文件，**绝不把损坏文件写进库**
+- 会话归属校验：拿别人的 `uploadId` 续传/完成会被拒
+- 服务端二次校验格式白名单 + 大小上限
+
+### 3.3 附件统一读写
+
+- 视频与报告共用一套「校验 → 落盘 → 写库 → 清理旧文件」
+- **先校验登录态与文件、再落盘**（消除 R2 的孤儿文件）
+- 写库失败会**回滚刚落的盘**，保证"要么都成、要么都不成"
+- 替换时清理旧文件（R6）
+
+### 3.4 数据库写入方式修正（重要发现）
+
+`upsertVideoUrl` / `upsertReportUrl` 用的是 `ON DUPLICATE KEY UPDATE`，**依赖 `(user_id, topic_id)` 唯一索引**；而本文件 2026-09-10 节记录该唯一索引已被改为普通索引 → **这两个语句实际退化成纯 INSERT，每次上传都会新建一条 `defense_records` 记录**（正是 9-10 那次"172 条重复空壳记录"的成因之一）。
+
+**处理**：不再依赖 upsert，改为**按 `defense_id` 显式 UPDATE**（新增 `updateReportUrlById` / `clearVideoUrlByDefenseId` / `clearReportUrlByDefenseId`；新增 `getLatestDefenseIdByUserAndTopic` 取该用户该题目下最新记录，**避免为上传凭空新建空壳记录**）。
+
+⚠️ **待核验**：`SHOW INDEX FROM defense_records;`。若唯一索引确已删除，`upsertDefenseRecord` 仍在裸用 upsert，需与 **N1** 一并处理。
+
+### 3.5 越权与鉴权
+
+- `WebConfig` **注册了 `AuthInterceptor`**（该拦截器一直写好了、也标了 `@Component`，但**从未注册**，导致全站实际无须登录）
+- 本轮**刻意只保护** `/api/video/**`、`/api/report/**`、`/student/**`，答辩链路（`/api/chat` 等）不受影响，把影响面压到最小
+- `StudentDefenseRecordsController`：身份改取登录态 `request.getAttribute("userNumber")`，**不再接受前端传的学号**；记录详情与问答详情新增**归属校验**（`countOwnedDefenseRecord`）
+- token 有效期 30 分钟 → **120 分钟**（配置化 `app.auth.token-ttl-minutes`）：一场答辩可能超过 30 分钟，token 过早失效会把学生踢出
+- `login:token` 读写统一为 `StringRedisTemplate`：容器中 JSON 序列化的 `RedisTemplate` 与 Spring 自带的 `StringRedisTemplate` **都能匹配 `RedisTemplate<String,String>`**，此前靠字段名兜底才选中前者；一旦兜底到另一个，会把 token 读成**带引号的值** —— 症状恰好是"**接口不报错但记录全空**"（我们真实撞到过一次）
+
+### 3.6 顺带修复
+
+- `GlobalExceptionHandler` 补 `BusinessException` / `MissingServletRequestParameterException` / `MaxUploadSizeExceededException` / 兜底 `Exception` → 前端总能拿到统一 `Result` + 可读提示，不再只有 500
+- `VideoProcessingServiceImpl` 状态改存 Redis（原为进程内 `ConcurrentHashMap`，重启即丢），`processingId` 由调用方生成并返回前端（修 V7）
+- 删除 OSS 相关 5 个类 + `pom.xml` 的 `aliyun-sdk-oss` 依赖
+
+## 四、接口契约变更（前后端同时改）
+
+| 旧 | 新 |
+|---|---|
+| `POST /api/video/init` 只传 `fileName` | 传 `fileName + fileSize + topicId`，返回 `chunkSize / totalParts` |
+| `POST /api/video/upload`（multipart，整个文件） | `POST /api/video/part`（**二进制流**，按字节区间） |
+| `POST /api/video/complete` 传 `uploadId+fileName+userId+topicId` | 只传 `uploadId`（topicId 存在会话里） |
+| `GET /api/report/url?userId=&topicId=` | `GET /api/report/url?topicId=` |
+| — | 新增 `GET /api/video/policy`、`/api/report/policy`、`POST /api/video/delete`、`POST /api/report/delete`、`GET /api/video/status`、`POST /api/video/upload`（小视频单次直传） |
+
+## 五、前端改造
+
+### 5.1 新增 `utils/uploader.js`（通用上传模块）
+
+- 真分片：`FileSystemManager.readFile(position, length)` 读字节区间 → `wx.request` 以 `ArrayBuffer` 原始流上传
+- 单分片失败**自动重试 3 次**，重试前先查 `status` **跳过已成功的分片**
+- **路径规整**：模拟器返回 `http://tmp/xxx` 这类**非真实文件路径**时，先用 `wx.downloadFile` 落成真实临时文件再分片；转换失败则**自动降级为整文件直传**（保证功能可用，并在结果中标记 `degraded`）
+- 上传规则（格式白名单 / 大小上限 / 分片大小）改为**从服务端拉取**，前后端不再各写一份硬编码
+- 统一 `getBaseUrl()` / `resolveFileUrl()`（后者兼容历史 OSS 绝对地址）
+
+### 5.2 `student.js` 瘦身
+
+删除约 300 行重复上传实现（原 `uploadChunk` / `completeUpload` / `uploadReport` 中的裸 `wx.request`），改为调用通用模块；`startUpload` 只负责状态与提示。
+
+### 5.3 功能补全
+
+- **新增「附件所属题目」选择器**（修 V6/R5）：视频与报告共用，避免都挂到 `defenseTopics[0]`
+- 视频：**预览**（`wx.previewMedia`）、**删除**（二次确认 → 删库 + 清磁盘文件）
+- 报告：**查看 / 下载**（`wx.downloadFile` + `openDocument`，右上角菜单可"保存到手机"）、**删除**
+- 附件状态改为**直接向后端查询**（原靠分页的 `defenseRecords` 列表去猜，翻页后会失准）
+
+### 5.4 附件上传提示改造（废弃常驻绿字）
+
+**问题**：上传成功后卡片内会出现一行绿色文字（`.upload-success` / `.success-text`），**常驻不消失**，用户明确要求废弃该效果。
+
+**改造**：
+- 删除 `.upload-success` / `.success-text` / `.error-text` 三处显示块及其样式（已确认 0 引用）
+- 新增 `.top-banner`：成功绿（`#07c160`）/ 失败红（`#fa5151`），**5 秒自动消失**，出现时向下滑入 0.26s
+- **位置**：放在 `header`（"课程考核AI答辩辅助"标题栏）**正下方的文档流内**，而**不是 `position: fixed` 贴屏幕顶**。
+  - 第一版用了 `fixed; top:0`，用户反馈"**与状态栏/刘海屏完全重合，只能看到白色部分、然后突然变绿**" → 因此改为文档流
+  - 代价：出现时会把下方内容下推一点（像浏览器通知栏）。**这是刻意的取舍** —— 本项目已被悬浮层遮挡坑过两次
+- 失败文案带具体原因（如"视频过大：620.0 MB，上限为 500.0 MB"），不再是光秃秃的"上传失败"
+- 失败时卡片内只保留「重试」按钮（操作入口，非提示）
+
+### 5.5 样式去重（附带发现）
+
+`student.wxss` 中 `.upload-success / .success-text / .error-text / .upload-error / .retry-btn / .progress-text / .status-text / .progress-container` 存在**重复定义**（后写静默覆盖前写）—— 与本节（一）教师端弹层 bug 同一根因。已全部合并为一套（取值保留原先**实际生效**的那套，视觉无变化）。
+
+## 六、验证记录
+
+1. **后端**：`mvn -o compile` **BUILD SUCCESS**；`target/classes` 共 **77 个 class**；`RegisterMapper.class` 等关键类齐全；已删除的 OSS 类确认不存在
+2. **前端**：`student.js` / `teacher.js` / `uploader.js` / `config.js` / `login.js` / `register.js` / `forgetPassword.js` 全部 `node --check` 通过；lint 0 错误
+3. **分片链路 Node 打桩实测（真实执行，非静态检查）**
+   - 场景一（真分片）：10 个分片、**每片精确 5MB 真实字节区间**、序号 1~10 连续、未降级 ✅
+   - 场景二（模拟读文件失败）：不发分片、**自动降级为整文件直传**、返回 `degraded=true` 且拿到 `videoUrl` ✅
+   - **合计 8 项断言全部通过**
+4. **结构校验**：`student.wxml` `<view>` 101/101 平衡；`showBanner/hideBanner/onUnload` 各仅 1 处定义（避免同名覆盖）；全项目 wxss 重复定义扫描（见遗留）
+5. **用户实测**：视频可上传，文件确实落在 `F:\ai wordplace` 下
+
+## 七、过程中踩的坑（供后续参考）
+
+| 现象 | 根因 | 处理 |
+|---|---|---|
+| 编译报"找不到符号：`RegisterMapper`"，而源码一直在、git 也跟踪 | **编译产物残缺**：先前 `mvn` 因机器内存不足（可用内存仅 0.6GB，报"页面文件太小"）被系统杀掉，留下写了一半的 `target/classes`（66/77）；IDEA 增量编译去 classpath 里找不到该 class | **删除 `target` 全量重编**即解决（77/77）。教训：这类"符号明明存在却找不到"优先怀疑编译产物 |
+| 视频上传报 `readFile:fail http://tmp/xxx.mp4 not found` | 开发者工具模拟器返回的是**模拟地址**而非真实文件路径，`FileSystemManager` 读不了（`wx.uploadFile` 两种路径都接受，所以报告上传没暴露） | 路径规整 + 降级兜底（见 5.1） |
+| 视频上传只显示"上传失败"，无任何原因 | **给声明为 `const` 的变量重新赋值**会抛 `TypeError`，它只有 `.message`、没有 `.msg`，被页面的兜底文案吃掉 | 改为 `let`；补"空 `data` 取属性"防御；页面 catch 打印**原始错误对象**；错误文案带原因 |
+| 报告 / 视频上传固定报 401「登录已过期」，与 token 是否有效无关 | `uploader.js` 里 10 个请求中 **`fetchPolicy()` 是唯一漏传 `Authorization` 头**的 | 补上并**全量复核 10 个请求**（现在都带 token） |
+| 答辩记录突然全部空白，一度误判为"token 过期" | 两件事叠加：① 2026-09-17（二）把 `serverUrl` 改成局域网 IP，被 7 处"裸用 `config.serverUrl`"的代码带偏；② 启用登录校验后旧 token 失效 | 统一 `getBaseUrl()` + 新增 401 显式处理（弹「登录已过期 → 去登录」，不再"白屏"） |
+| 用户看到的"白屏/数据没了" 引发误解 | 失败方式为静默（列表空 + 无提示） | 401 改为弹窗提示；附件状态改为直接查后端；错误文案带原因 |
+
+## 八、遗留与后续
+
+1. **待核验 SQL**：`SHOW INDEX FROM defense_records;` —— 确认 `(user_id, topic_id)` 唯一索引是否已删除。若已删，`upsertDefenseRecord` 仍在裸用 upsert（每次 INSERT），需与 **N1** 一并处理
+2. **教师端未纳入本轮鉴权**：`/teacher/**` 与 `/editUserInfo` 的角色校验仍缺（**N19**），留待批次 B
+3. **样式类重复定义**：`teacher.wxss` 13 个 + `student.wxss` 2 个（`label` `input` `textarea` `picker` `value` `card-header` `form-header` `question-*` 等）已扫描出但**未处理**，属"后写静默覆盖"隐患，建议单独做一次样式去重
+4. `student.js` 仍有 **2 个同名 `logout()`**（**N25**），后者覆盖前者，未处理
+5. 大文件上传中途放弃时，半成品稀疏文件会留到 Redis 会话过期（24h），暂无定时清理
+6. `docuument/` 目录保留未删（待用户确认）
+7. **本次改动未提交 git**（用户明确要求暂不推送）
+
+## 九、补充改动（同日稍后）：上传规则加代码级默认值
+
+**问题**：`application.yml` 已被 `.gitignore` 排除，而上传规则（格式白名单 / 大小上限 / 分片大小）写在其中的 `app.upload.*`。
+后果：**换一台机器 clone 下来后 `allowed-exts` 为空列表** → `ChunkUploadServiceImpl.init()` 与 `MediaFileServiceImpl.validateFile()` 会直接拒绝所有上传，提示"服务端未配置可上传的文件格式"（即典型的"只在我这台机器上能用"）。
+
+**修复**：`AppProperties.FileRule` 新增两个静态工厂：
+
+| 方法 | 默认值 |
+|---|---|
+| `videoDefaults()` | 500MB / 5MB 分片 / `mp4, mov, avi, mkv, flv, wmv, m4v, 3gp` |
+| `reportDefaults()` | 50MB / `pdf, doc, docx, xls, xlsx, ppt, pptx, txt` |
+
+`Upload.video` / `Upload.report` 改用这两个工厂初始化，于是 **`application.yml` 从"必需"变成"可选覆盖"**：有配置则以 yml 为准，没有则用代码默认值。
+
+**验证**：`mvn -o compile` **BUILD SUCCESS**；`target/classes` 共 77 个 class；`AppProperties.class` / `AppProperties$FileRule.class` / `AppProperties$Upload.class` 均已生成。
+
+**附带效果**：覆盖了需求清单 **N13（配置模板化）** 的主要目的之一 —— 减少对 `application.yml` 的强依赖。
+
+## 十、补充改动（同日稍后）：存储目录自动选择（换电脑可正常运行）
+
+**问题**：存储根目录写死在 `F:/ai wordplace`。**换一台没有 F 盘的电脑**（或把项目拷给别人），启动即报错、或上传全部失败 —— 典型的"只在我这台机器上能用"。
+更隐蔽的一点：`WebConfig.addResourceHandlers` 也**自己从配置里重新拼了一遍根目录**，一旦目录改为运行时决定，静态资源映射就会指向错误位置。
+
+**修复（三级降级）** —— `LocalFileStorageServiceImpl.resolveRoot()`：
+
+| 优先级 | 取值 | 说明 |
+|---|---|---|
+| 1 | `app.storage.root` | 显式配置优先（本机 = `F:/ai wordplace`，行为不变） |
+| 2 | `app.storage.preferred-drives` 顺序自动挑盘 | 默认 `F,D,E,C`；挑第一个**磁盘存在且可写**的，在其下创建 `app.storage.folder-name`（默认 `ai wordplace`）。**别的电脑没有 F 盘 → 自动落到 D 盘** |
+| 3 | 用户主目录 | 兜底，至少保证应用能启动 |
+
+配套改动：
+- `AppProperties.Storage` 新增 `folder-name`、`preferred-drives`；`root` 默认值改为空（空 = 自动）
+- `FileStorageService` 新增 `rootUri()`；`WebConfig` 改为使用它，**不再自己拼路径**（消除上述隐蔽问题）
+- 启动日志会明确打印最终选定的目录，以及"因配置不可用而降级"的告警，便于排查
+
+**验证**：`mvn -o compile` **BUILD SUCCESS**（77 个 class）；lint 0 错误。
+本机盘符实测 `F/D/E/C` 均存在且 `F:\ai wordplace` 已有 `videos/`、`reports/` → 走优先级 1，**本机行为完全不变**。
+
+**仍未解决的"换电脑"事项（非代码问题）**：
+1. `application.yml` 里的 MySQL / Redis 连接信息需与新机器一致，且新机器需建好 `ai_helper` 库
+2. 小程序 `utils/config.js` 的 `serverUrl` 是**机器相关**的局域网 IP：开发者工具走 `localhost` 不受影响，但**真机调试需改成新机器的 IP**
+3. ~~若改用 `git clone` 而非拷贝整个文件夹，需自备 `application.yml`~~ → **已解决**（见下一节）
+
+## 十一、补充改动（同日稍后）：新增 `application.yml.example` 配置模板
+
+**问题**：`application.yml` 被 `.gitignore` 排除（内含密码，做法正确），但项目里**没有任何模板** → `git clone` 到新机器后不知道该配哪些项，只能靠猜或翻代码。
+
+**修复**：新增 `src/main/resources/application.yml.example`（**会被 git 跟踪**）：
+
+- 按「启动依赖顺序」组织：Ollama → MySQL → Redis → 邮件 → 上传上限 → `app.*`
+- 所有敏感值改为占位符（`your-mysql-password` / `your-redis-password` / `your-qq-auth-code`），**不含任何真实密码与个人信息**
+- 每个 TODO 写明"改成什么"，并标注两类关键约束：
+  - **硬件红线**：只能用 3B 级模型（换成 7B/8B 会 OOM，历史留过 `hs_err_pid` 日志）
+  - `app.storage.root` **建议留空** —— 留空即自动选盘，换电脑不需要改任何配置
+- 顶部写明用法：复制 → 重命名为 `application.yml` → 改 TODO 处
+
+**验证**：
+- `git check-ignore -v` 确认该文件**不被忽略**；`git status` 显示为 `??`（会被跟踪）
+- `.gitignore:42` 是**精确路径** `src/main/resources/application.yml`，不会误伤 `.example`
+- **同时修掉一个隐性失效**：早先给 `application.yml` 加的 `server.tomcat.max-swallow-size: -1` 实际**并未写入**（编辑工具报成功但未落地 —— 与当日 `config.js` 那次是同一现象），本次已读取前 6 行核实落地
+
+**至此「换电脑拷贝项目」三件到位**：存储目录自动选盘（第十节）+ 上传规则代码级默认值（第九节）+ 配置模板（本节）。

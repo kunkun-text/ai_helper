@@ -1,5 +1,6 @@
-// 引入全局配置
+// 引入全局配置与通用上传模块（仅用到其中的地址解析）
 const config = require('../../utils/config.js');
+const uploader = require('../../utils/uploader.js');
 
 Page({
   data: {
@@ -85,7 +86,7 @@ Page({
     });
 
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/teacher/defense/search`;
     const token = wx.getStorageSync('token');
     
@@ -194,7 +195,7 @@ Page({
     });
 
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/teacher/defense/records`;
     const token = wx.getStorageSync('token');
     
@@ -513,7 +514,7 @@ loadMoreTopics() {
     });
 
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/teacher/getAllDefense`;
     wx.request({
       url: requestUrl,
@@ -651,7 +652,7 @@ loadMoreTopics() {
       // 调用API获取该主题下的问题列表
       const token = wx.getStorageSync('token');
       // 使用全局配置的服务器地址
-      const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+      const serverUrl = config.getBaseUrl();
       wx.request({
         url: `${serverUrl}/teacher/getDefenseQuestionById?topicId=${topicId}`, // 将topicId作为查询参数
         method: 'GET',
@@ -713,7 +714,7 @@ loadMoreTopics() {
       // 调用API获取详细的反馈信息
       const token = wx.getStorageSync('token');
       // 使用全局配置的服务器地址
-      const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+      const serverUrl = config.getBaseUrl();
       wx.request({
         url: `${serverUrl}/teacher/defense/DetailRecords/${recordId}`,
         method: 'GET',
@@ -733,8 +734,9 @@ loadMoreTopics() {
               score: detailData.score,
               aiScore: detailData.aiScore || Math.floor(parseFloat(detailData.score) * 0.9), // 优先使用后端返回的AI评分，如果没有则计算
               defenseTime: detailData.defenseTime,
-              defenseVideoUrl: detailData.defenseVideoUrl,
-              defenseReportUrl: detailData.defenseReportUrl,
+              // 库中现在存的是 /files/xxx 这样的相对路径，需补上服务器地址才能播放/下载
+              defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl),
+              defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl),
               aiVideoAnalysis: detailData.aiVideoAnalysis,
               aiReportAnalysis: detailData.aiReportAnalysis,
               aiAllAnalysis: detailData.aiAllAnalysis,
@@ -781,7 +783,7 @@ loadMoreTopics() {
     // 调用API获取回答详情
     const token = wx.getStorageSync('token');
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     wx.request({
       url: `${serverUrl}/teacher/defense/questions/${defenseId}`,
       method: 'GET',
@@ -1091,7 +1093,7 @@ loadMoreTopics() {
     // 发送请求到后端API - 根据是否为编辑模式选择不同的接口
     const token = wx.getStorageSync('token');
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     const url = this.data.isEditingTopic ? `${serverUrl}/teacher/editDefense` : `${serverUrl}/teacher/addDefense`;
     const method = 'POST';
 
@@ -1152,7 +1154,7 @@ loadMoreTopics() {
         if (res.confirm) {
           // 发送删除请求到后端
           // 使用全局配置的服务器地址
-          const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+          const serverUrl = config.getBaseUrl();
           wx.request({
             url: `${serverUrl}/teacher/deleteDefenseTopics?topicId=${topicId}`, // 使用正确的删除接口
             method: 'DELETE',
@@ -1225,7 +1227,7 @@ loadMoreTopics() {
 
     // 发送请求到后端（与学生端相同的接口）
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     wx.request({
       url: `${serverUrl}/editUserInfo`,
       method: 'POST',
@@ -1324,7 +1326,7 @@ loadMoreTopics() {
     // 调用API获取回答详情
     const token = wx.getStorageSync('token');
     // 使用全局配置的服务器地址
-    const serverUrl = config.useRemoteServer ? config.serverUrl : config.localServerUrl;
+    const serverUrl = config.getBaseUrl();
     wx.request({
       url: `${serverUrl}/teacher/defense/questions/${defenseId}`,
       method: 'GET',

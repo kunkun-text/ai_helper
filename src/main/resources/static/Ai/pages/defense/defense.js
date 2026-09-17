@@ -43,7 +43,7 @@ Page({
 
     // 进入答辩页时清理 Redis 旧会话，从头开始
     wx.request({
-      url: config.serverUrl + '/api/chat/clear',
+      url: config.getBaseUrl() + '/api/chat/clear',
       method: 'POST',
       data: { sessionId: sid, topicId: this.data.topicId, userId: this.data.userId },
       header: {
@@ -133,7 +133,7 @@ Page({
     this._lastPrompt = prompt; // 缓存用于重试
 
     wx.request({
-      url: config.serverUrl + '/api/chat',
+      url: config.getBaseUrl() + '/api/chat',
       method: 'POST',
       timeout: 180000, // 3分钟
       data: {

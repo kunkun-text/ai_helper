@@ -34,9 +34,28 @@ public interface DefenseRecordsMapper {
 
     void updateVideoUrlById(@Param("recordId") Long recordId,@Param("videoUrl") String videoUrl);
 
+    void updateReportUrlById(@Param("recordId") Long recordId, @Param("reportUrl") String reportUrl);
+
+    void clearVideoUrlByDefenseId(@Param("defenseId") Long defenseId);
+
+    void clearReportUrlByDefenseId(@Param("defenseId") Long defenseId);
+
     String getUserIdByUserNumber(String userNumber);
 
     String getVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
+
+    /**
+     * 取该用户在该题目下的最新一条答辩记录（不区分状态）。
+     * 附件上传/删除用它定位目标记录，避免每次上传都新建一条空壳记录。
+     */
+    Integer getLatestDefenseIdByUserAndTopic(@Param("userId") String userId, @Param("topicId") Integer topicId);
+
+    /**
+     * 校验某条答辩记录是否属于指定用户，防止学生通过改 defenseId 读取他人记录。
+     *
+     * @return 匹配条数（1 表示属于该用户）
+     */
+    int countOwnedDefenseRecord(@Param("defenseId") Integer defenseId, @Param("userId") String userId);
 
     TextQuery getDetailWordsRecords(Integer topicId);
 
