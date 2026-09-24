@@ -105,7 +105,7 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 
 1. **中文交流**；代码注释跟随现有风格（中文为主）。
 2. **绝不提交**：`application.yml`（含本地密码和 QQ 邮箱，已在 .gitignore）、任何 `*.log` / `hs_err_pid*` 崩溃日志、根目录重复的 `project.config.json`。
-3. **Git**：远程是 `github.com/kunkun-text/ai_helper`（别人的仓库！本机凭据账号是 chew303-cmd，尚未被加为协作者，推送会 403）。提交信息用中文一行标题 + 可选正文，风格参考历史（如「完善答辩」）。
+3. **Git**：远程是 `github.com/kunkun-text/ai_helper`（**不要改写历史或强推**）。账号 `chew303-cmd` 已验证可直接推送（2026-09-24 实测通过）。提交信息用中文一行标题 + 可选正文，风格参考历史（如「完善答辩」）。
 4. 改 `chatController.java` / `defense.js` 这类大文件时先读再改，改动要克制，遵循现有代码风格。
 5. 后端报错时先看是否 Ollama 未启动 / 显存不足（用 `diagnose.ps1` 诊断），再查代码。
 6. 开发协作流程（提问、review、开发标准）见 `.claude/skills/ai-defense-dev/SKILL.md`
@@ -120,6 +120,6 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 - 9-15 核心修复：轮次/收尾判断改按 `defense_score_record` 落库行数 +1 权威计数（旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 物理截断封顶在 6，导致轮次号落库卡死、防死循环兜底永不触发——9-14 晚两场实测实锤，根因与修复详见 `CHANGES.md`「2026-09-15 改动」）。
 - 实测遗留的小问题（非阻塞）见 `CHANGES.md` 9-15 节「遗留」：前端重试可产生重复评分行、追问阶段放弃作答的答案行可能跳过落库、模型偶发"总分≠五维之和"（落库/展示已按五维和纠正）。
 - 待办（2026-09-15 用户确认暂不做，仅挂账）：① JVM 内存上限——pom.xml 的 spring-boot-maven-plugin 加 `<jvmArguments>-Xmx512m</jvmArguments>` 或启动命令加 `-Dspring-boot.run.jvmArguments=-Xmx512m`；② Ollama 并发限制——管理员命令行 `setx OLLAMA_NUM_PARALLEL 1` 后重启 Ollama 生效。机器仅 7G 内存，答辩现场多开前建议完成（历史 JVM 崩溃见根目录 hs_err_pid*.log，源于 8b 模型实验）。
-- 编译注意：PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。
+- 编译注意：原开发机 PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。**该路径属于原开发机，换机器请按实际安装位置替换**（按部署手册装好的机器在 `D:\tools\maven\apache-maven-3.9.9\bin\mvn.cmd`，JDK 在 `D:\tools\jdk17`）。
 
-**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（Ollama 模型 `qwen2.5:3b-16k`，RTX 3050 4G 显存勿换大模型）。
+**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（模型固定 `qwen2.5:3b-16k`，**不要换更大模型**；带独显的新机器差异见 `docs/从零部署手册-8G低功耗标准.md` 第十五节）。
