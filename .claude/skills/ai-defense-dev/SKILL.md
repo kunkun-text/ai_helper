@@ -37,7 +37,7 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 ## 项目红线（绝不触碰）
 - 不提交 application.yml、*.log、hs_err_pid*
 - 不强推远程、不改写历史（远程是别人的仓库）
-- 不换更大的模型（RTX 3050 只有 4G 显存，会崩）
+- 不换更大的模型（当前 `qwen2.5:3b-16k` 已验证稳定；本机 RTX 2060 6GB 显存，换模型前先实测评估）
 - 改 chatController.java / defense.js 大文件时先读再改，改动克制
 
 ## 故障排查顺序
@@ -46,7 +46,9 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 3. 最后查代码
 别一上来就改代码。
 
-## 硬件约束（重要）
-- 机器仅 7G 内存，Ollama + IDE + 小程序工具同时开会爆
-- 答辩时只开必要的进程
-- JVM 建议加 -Xmx512m，Ollama 并发限制 OLLAMA_NUM_PARALLEL=1
+## 硬件约束（2026-09-25 更新）
+- 开发机：i5-10300H / **16 GB 内存** / **RTX 2060 6GB**（旧记载的「7G 内存 / RTX 3050 4G」已作废）
+- `qwen2.5:3b-16k` 约 2.7 GB 显存，实测 100% 跑 GPU；换更大模型前先按显存/内存实测评估
+- 答辩时仍只开必要的进程（Ollama + 后端 + 微信开发者工具）
+- 已设置的 Ollama 环境变量：`OLLAMA_MODELS=F:\ollama\models`、`OLLAMA_KEEP_ALIVE=-1`、`OLLAMA_NUM_CTX=16384`、`OLLAMA_NUM_GPU=999`、`OLLAMA_FLASH_ATTENTION=1`
+- JVM 堆上限（`-Xmx`）仍挂账未定，见 `需求清单-2026-09-15.md` P1

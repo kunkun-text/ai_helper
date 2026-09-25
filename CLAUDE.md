@@ -67,16 +67,19 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 
 ## 四、本地运行环境
 
-> ⚠️ 下表是**原开发机**（光影精灵 7）的实际值。**换机器部署时不要照搬**——请以 `docs/从零部署手册-8G低功耗标准.md` 为准，且每台机器的 `application.yml` 都要自己配一份（该文件不入库）。
+> **当前开发机（2026-09-25 更新）**：荣耀猎人游戏本 V700（型号 FRD-WX9）/ i5-10300H（4 核 8 线程）/ **16 GB 内存** / **RTX 2060 6GB**（驱动 617.14）/ Windows 10 专业版 22H2。
+> ⚠️ 本文档此前写的「RTX 3050 只有 4G 显存」「机器仅 7G 内存」是**上一台机器**的规格，已作废，勿再据此做性能决策。
+> ⚠️ 换机器部署时不要把下表当通用规格照搬——请以 `docs/从零部署手册-8G低功耗标准.md` 为准，且每台机器的 `application.yml` 都要自己配一份（该文件不入库）。
 > 已知差异举例：新机器若 3306 被占用，MySQL 会改用 3307；无独显的机器走纯 CPU 推理，速度约为独显机器的 1/5 ~ 1/10。
 
 | 组件 | 要求 |
 |---|---|
-| Ollama | 需先 `ollama pull qwen2.5:3b-16k`；本机显卡 RTX 3050 只有 4G 显存，**不要换更大的模型**（之前用 8b 直接把显存打爆跑去 CPU，还产生过 JVM 崩溃日志 hs_err_pid*.log） |
+| 硬件 | 16 GB 内存 + RTX 2060 6GB 显存；`qwen2.5:3b-16k` 加载后约占 2.7 GB 显存，实测 100% 跑在 GPU 上、单轮 2~5 秒 |
+| Ollama | 需先 `ollama pull qwen2.5:3b-16k`；模型目录 `F:\ollama\models`；手动启动（无开机自启）。当前模型已验证稳定，**换更大模型前先按本机显存/内存实测评估**（历史事故：8b 模型打爆显存跑去 CPU，留下 JVM 崩溃日志 `hs_err_pid*.log`） |
 | MySQL | root / 123456 @127.0.0.1:3306/ai_helper，执行过 `docs/ddl_defense_score_record.sql` |
-| Redis | 127.0.0.1:6379，密码 123456 |
-| 启动后端 | 项目根目录 `mvn spring-boot:run`，端口 8080 |
-| 小程序 | 微信开发者工具打开 `src/main/resources/static/Ai/` 目录 |
+| Redis | 127.0.0.1:6379，密码 123456；手动启动。⚠️ **必须用 `F:\杂七杂八\Redis2\redis.windows.conf` 启动**（内含 `requirepass 123456`）——同目录的 `redis.windows-service.conf` 没有密码，会与 `application.yml` 里的 `password: 123456` 不匹配，导致连接失败 |
+| 启动后端 | 项目根目录 `mvn spring-boot:run`，端口 8080（PATH 无 mvn，用 `D:\maven\apache-maven-3.8.1\bin\mvn.cmd`；`JAVA_HOME` = JDK 17） |
+| 小程序 | 微信开发者工具打开 `src/main/resources/static/Ai/` 目录；真机调试需改 `utils/config.js` 的 `serverUrl` 为本机 WLAN IPv4 |
 
 ## 五、AI 对话协议（改 chatController 前必读）
 
@@ -119,7 +122,7 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 
 - 9-15 核心修复：轮次/收尾判断改按 `defense_score_record` 落库行数 +1 权威计数（旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 物理截断封顶在 6，导致轮次号落库卡死、防死循环兜底永不触发——9-14 晚两场实测实锤，根因与修复详见 `CHANGES.md`「2026-09-15 改动」）。
 - 实测遗留的小问题（非阻塞）见 `CHANGES.md` 9-15 节「遗留」：前端重试可产生重复评分行、追问阶段放弃作答的答案行可能跳过落库、模型偶发"总分≠五维之和"（落库/展示已按五维和纠正）。
-- 待办（2026-09-15 用户确认暂不做，仅挂账）：① JVM 内存上限——pom.xml 的 spring-boot-maven-plugin 加 `<jvmArguments>-Xmx512m</jvmArguments>` 或启动命令加 `-Dspring-boot.run.jvmArguments=-Xmx512m`；② Ollama 并发限制——管理员命令行 `setx OLLAMA_NUM_PARALLEL 1` 后重启 Ollama 生效。机器仅 7G 内存，答辩现场多开前建议完成（历史 JVM 崩溃见根目录 hs_err_pid*.log，源于 8b 模型实验）。
-- 编译注意：原开发机 PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。**该路径属于原开发机，换机器请按实际安装位置替换**（按部署手册装好的机器在 `D:\tools\maven\apache-maven-3.9.9\bin\mvn.cmd`，JDK 在 `D:\tools\jdk17`）。
+- 待办（2026-09-15 用户确认暂不做，仅挂账）：① JVM 内存上限——pom.xml 的 spring-boot-maven-plugin 加 `<jvmArguments>-Xmx512m</jvmArguments>` 或启动命令加 `-Dspring-boot.run.jvmArguments=-Xmx512m`；② Ollama 并发限制——管理员命令行 `setx OLLAMA_NUM_PARALLEL 1` 后重启 Ollama 生效。本机 **16 GB 内存**（2026-09-25 更正，原记载的「7G」是上一台机器），答辩现场多开前仍建议完成（历史 JVM 崩溃见根目录 hs_err_pid*.log，源于 8b 模型实验）。
+- 编译注意：本机 PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。**换机器请按实际安装位置替换**（按部署手册装好的机器在 `D:\tools\maven\apache-maven-3.9.9\bin\mvn.cmd`，JDK 在 `D:\tools\jdk17`）。
 
-**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（模型固定 `qwen2.5:3b-16k`，**不要换更大模型**；带独显的新机器差异见 `docs/从零部署手册-8G低功耗标准.md` 第十五节）。
+**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（Ollama 模型 `qwen2.5:3b-16k`，本机 RTX 2060 6GB 显存 + 16 GB 内存，**换更大模型前先实测评估**；带独显的新机器差异见 `docs/从零部署手册-8G低功耗标准.md` 第十五节）。
