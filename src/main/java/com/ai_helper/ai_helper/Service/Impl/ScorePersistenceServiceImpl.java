@@ -65,6 +65,15 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
                 result.put(DIM_KEYS[i], score);
             }
         }
+        // 旧格式同样按五维之和给出总分，避免 legacyScore 回退到正则抓取无关"XX分"，与五维分叉
+        if (result.containsKey("expression")) {
+            double sum = 0;
+            for (String k : DIM_KEYS) {
+                Object v = result.get(k);
+                sum += (v instanceof Number n) ? n.doubleValue() : 0.0;
+            }
+            result.put("totalScore", sum);
+        }
         String comment = extractMarkedContent(aiResponse, "【评价】",
                 new String[]{"【得分】", "【问题】", "【总结】", "【表达】", "【逻辑】", "【专业】", "【应变】", "【创新】"});
         if (comment == null || comment.isEmpty()) {

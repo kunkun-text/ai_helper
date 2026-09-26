@@ -804,7 +804,7 @@ Page({
             score: record.score ? parseFloat(record.score) : 0,
             date: that.formatDateTime(record.defenseTime),
             defenseTime: that.formatDateTime(record.defenseTime),
-            feedback: record.score ? `AI评分：${Math.floor(parseFloat(record.score) * 0.9)}分。学生表现良好。` : '暂无评分'
+            feedback: record.score ? `本次答辩得分：${parseFloat(record.score)}分。` : '暂无评分'
           }));
           
           let newRecords = [];

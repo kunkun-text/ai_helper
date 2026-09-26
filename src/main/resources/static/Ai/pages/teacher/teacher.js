@@ -118,18 +118,20 @@ Page({
         
         if (res.data.code === 1) {
           const response = res.data.data;
-          const newData = response.list.map(record => ({
-            id: record.defenseRecordId.toString(),
-            studentName: record.userName.trim(),
-            studentId: record.userNumber,
-            topic: record.topicName,
-            score: parseFloat(record.score),
-            aiScore: Math.floor(parseFloat(record.score) * 0.9),
-            teacherScore: Math.ceil(parseFloat(record.score) * 1.1),
-            date: record.defenseTime.split(' ')[0],
-            defenseTime: record.defenseTime,
-            feedback: `AI评分：${Math.floor(parseFloat(record.score) * 0.9)}分。学生表现良好。\n\n教师评分：${Math.ceil(parseFloat(record.score) * 1.1)}分。总体表现不错。`
-          }));
+          const newData = response.list.map(record => {
+            // 只展示库中真实分，不再用 ×0.9/×1.1 伪造「AI评分/教师评分」
+            const scoreValue = record.score != null && record.score !== 'null' ? parseFloat(record.score) : 0;
+            return {
+              id: record.defenseRecordId.toString(),
+              studentName: record.userName.trim(),
+              studentId: record.userNumber,
+              topic: record.topicName,
+              score: scoreValue,
+              date: record.defenseTime.split(' ')[0],
+              defenseTime: record.defenseTime,
+              feedback: scoreValue > 0 ? `本次答辩得分：${scoreValue}分。` : '暂无评分数据'
+            };
+          });
 
           let updatedRecords = [];
           if (isRefresh) {
@@ -231,12 +233,10 @@ Page({
               studentId: record.userNumber || '未知学号',
               topic: record.topicName || '未设置题目',
               score: scoreValue,
-              aiScore: Math.floor(scoreValue * 0.9),
-              teacherScore: Math.ceil(scoreValue * 1.1),
               date: date,
               defenseTime: defenseTime,
-              feedback: scoreValue > 0 
-                ? `AI评分：${Math.floor(scoreValue * 0.9)}分。学生表现良好。\n\n教师评分：${Math.ceil(scoreValue * 1.1)}分。总体表现不错。`
+              feedback: scoreValue > 0
+                ? `本次答辩得分：${scoreValue}分。`
                 : '暂无评分数据'
             };
           });
@@ -732,7 +732,6 @@ loadMoreTopics() {
               studentName: detailData.studentName.trim(),
               studentNumber: detailData.studentNumber,
               score: detailData.score,
-              aiScore: detailData.aiScore || Math.floor(parseFloat(detailData.score) * 0.9), // 优先使用后端返回的AI评分，如果没有则计算
               defenseTime: detailData.defenseTime,
               // 库中现在存的是 /files/xxx 这样的相对路径，需补上服务器地址才能播放/下载
               defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl),

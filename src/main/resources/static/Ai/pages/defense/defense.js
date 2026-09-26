@@ -231,13 +231,14 @@ Page({
       let m;
       if ((m = t.match(/^点评[:：]\s*(.*)$/))) {
         comment = m[1].trim();
-      } else if ((m = t.match(/^评分[:：]\s*\d+\s*[/／]\s*50\s*\|(.*)$/))) {
+      } else if ((m = t.match(/^评分[:：]\s*\d+(?:\.\d+)?\s*[/／]\s*50\s*\|(.*)$/))) {
         hasScore = true;
         const dimParts = m[1].split('|');
         for (let i = 0; i < 5; i++) {
           const v = parseFloat(dimParts[i]);
+          // 不四舍五入：明显错误档会按半分折算产生 3.5 这类小数，取整会与落库分打架
           if (isNaN(v)) dims.push(0);
-          else dims.push(Math.max(0, Math.min(10, Math.round(v))));
+          else dims.push(Math.max(0, Math.min(10, v)));
         }
       } else if ((m = t.match(/^下一题[:：]\s*(.*)$/)) || (m = t.match(/^下一问[:：]\s*(.*)$/))) {
         result.question = m[1].trim();
@@ -268,11 +269,17 @@ Page({
     const line = text.split('\n')[0].trim();
     const parts = line.split('|');
     if (parts.length >= 8) {
-      const scorePart = parts[0].split('/');
-      if (scorePart.length >= 2) {
-        result.score = parseFloat(scorePart[0]);
+      // 总分统一取五维之和，与后端 parsePipeScores 及三段式 parseSegmentFormat 口径一致。
+      // 历史缺陷：直接取管道第 1 段"模型自报总分"，模型总分≠五维和时，气泡展示与落库分不同
+      const dims = [];
+      for (let i = 1; i <= 5; i++) {
+        let v = parseFloat(parts[i]);
+        if (isNaN(v)) v = 0;
+        v = Math.max(0, Math.min(10, v));
+        dims.push(v);
       }
-      result.evaluation = `表达:${parts[1] || '-'} 逻辑:${parts[2] || '-'} 专业:${parts[3] || '-'} 应变:${parts[4] || '-'} 创新:${parts[5] || '-'}`;
+      result.score = dims.reduce((a, b) => a + b, 0);
+      result.evaluation = `表达:${dims[0]} 逻辑:${dims[1]} 专业:${dims[2]} 应变:${dims[3]} 创新:${dims[4]}`;
       if (parts[6]) result.evaluation += '\n优点：' + parts[6];
       if (parts[7]) result.evaluation += '\n建议：' + parts[7];
       result.question = parts.length >= 9 ? parts.slice(8).join('|') : '';
