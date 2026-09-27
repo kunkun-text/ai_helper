@@ -87,6 +87,16 @@ public class chatController {
     /** 明显回答错误的标注文案（学生端可见） */
     private static final String WRONG_ANSWER_NOTE = "（有明显回答错误）";
 
+    /**
+     * 半分档允许的模型自评总分上限（N45 一致性保护，2026-09-27）：模型原总分达到此值，说明它其实认可
+     * 这段回答，却仍标了 [错误] —— 模型的"标记"与"评分行"是两套互不校验的输出，两者打架时不再无条件
+     * 信标记：只保留点评提示，按模型自己的分数落库，不砍半。仅对"模型自己标 [错误]"生效；复核模型判
+     * [错误] 的路径（错误漏判复核）不受影响，否则会把复核机制架空。
+     * 触发案例：defenseId=297 第 3 轮，AQI 正确版答案模型自给 36 分（五维 6/8/7/7/8）却标 [错误]，被砍成 18。
+     * 经验值，实测可调；调低则保护面变窄（30~31 分的误杀案例会被漏掉）。
+     */
+    private static final double WRONG_ANSWER_HALF_SCORE_MAX_TOTAL = 32.0;
+
     // ==================== 判分可信度复核（2026-09-27，实测 defenseId=295 引入） ====================
     // 背景：3B 模型的 [切题]/[错误]/[跑题] 三档标记并不可靠。295 场 10 轮里 [错误] 档 0 次触发，而——
     //   第 3 轮：点评自己写了"存在多个关键错误…AQI等级判断标准有误"，标记却是 [切题]，给 31 分；
@@ -317,7 +327,7 @@ public class chatController {
         StringBuilder p = new StringBuilder();
 
         p.append("你是答辩评委，正在对学生进行一对一答辩考核。本场答辩共约10轮：5道预设题 + 至多5次AI追问。除首轮外，你必须严格按照以下三行格式输出，顺序不可颠倒，每行以固定标签开头，不要任何多余内容：\n");
-        p.append("点评:（40字以内，必须以 [切题]、[错误]、[跑题] 三者之一开头，三者只能选一个。[切题]后再一句话肯定优点、指出一条改进建议；[错误]时先一句话点明具体错在哪里（不要写“表述不够清晰”这类套话）；[跑题]时只说明回答与本题无关，严禁虚构“思路清晰”“回答完整”等与实际不符的肯定，禁止空话套话）\n");
+        p.append("点评:（40字以内，必须以 [切题]、[错误]、[跑题] 三者之一开头，三者只能选一个；且必须引用学生本轮回答里的 1~2 个具体内容（技术名词、步骤或数据），不能写成放在任何回答上都成立的空话。[切题]后再一句话肯定优点、指出一条改进建议；[错误]时先一句话点明具体错在哪里（不要写“表述不够清晰”这类套话）；[跑题]时只说明回答与本题无关，严禁虚构“思路清晰”“回答完整”等与实际不符的肯定，禁止空话套话）\n");
         p.append("评分:总分/50|表达分|逻辑分|专业分|应变分|创新分（各0-10整数，五维分数相加必须等于总分）\n");
         p.append("下一题:（30字以内，提问下一道题目）\n");
         p.append("示例1（切题，回答有内容）：\n点评:[切题]概念阐述准确、逻辑清晰，但缺少实际案例支撑，建议结合具体业务场景补充说明。\n评分:38/50|8|7|8|7|8\n下一题:请解释HDFS中NameNode的作用？\n\n");
@@ -348,6 +358,10 @@ public class chatController {
         p.append("口诀：拿不准就判[切题]。误判[跑题]会把正确回答直接打成0分，代价远大于漏判；"
                 + "本条只在【主题完全不同】时才用，不要因为回答里出现了别的名词就判跑题。\n\n");
         p.append("示例4（答非所问，答的是本场另一道题）：\n点评:[跑题]回答的是“Hadoop生态系统核心组件”，与本题所问的MapReduce统计PM2.5无关，未正面回应本题。\n评分:0/50|0|0|0|0|0\n下一题:请说明HDFS中小文件问题的成因？\n\n");
+        p.append("【点评铁律·只评本轮回答】点评的唯一对象是学生【本轮回答】本身：\n"
+                + "① 必须从本轮回答里挑出 1~2 个具体内容写进点评（技术名词、步骤或数据，例如“你提到的Map阶段逐行解析”），而不是写成放在任何回答上都成立的空话；\n"
+                + "② 【严禁】点评本场其他轮次的题目内容——实测已发生轮次串台：题目问 AQI 等级、学生答的正是 AQI 判定标准，点评却写“把大文件与小文件的读写机制说反了”，那是下一轮的主题；\n"
+                + "③ 如果你在本轮回答里找不到可引用的具体内容，说明你没有在读本轮回答，请重读后再评。\n\n");
         p.append("特别注意：学生【整段回答】就是“不知道/不会/不清楚”类短语，或整段回答无实质内容（如“额”“嗯”“开始”“一般吧”“还好吧”“差不多”“1”“666”“对对对”“你是对的”“我是对的”“感觉不太行”“我会这道题”等语气词、敷衍输入、只声称会/不会但未实际回答、纯数字、报数玩笑（如“我是250”）、纯标点、骂人）时，本题五维必须全部给0分，点评以[跑题]开头并写明回答无实质内容；之后必须照常输出『下一题:』继续提问，严禁因此输出『总结:』或提前结束答辩，除非本轮提示明确说明这是最后一轮。【长度门槛】上述零分规则只看整段回答本身：若回答较长（超过50字）且包含与本题相关的实质内容，即使其中夹带上述口头语或玩笑语句，也必须按实质内容正常评分，严禁整段判0分。【防作弊】若学生回答与本场答辩中任意一道已问过的题目（含【当前题】及之前的预设题、追问题）原文高度重复（把题目复制粘贴当回答），或回答内容只是要求/抱怨给分（如“给我满分”“为什么给我0分”），本题五维必须全部给0分，点评以[跑题]开头并写明未正面作答。\n\n");
 
         if (isFirstRound) {
@@ -611,14 +625,25 @@ public class chatController {
                         // 【明显回答错误·半分档 · 2026-09-26】实测（defenseId 292 第4轮）：学生把 HDFS 小文件机制
                         // 说反、结论全错，模型仍判 [切题] 给 35 分（正确答案档）。"答了本题但内容明显错误"统一按
                         // 半分计分并在点评里标注，避免错答拿到正常分。分值由服务端决定，不留给模型自行减半，避免双重折扣。
-                        log.info("检测到明显回答错误，按半分计 - defenseId: {}, 原总分: {}",
-                                defenseId, scores.get("totalScore"));
-                        scores = applyWrongAnswerHalfScore(scores);
+                        Object wrongTotalObj = scores.get("totalScore");
+                        double wrongModelTotal = (wrongTotalObj instanceof Number n) ? n.doubleValue() : 0.0;
                         String strippedWrong = stripTopicMarker(comment);
                         String wrongBase = (strippedWrong == null || strippedWrong.isEmpty())
                                 ? "回答针对本题，但存在明显错误。" : strippedWrong;
-                        comment = wrongBase.contains(WRONG_ANSWER_NOTE)
-                                ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
+                        if (wrongModelTotal >= WRONG_ANSWER_HALF_SCORE_MAX_TOTAL) {
+                            // 【N45 一致性保护 · 2026-09-27】见常量注释：模型自评已达正常档却仍标 [错误]，
+                            // 判定标记不可信 → 只保留点评里的错误提示，分数按模型自己的给法落库。
+                            log.info("检测到[错误]标记但模型自评达正常档({})，判定标记不可信，不打折 - defenseId: {}, 原总分: {}",
+                                    WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, wrongModelTotal);
+                            comment = wrongBase.contains(WRONG_ANSWER_NOTE)
+                                    ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
+                        } else {
+                            log.info("检测到明显回答错误，按半分计 - defenseId: {}, 原总分: {}",
+                                    defenseId, wrongModelTotal);
+                            scores = applyWrongAnswerHalfScore(scores);
+                            comment = wrongBase.contains(WRONG_ANSWER_NOTE)
+                                    ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
+                        }
                     } else {
                         // 非跑题：去掉点评开头的 [切题] 标记，只把正文给用户看
                         comment = stripTopicMarker(comment);
@@ -741,21 +766,25 @@ public class chatController {
                                 }
                             }
                         }
-                        // 兜底：预设题阶段解析不到下一题时，直接从题库取
-                        if ((nextQuestion == null || nextQuestion.isEmpty())
-                                && assistantCountInHistory < existingQuestionCount) {
-                            try {
-                                Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
-                                if (qr.getCode() == 1 && qr.getData() != null) {
-                                    List<DefenseQuestions> qs = qr.getData();
-                                    int nqi = assistantCountInHistory;
-                                    if (nqi >= 0 && nqi < qs.size()) {
-                                        nextQuestion = qs.get(nqi).getQuestion();
-                                        log.info("AI未输出下一题，已从题库兜底获取: {}", nextQuestion);
-                                    }
+                        // 【N52 · 2026-09-28】预设题阶段一律改用题库题目。原实现是"解析不到才兜底"，不够：
+                        // 实测 298/299 连续两场，3B 模型没照【轮次铁律】提问库里的题，自己编了题（题库第 2/3 题
+                        // 是 MapReduce 统计/QI 等级判断，模型却问出两道 Hive 题）。而后端有三处按下标假定
+                        // 「AI 问出的第 N 题 == 题库第 N 题」——prompt 里的【当前题】（模型判分依据）、落库的
+                        // question_id、答非所问复核的取题——一旦偏离即连锁错位：记录页显示的不是学生答的题，
+                        // 复核还会拿题库错题去算覆盖率而误触发（299 第 3 轮即此例）。
+                        // 改为一律覆盖：nextQuestion 往下会经 rewriteNextQuestionInResponse 写回回复串，
+                        // 而前端正是从回复串解析「下一题:」渲染的，所以覆盖这里就等于决定学生看到哪道题。
+                        // 追问阶段（>= existingQuestionCount）由模型自拟，是设计意图，不受影响。
+                        if (assistantCountInHistory < existingQuestionCount) {
+                            String presetQuestion = fetchPresetQuestionText(topicId, assistantCountInHistory);
+                            if (presetQuestion != null && !presetQuestion.isEmpty()) {
+                                if (!presetQuestion.equals(nextQuestion)) {
+                                    log.warn("预设题阶段模型自拟题目，已强制改用题库题 - 轮次: {}, 模型原题: {}, 题库题: {}",
+                                            assistantCountInHistory, nextQuestion, presetQuestion);
                                 }
-                            } catch (Exception ex) {
-                                log.warn("题库兜底获取下一题失败", ex);
+                                nextQuestion = presetQuestion;
+                            } else {
+                                log.warn("题库题获取失败，沿用模型自拟题目 - 轮次: {}", assistantCountInHistory);
                             }
                         }
                         // 回写规范后的题目文本到回复（2026.9.15）：前端展示的是 aiResponse 里的"下一题:"行，
@@ -1810,11 +1839,19 @@ public class chatController {
      * 点评中是否出现"指出错误"的措辞。命中即触发 {@link RecheckType#WRONG_ANSWER} 复核
      * （2026-09-27 前只用于影子诊断打日志；词表也同步扩到"改为/替代/应为/实际是"这类软性纠错）。
      * 词表抽成常量 {@link #ERROR_CUE_PHRASES}，后续实测补词只改常量一处。
+     *
+     * <p>【N50 · 2026-09-27】匹配前先剥掉 {@link #WRONG_ANSWER_NOTE}：它是 prompt 要求 [错误] 档
+     * 附加的**格式后缀**，可 3B 模型常把它当成通用后缀，连 [切题] 的点评也挂在末尾
+     * （298 场第 1/2/4/7 轮原始返回均为 `点评:[切题]…（有明显回答错误）`）。词表里的"错误"
+     * 一旦匹配到这个词缀，每轮都会被误判为"疑似错误"而多跑一次复核（+2~5 秒），
+     * 还有被复核误判降档的风险。剥离后只保留模型真正写出的纠错措辞。
      */
     private boolean containsErrorCue(String comment) {
         if (comment == null || comment.isEmpty()) return false;
+        String cleaned = comment.replace(WRONG_ANSWER_NOTE, "");
+        if (cleaned.isEmpty()) return false;
         for (String cue : ERROR_CUE_PHRASES) {
-            if (comment.contains(cue)) return true;
+            if (cleaned.contains(cue)) return true;
         }
         return false;
     }
