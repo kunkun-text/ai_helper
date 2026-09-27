@@ -1,6 +1,5 @@
 package com.ai_helper.ai_helper.Config;
 
-import com.ai_helper.ai_helper.util.TextTools;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -28,11 +27,18 @@ public class ChatConfiguration {
         return new RedisChatMemory(redisTemplate);
     }
     
+    /**
+     * 注意（2026-09-27）：这里【不要】再挂 .defaultTools(textTools)。
+     * 实测 defenseId=295 第 2 轮——3B 模型把工具调用意图直接输出成自然语言
+     * （"由于获取视频内容的文字信息失败，我们将根据学生提供的信息进行评分和点评。"），
+     * 整轮没有「点评:」「评分:」行，服务端只能落兜底默认分（35 分）+ 评语"无评价"，
+     * 且这条垃圾消息会写进 Redis 会话记忆、污染后续每一轮。
+     * 去除后本轮即恢复正常打分。若将来确需工具调用，需另做"回复中不含评分行则不落分"的兜底。
+     */
     @Bean
     @Primary
-    public ChatClient chatClient(ChatModel chatModel, TextTools textTools) {
+    public ChatClient chatClient(ChatModel chatModel) {
         return ChatClient.builder(chatModel)
-                .defaultTools(textTools)
                 .build();
     }
     
