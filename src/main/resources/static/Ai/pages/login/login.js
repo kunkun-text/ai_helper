@@ -65,9 +65,26 @@ Page({
     this.setData({ pwdFocus: true });
   },
 
+  // 点按眼睛前先记录密码框是否处于聚焦状态（显隐切换会重建 input 导致失焦）
+  onToggleTouchStart() {
+    this._pwdWasFocus = this.data.pwdFocus;
+  },
+
   // 点击切换密码显隐
   togglePwd() {
-    this.setData({ showPwd: !this.data.showPwd });
+    const keepKeyboard = !!this._pwdWasFocus;
+    this._pwdWasFocus = false;
+    const next = !this.data.showPwd;
+    this.setData({ showPwd: next });
+    console.log('切换密码显隐 - showPwd:', next);
+    if (keepKeyboard) {
+      // 显隐切换会重建 input 导致失焦：先置 false 再置 true，确保焦点属性真正发生变化
+      setTimeout(() => {
+        this.setData({ pwdFocus: false }, () => {
+          this.setData({ pwdFocus: true });
+        });
+      }, 0);
+    }
   },
 
   // 长按显示密码

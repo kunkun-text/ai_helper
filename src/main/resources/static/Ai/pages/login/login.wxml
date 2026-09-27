@@ -47,8 +47,21 @@
         confirm-type="send"
         bindconfirm="handleLogin"
       />
-
+      <!-- 密码显隐：与账号输入框同一行，最右侧的眼睛图标 -->
+      <!-- 注意：这里必须用 bind 而不是 catch —— catchtouchstart 会吞掉 tap 手势，导致点击无效 -->
+      <view
+        class="pwd-toggle"
+        hover-class="pwd-toggle-hover"
+        bindtouchstart="onToggleTouchStart"
+        bindtap="togglePwd"
+      >
+        <view class="eye">
+          <view class="eye-outline"></view>
+          <view class="eye-pupil"></view>
+          <view class="eye-slash" wx:if="{{showPwd}}"></view>
+        </view>
       </view>
+    </view>
   </view>
 
   <!-- 登录 + 注册按钮组 -->

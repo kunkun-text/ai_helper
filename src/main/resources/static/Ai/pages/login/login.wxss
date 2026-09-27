@@ -96,11 +96,61 @@
   font-size: 30rpx;
 }
 
+/* 密码显隐按钮：固定在密码行最右侧的圆形点按区 */
 .pwd-toggle {
-  font-size: 32rpx;
-  color: #9f9898;
+  flex-shrink: 0;
+  width: 72rpx;
+  height: 72rpx;
+  margin-left: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+/* 点按反馈（贴近主流登录页的浅灰圆形高亮） */
+.pwd-toggle-hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+/* 眼睛图标：椭圆外框 + 瞳孔；明文状态叠一条斜线表示“点按可隐藏” */
+.eye {
+  position: relative;
+  width: 40rpx;
+  height: 30rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eye-outline {
   position: absolute;
-  right: 30rpx;
+  left: 0;
+  top: 3rpx;
+  width: 40rpx;
+  height: 24rpx;
+  border: 3rpx solid #9f9898;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.eye-pupil {
+  position: absolute;
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background-color: #9f9898;
+}
+
+.eye-slash {
+  position: absolute;
+  left: -3rpx;
+  top: 13rpx;
+  width: 46rpx;
+  height: 3rpx;
+  border-radius: 2rpx;
+  background-color: #9f9898;
+  transform: rotate(-30deg);
 }
 
 /* 登录按钮 */
