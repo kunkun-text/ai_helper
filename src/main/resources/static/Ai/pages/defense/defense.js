@@ -41,20 +41,94 @@ Page({
       sessionId: sid,
     });
 
-    // 进入答辩页时清理 Redis 旧会话，从头开始
+    // 【2026-09-28 回归修复】答辩开端默认从第 1 题开始：
+    // 先只读探测「有没有未完成的答辩」，有则弹窗让用户自己选，只有明确选「继续作答」才续答。
+    // 上一版由后端自动续答，结果历史遗留的脏 pending 记录（例如已答满 10 轮却没写回收尾状态）
+    // 会把学生一进答辩页就直接带到追问阶段。
     wx.request({
-      url: config.getBaseUrl() + '/api/chat/clear',
+      url: config.getBaseUrl() + '/api/chat/resume-info',
       method: 'POST',
-      data: { sessionId: sid, topicId: this.data.topicId, userId: this.data.userId },
+      data: { topicId: this.data.topicId, userId: this.data.userId },
       header: {
         'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
         'content-type': 'application/json',
       },
-      complete: () => {
-        this.addSystemMessage('答辩考试开始，AI考官已就位。');
-        this.callAi('');
+      success: (res) => {
+        const info = res.data || {};
+        if (info.resumable) {
+          this.askResumeOrRestart(info);
+        } else {
+          this.enterDefense(false);
+        }
       },
+      fail: () => this.enterDefense(false),
     });
+  },
+
+  /** 探测到未完成答辩 → 询问用户（默认「重新开始」，避免误续历史数据） */
+  askResumeOrRestart(info) {
+    wx.showModal({
+      title: '发现未完成的答辩',
+      content: `你有一场答辩答到第 ${info.roundNum} 题（已完成 ${info.answeredCount} 题），要继续上次的作答吗？`,
+      confirmText: '继续作答',
+      cancelText: '重新开始',
+      success: (r) => this.enterDefense(!!r.confirm),
+      fail: () => this.enterDefense(false),
+    });
+  },
+
+  /** 进入答辩：resume=true 续答既有场次；false（默认）从第 1 题开始 */
+  enterDefense(resume) {
+    wx.request({
+      url: config.getBaseUrl() + '/api/chat/clear',
+      method: 'POST',
+      data: {
+        sessionId: this.data.sessionId,
+        topicId: this.data.topicId,
+        userId: this.data.userId,
+        resume: !!resume,
+      },
+      header: {
+        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'content-type': 'application/json',
+      },
+      success: (res) => {
+        const data = res.data || {};
+        if (data.resumed) {
+          this.resumeDefense(data);
+        } else {
+          this.beginNewDefense();
+        }
+      },
+      // 接口异常时退回原行为（从第 1 题开始），不阻塞答辩
+      fail: () => this.beginNewDefense(),
+    });
+  },
+
+  /** 全新答辩：与改造前完全一致的进场流程 */
+  beginNewDefense() {
+    this.addSystemMessage('答辩考试开始，AI考官已就位。');
+    this.callAi('');
+  },
+
+  /**
+   * 继续未完成的答辩（N1）：不调模型，直接展示当前该答的题。
+   * 之后提交答案时，后端按已落库的轮次继续评分，不会从第 1 题重来，
+   * 也不会再新开一条记录（原记录卡在「未完成」成为孤儿记录的问题一并解决）。
+   */
+  resumeDefense(data) {
+    const answered = data.answeredCount || 0;
+    const roundNum = data.roundNum || (answered + 1);
+    // 题目序号接着已答轮次，避免重进后序号从 1 重新计数
+    this.setData({ questionCount: answered, status: 'ongoing', statusText: '答辩进行中' });
+    this.addSystemMessage(`检测到未完成的答辩，已为你继续：前 ${answered} 题已完成，当前第 ${roundNum} 题。`);
+
+    if (data.currentQuestion) {
+      const text = '点评:请继续作答。\n下一题:' + data.currentQuestion;
+      this.addAiMessage(text, this.parseAiResponse(text));
+    } else {
+      this.addSystemMessage('请继续作答上一轮考官提出的问题。');
+    }
   },
 
   onUnload() {

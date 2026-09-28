@@ -15,6 +15,17 @@
         SELECT COUNT(*) FROM defense_score_record WHERE defense_id = #{defenseId}
     </select>
 
+    <!-- 幂等键：同一场答辩的同一轮次只允许一行（N4） -->
+    <select id="countByDefenseIdAndRound" resultType="int">
+        SELECT COUNT(*) FROM defense_score_record
+        WHERE defense_id = #{defenseId} AND round_num = #{roundNum}
+    </select>
+
+    <!-- 最后一次作答时间：判断未完成场次是否还在可续答窗口内（2026-09-28 回归修复） -->
+    <select id="getLastScoreTime" resultType="java.time.LocalDateTime">
+        SELECT MAX(created_at) FROM defense_score_record WHERE defense_id = #{defenseId}
+    </select>
+
     <select id="getScoreRecordsByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord">
         SELECT id, defense_id, question_id, round_num,
                expression_score, logic_score, professional_score,

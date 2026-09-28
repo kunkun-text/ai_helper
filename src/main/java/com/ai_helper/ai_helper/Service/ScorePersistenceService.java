@@ -1,21 +1,32 @@
 package com.ai_helper.ai_helper.Service;
 
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
-import org.springframework.scheduling.annotation.Async;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
- * 异步评分持久化服务
- * 每轮答辩结束后，将5维评分异步存入MySQL，不阻塞主响应
+ * 评分持久化服务。
+ *
+ * <p>每轮答辩结束后把五维评分写入 MySQL。默认异步（不阻塞答辩响应）；
+ * 最后一轮由调用方改走同步，保证收尾聚合总分时本轮分数已落库（2026-09-28 N21）。</p>
  */
 public interface ScorePersistenceService {
 
     /**
-     * 异步保存单轮评分记录
+     * 异步保存单轮评分记录。
+     *
+     * @return 落库结果：true = 成功，false = 失败（实现内已记 error 日志并返回明确状态，
+     *         不再像旧实现那样「只打一行日志、上层完全无感知」）
      */
-    @Async("taskExecutor")
-    void saveRoundScoreAsync(DefenseScoreRecord record);
+    CompletableFuture<Boolean> saveRoundScoreAsync(DefenseScoreRecord record);
+
+    /**
+     * 同步保存单轮评分记录。
+     *
+     * <p>用于最后一轮收尾：收尾要立刻聚合总分，异步落库存在末轮分数漏算的窗口。</p>
+     */
+    void saveRoundScore(DefenseScoreRecord record);
 
     /**
      * 从AI回复中解析5维评分和评语

@@ -1451,3 +1451,165 @@ N50 已录入 `需求清单-2026-09-15.md`（P1，汇总表第 41 行）；同�
 3. **N45 阈值** 是否从 32 提到 34，待累积样本。
 4. **N46 / N49**（点评质量）本轮未逐轮核对，仍挂账。
 
+---
+
+# 2026-09-28 改动（越权修复 + 中途退出续答 + 事务/幂等加固 + 自检脚本扩展）
+
+> 改动日期：2026.09.28。来源：项目审计（`.claude/` 文档 + 代码比对）输出的 P0/P1 清单。
+> **状态：后端 `mvn -o compile` BUILD SUCCESS；`defense.js` node 语法校验通过；`diagnose.ps1` 实机跑通（本机 MySQL 与表结构检查通过，正确报出 Redis/Ollama/后端未启动）。**
+> **本次未触碰评分 prompt 与判分/复核逻辑**（N45/N46/N50~N54 区域保持原样，等实测数据）。
+
+## 一、P0-1 越权修复（清单 N19）
+
+**问题**：`/teacher/**` 与 `/editUserInfo` 不在鉴权范围，且 token 里不存角色 —— 学生登录后可增删改任意课题、改任意他人姓名/学号/邮箱。
+
+| 改动 | 文件 | 说明 |
+|---|---|---|
+| token 携带角色 | 新增 `util/LoginTokenValue.java`、`pojo/enums/UserRole.java` | Redis 值格式 `userNumber\|role`；键前缀与编解码两端共用。**兼容旧 token**：解析不出角色时为 null → 只要求登录的接口照常放行，教师端提示「登录信息缺少角色，请重新登录」（旧 token 需重登一次） |
+| 声明式角色校验 | 新增 `interceptor/RequireRole.java`，改 `AuthInterceptor` | 注解可标在 Controller 类或方法上；拦截器统一裁决：角色未知 → 401、角色不符 → 403。**不写死路径判断**，新增接口只需加一行注解 |
+| 保护范围 | `Config/WebConfig.java` | `PROTECTED_PATHS` 补 `/teacher/**`、`/editUserInfo` |
+| 教师接口 | `teacher/DefenseController`、`teacher/DefenseRecordsController` | 整类 `@RequireRole(UserRole.TEACHER)` |
+| 只能改自己 | `login/editUserInfoController` + `Service/editUserInfoService` + Impl | 身份取自登录态（不再信任请求体 id）；Service 校验「请求体 id == 登录用户 user_id」，不符即拒并留 WARN 日志 |
+
+**前端无需改动**：teacher.js / student.js 的相关请求本就带 `Authorization` 头。
+
+## 二、P0-2 中途退出后重进 → 续答（清单 N1）
+
+**问题**：`/api/chat/clear` 无条件「清会话 + 新建记录」，答了 3 题退出再进会从第 1 题重来，原记录永远卡在 pending（孤儿记录）。
+
+| 改动 | 文件 | 说明 |
+|---|---|---|
+| 开始 or 续答 | `DefenseRecordsServiceImpl#startOrResumeDefenseRecord`（替换 `startNewDefenseRecord`）+ 新增 `pojo/vo/DefenseResumeVo` | 存在「已作答的 pending 记录」→ 不删不建，返回已答轮数 / 当前题 / 历史轮次；只有一题未答的空壳才清理并新建 |
+| 历史组装 | 同文件 `fillResumeDetail` | 以 `defense_score_record` 为轮次骨架（每轮恰一行），答案按 question_id（预设）/ 作答顺序（追问）匹配，避免个别答案行缺失导致整体错位 |
+| 会话记忆回灌 | `chatController#restoreChatMemory` | 按正常轮次格式回灌（开场白 + 每轮「答案 / 点评+评分+下一题」）；最后一条的『下一题:』即当前题 → 与前端展示同源，判分依据不错位 |
+| 前端展示 | `pages/defense/defense.js` | `onLoad` 按 `resumed` 分流：续答时提示「已为你继续（已答 N 题）」并直接展示当前题，**不再空 prompt 调模型**；接口异常时回退原行为 |
+| 新增查询 | `DefenseAnswersMapper#getAnswersByDefenseId`（SQL 在 `Mapper/chatController_1775616568352.xml`） | 按作答顺序取答案行 |
+| 复用抽取 | 新增 `util/AiTextUtils.java` | 「从 AI 文本提取题目」原为 chatController 私有方法，现收敛为公共工具：主流程、续答回灌、防作弊三处共用 |
+
+## 三、P1-3 事务 / 异步落库 / 会话锁（清单 N20 / N21 / N22）
+
+| 编号 | 改动 |
+|---|---|
+| N20 | `DefenseRecordsServiceImpl` 的 `saveAiQuestion` / `savePresetQuestionAnswer` / `startOrResumeDefenseRecord` / `finishDefenseRecord` 加 `@Transactional(rollbackFor = Exception.class)`；catch 由「log 后 return」改为「记录上下文 + 抛 BusinessException」（异常上抛才会回滚）；`DefenseTopicsServiceImpl#addDefense/editDefense` 去掉 catch-return，**原 `@Transactional` 因吞异常而失效的问题一并修掉**；顺手清理 `System.out`/`printStackTrace`，错误信息不再透传 SQL 细节 |
+| N21 | `ScorePersistenceService` 新增同步方法 `saveRoundScore`；`saveRoundScoreAsync` 返回 `CompletableFuture<Boolean>`（失败不再无信号）；**最后一轮改同步落库** —— 修掉「收尾聚合总分时末轮分数还没写库」的漏算窗口；其余轮次仍异步，不拖慢答辩 |
+| N22 | `ChatConfiguration.RedisChatMemory` 去掉「无锁强制写」分支，改为「等待 50ms × 最多 5 次重试」，仍失败则放弃本次写入（少一条上下文 << 污染整场会话）；写入与 TTL 抽成 `appendMessages` 供加锁/重试两条路径共用 |
+
+## 四、P1-4 幂等 / 放弃作答落库 / 总分口径（清单 N4 / N5 / N6）
+
+| 编号 | 改动 |
+|---|---|
+| N4 | 代码侧：`DefenseScoreRecordMapper#countByDefenseIdAndRound` + `doSave` 落库前判重（同 `defense_id + round_num` 已存在则跳过并 WARN）；DB 侧：新增 `docs/migration-20260928-score-record-unique.sql`（清历史重复行 + 加唯一索引 `uk_defense_round`），`docs/ddl_defense_score_record.sql` 同步更新（新库直接带唯一索引） |
+| N5 | `saveGiveUpFollowUpAnswer` 增加兜底：历史被裁剪时改用「最新登记的追问题」定位 sqId（新增 `findLatestFollowUpSqId`，用 `AiTextUtils.cleanQuestionText` 过滤整段回复型脏数据），不再直接跳过答案落库 |
+| N6 | **核实为已修复**（2026-09-26 的 `normalizeCommentAndScore` + `buildScoreLine` 已把「评分:」行重写为五维之和，且发生在写 Redis 与落库之前），本次未改动 |
+
+## 五、清单「新-2」：upsertDefenseRecord 依赖失效唯一索引
+
+**核实结论**：三个 upsert 语句（`upsertVideoUrl` / `upsertReportUrl` / `upsertDefenseRecord`）**已无任何调用点（死代码）**，附件链路早已改按 `defense_id` 显式 UPDATE。
+处理：**直接删除**接口声明与 XML 语句并留注释说明 —— 留着一个「调用即凭空建空壳记录」的方法比删掉更危险。需要「取或建」时用 `getOrCreateDefenseRecord`。
+
+## 六、P1-6 答辩前自检（清单 N2）
+
+`diagnose.ps1` 从「只查 Ollama」扩展为**答辩前 7 项自检**，逐项 ✅/❌ + 修复提示 + 退出码（0/1，可串联）：
+
+1. 可用物理内存　2. MySQL 连通 + 必需 9 表齐全 + 评分表可读　3. Redis 连通（带密码 PING）　4. Ollama 服务 + 模型已 pull + 是否已加载进显存　5. GPU + 后端端口　6. Ollama 环境变量（分「8G 标准」「独显常用」两组，只提示不阻塞）　7. 推理速度抽测
+
+**不写死**：全部走 `param()` 可覆盖；且默认值**自动读本机 `application.yml`**（MySQL 连接/账号/密码、模型名），换机器无需改脚本。
+**修正脚本原有缺陷**：推理测试用的 `qwen3:4b`（思考型模型，与红线冲突）→ 改为 `$RequiredModel`（默认 `qwen2.5:3b-16k`）；环境变量清单过时 → 改为与部署手册 7.2 节一致；`mysql.exe` / `redis-cli.exe` 查找支持「从监听端口进程所在目录推断」。
+**踩坑记录**：PowerShell 5.1 下 `-p$变量` 传给原生命令会把密码传错（实测 Access denied）→ 改用 `@args` 数组展开传参。
+
+## 七、文件清单（本次改动）
+
+**新增 6 个**：`util/LoginTokenValue.java`、`util/AiTextUtils.java`、`pojo/enums/UserRole.java`、`interceptor/RequireRole.java`、`pojo/vo/DefenseResumeVo.java`、`docs/migration-20260928-score-record-unique.sql`
+
+**修改 14 个**：`interceptor/AuthInterceptor.java`、`Config/WebConfig.java`、`Config/ChatConfiguration.java`、`Service/Impl/RegisterServiceImpl.java`、`Service/Impl/EditUserInfoServiceImpl.java`、`Service/editUserInfoService.java`、`Controller/login/editUserInfoController.java`、`Controller/teacher/DefenseController.java`、`Controller/teacher/DefenseRecordsController.java`、`Controller/chatController.java`、`Service/Impl/DefenseRecordsServiceImpl.java`、`Service/DefenseRecordsService.java`、`Service/ScorePersistenceService.java`、`Service/Impl/ScorePersistenceServiceImpl.java`、`Service/Impl/DefenseTopicsServiceImpl.java`、`mapper/DefenseAnswersMapper.java`、`mapper/DefenseScoreRecordMapper.java`、`mapper/DefenseRecordsMapper.java`、`Mapper/DefenseScoreRecordMapper.xml`、`Mapper/DefenseRecordsMapper.xml`、`Mapper/chatController_1775616568352.xml`、`pages/defense/defense.js`、`diagnose.ps1`、`docs/ddl_defense_score_record.sql`
+
+## 八、待验证（需重启后端实测）
+
+1. 教师端全流程（课题增删改 + 记录查询）正常；学生 token 调教师接口返回 403/401。
+2. `/editUserInfo`：改自己成功；伪造他人 id 被拒（提示「只能修改自己的资料」）。
+3. **旧 token 的教师需重新登录一次**（token 里没有角色）—— 属预期行为。
+4. 答辩：答 3 题 → 退出 → 重进 → 提示「已为你继续（已答 3 题）」并显示第 4 题；不产生孤儿记录。
+5. 前端「重试」同一轮 → `defense_score_record` 只增 1 行（幂等生效）。
+6. 末轮总分与五维和一致；10 轮流程无回归。
+7. 执行 `docs/migration-20260928-score-record-unique.sql`（未执行前代码侧幂等已生效，DB 唯一索引是并发兜底）。
+
+---
+
+# 2026-09-28 修复：续答回归（一进答辩页直接跳到追问阶段）
+
+> 触发：用户实测 —— 重新编译后**第一次进答辩页直接就是追问的问题**，第二次进去直接是第 2 题。
+> **修复已编译通过、`defense.js` 语法校验通过；待重启实测。**
+> 位置：紧接上一节（「2026-09-28 改动」）的回归修复，改动集中在续答判定与答辩进场流程。
+
+## 一、现场（已查库确认）
+
+`defense_records` 里 **defenseId=293** 是关键线索：9-26 18:06 创建、已有 **10 轮评分**，
+但 `status` 一直是 `pending`（收尾状态没写回），直到今天 16:43 才变成 `completed`。
+
+上一版续答的判定只有「pending + 已作答 > 0」→ **293 完全命中** →
+进答辩页被判为"要接着答的场次"，而它已有 10 轮 → 前端直接显示第 11 轮 / 追问题目。
+用户答一题后触发收尾，293 才被写回 `completed`。
+
+**根因**：续答判定过宽 —— 既没有「是不是刚刚那一次」（无时间窗口），
+也没有「用户是否真想继续」（无确认），更没排除「已答满轮次却没收尾」的脏记录。
+
+## 二、修复（**默认一定从第 1 题开始**）
+
+| 层 | 改动 |
+|---|---|
+| 判定加严 | `DefenseRecordsServiceImpl#findResumableDefenseId`：三条**同时**满足才算"可续答" —— ① 存在 pending 记录；② `0 < 已答轮数 < 总轮次`（已答满的一律不续）；③ 最后一次作答在 **30 分钟**内 |
+| 后端默认行为 | `startOrResumeDefenseRecord(..., boolean resume)`：**只有 `resume=true` 才可能续答**；默认一律「清理空壳 + 新建」，即恢复改造前的开端行为 |
+| 只读探测 | 新增 `POST /api/chat/resume-info`：只查不写，返回 `resumable / answeredCount / roundNum / totalRounds / currentQuestion` |
+| 前端确认 | `defense.js` 进场流程改为：`resume-info` → 可续答则 `wx.showModal`（「继续作答」/「重新开始」，**默认取消 = 重新开始**）→ 选"继续"才让 `clear` 带 `resume=true` |
+| 配置化 | `AppProperties` 新增 `defense.resumeWindowMinutes`（代码默认 30）；`application.yml.example` 同步注释说明 |
+| 新增查询 | `DefenseScoreRecordMapper#getLastScoreTime`（判断是否仍在窗口内） |
+
+## 三、明确没做的事
+
+- **不清理历史脏记录**：293 已被收尾；其余同类记录在新判定下不会再被续答，无需改数据。
+- **不改「一题未答的空壳」处理**：仍由 `deleteEmptyShellRecords` 清理。
+
+## 四、待实测
+
+1. 无未完成场次 → 进答辩页**直接第 1 题**（不弹窗）。
+2. 答 2~3 题 → 退出 → **立刻**重进 → 弹窗「答到第 N 题，是否继续」；选"继续"→ 显示当前题、轮次接着算，不新建记录。
+3. 同上但选"重新开始"→ 从第 1 题开始，旧场次不再被复用；停 30 分钟以上再进 → 同样直接第 1 题。
+4. 答满 10 轮正常收尾；再进 → 直接第 1 题（新记录）。
+5. 造一条「已答满 10 轮但 pending」的记录（可手动 UPDATE）→ 进答辩页不弹窗、直接第 1 题。
+
+## 五、实测结果（2026-09-28 17:00 核对，defenseId=301 新代码实跑）
+
+用户实测 + 查库/查日志核对：**续答与「重新开始」均通过，分数三方一致**。
+
+**日志实锤（301 场）**：
+
+```
+16:51:57  探测到可续答场次 - defenseId: 301, 已答: 8 轮
+16:51:59  按用户选择续答既有场次 - defenseId: 301, 当前第: 9 轮, 当前题: 如何优化Hadoop集群…
+16:51:59  续答回灌会话记忆完成 - defenseId: 301, 历史轮次: 8, 消息数: 17
+16:52:11  探测到可续答场次 - defenseId: 301, 已答: 8 轮
+```
+
+另：301 停在 8 轮 `pending`，16:52:15 新建 **302（空壳）** —— 即用户点「重新开始」的结果，符合预期。
+
+**分数一致性核对（用户特别关注项）**：
+
+| 场次 | 轮数 | 五维和 == `defense_answers.score` | `comment` == `answer.feedback` |
+|---|---|---|---|
+| 301（新代码） | 8 | **8/8 一致**（35/38/36/34/34/36/34/0） | **8/8 SAME** |
+| 300（旧场次） | 10 | **10/10 一致** | — |
+
+`defense_records.score`（300 场）= 31.70 = 各轮五维之和的平均 ✅
+**结论：前端反馈、答案分、五维评分、记录总分四处同源，无差异。**
+
+**顺带验证到的其它项**：题号严格 q45 → q69 → q70 → q71 → q72（N52 持续生效）、
+`round_num` 1~8 连续无跳号无重复（N4）、第 8 轮「我不会」走固定零分且评分行与答案行均落库（N5 / N8）。
+
+**新登记 2 个非阻塞观察项**（均非本轮引入）：
+
+1. **301 第 3 轮评语轻微串台**：题目是 AQI 等级判断、学生答的也是 AQI，评语前半段引用正确，
+   末尾却写「缺少对**小文件问题**的具体…」——小文件是第 4 轮的主题。属 N46 同族的模型行为，P3 待拍板。
+2. **301 第 4 轮评语带「（有明显回答错误）」后缀，分数却是正常档 34**：模型把该后缀当通用后缀乱挂；
+   服务端只认点评开头的 `[错误]` 才打折（故未误杀），但后缀会原样展示给学生 —— N50 遗留的展示层问题
+   （9-27 明确"刻意没做"），建议后续在展示文案里剥掉。
+

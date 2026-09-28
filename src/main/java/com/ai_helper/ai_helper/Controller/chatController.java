@@ -3,6 +3,7 @@ package com.ai_helper.ai_helper.Controller;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,9 @@ import com.ai_helper.ai_helper.pojo.entity.DefenseAnswers;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.entity.DefenseStudentQuestions;
+import com.ai_helper.ai_helper.pojo.vo.DefenseResumeVo;
 import com.ai_helper.ai_helper.result.Result;
+import com.ai_helper.ai_helper.util.AiTextUtils;
 
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Flux;
@@ -287,31 +290,180 @@ public class chatController {
                 });
     }
 
-    // ==================== 会话清理 ====================
+    // ==================== 会话清理 / 答辩进入 ====================
 
-    /** 清理指定 sessionId 的对话历史，用于开始新答辩时清除旧记录 */
+    /**
+     * 进入答辩页时调用。
+     *
+     * <p>【N1 · 2026-09-28】原实现无论是否有未完成作答，一律清会话 + 新建记录 ——
+     * 学生答了几题中途退出再进来会从第 1 题重来，原记录永远卡在 pending（孤儿记录）。
+     * 现在：存在「已作答但未完成（pending）的记录」时改为<b>续答</b>
+     * （不新建记录、把历史回灌会话记忆）；只有「一题未答的空壳」才按原逻辑清理并新建。</p>
+     *
+     * @return 兼容原有 success / message 字段；新增 resumed / answeredCount / roundNum /
+     *         totalRounds / currentQuestion 供前端渲染「继续第 X 题」
+     */
     @PostMapping("/chat/clear")
     public Map<String, Object> clearChatMemory(@RequestBody Map<String, Object> body) {
         String sessionId = (String) body.getOrDefault("sessionId", "");
         if (sessionId.isEmpty()) {
             return Map.of("success", false, "message", "sessionId 为空");
         }
-        chatMemory.clear(sessionId);
 
-        // 开始新答辩：清理上次遗留的空壳记录（一题未答），并为本轮创建独立的答辩记录
-        // 追问额度按答辩记录隔离统计，新记录下天然从零开始，无需再删除历史追问
-        try {
-            Integer topicId = body.get("topicId") != null ? Integer.parseInt(body.get("topicId").toString()) : null;
-            String userId = body.getOrDefault("userId", "").toString();
-            if (topicId != null && !userId.isEmpty()) {
-                defenseRecordsService.startNewDefenseRecord(topicId, userId);
+        Integer topicId = body.get("topicId") != null ? Integer.parseInt(body.get("topicId").toString()) : null;
+        String userId = body.getOrDefault("userId", "").toString();
+        // 【2026-09-28 回归修复】默认 false = 从第 1 题开始；只有前端弹窗里用户选了
+        // 「继续作答」才传 resume=true（弹窗数据来自 /chat/resume-info）。
+        boolean wantResume = Boolean.TRUE.equals(body.get("resume"))
+                || "true".equalsIgnoreCase(String.valueOf(body.get("resume")));
+
+        DefenseResumeVo resume = null;
+        if (topicId != null && !userId.isEmpty()) {
+            try {
+                int presetCount = countPresetQuestions(topicId);
+                resume = defenseRecordsService.startOrResumeDefenseRecord(
+                        topicId, userId, presetCount, presetCount + EXTRA_QUESTION_LIMIT, wantResume);
+                if (resume.isResumed()) {
+                    restoreChatMemory(sessionId, resume);
+                } else {
+                    chatMemory.clear(sessionId);
+                }
+            } catch (Exception e) {
+                chatMemory.clear(sessionId);
+                log.warn("开启/续答答辩记录失败（已按全新答辩清理会话）: {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("开启新答辩记录失败（不影响会话清理）: {}", e.getMessage());
+        } else {
+            chatMemory.clear(sessionId);
         }
 
-        log.info("已清理 Redis 会话记忆并开启新答辩记录 - sessionId: {}", sessionId);
-        return Map.of("success", true, "message", "已清理");
+        boolean resumed = resume != null && resume.isResumed();
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("message", resumed ? "已恢复未完成的答辩" : "已清理");
+        result.put("resumed", resumed);
+        result.put("answeredCount", resume != null ? resume.getAnsweredCount() : 0);
+        result.put("roundNum", resume != null ? resume.getRoundNum() : 1);
+        result.put("totalRounds", resume != null ? resume.getTotalRounds() : 0);
+        result.put("currentQuestion", resume != null ? resume.getCurrentQuestion() : null);
+        log.info("进入答辩页 - sessionId: {}, 续答: {}, 已答: {} 轮, 当前题: {}",
+                sessionId, resumed, result.get("answeredCount"), result.get("currentQuestion"));
+        return result;
+    }
+
+    /**
+     * 只读探测：是否存在「可续答」的答辩场次（<b>不写任何数据</b>）。
+     *
+     * <p>前端进入答辩页时先调它：返回 {@code resumable=true} 时弹窗问用户
+     * 「发现未完成的答辩，是否继续」——选"继续作答"再调 {@code /api/chat/clear}（带 {@code resume=true}）。
+     * 这样答辩开端默认一定从第 1 题开始，历史遗留的脏 pending 记录不会再把人直接带进追问阶段。</p>
+     */
+    @PostMapping("/chat/resume-info")
+    public Map<String, Object> resumeInfo(@RequestBody Map<String, Object> body) {
+        Integer topicId = body.get("topicId") != null ? Integer.parseInt(body.get("topicId").toString()) : null;
+        String userId = body.getOrDefault("userId", "").toString();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("resumable", false);
+        if (topicId == null || userId.isEmpty()) {
+            return result;
+        }
+        try {
+            int presetCount = countPresetQuestions(topicId);
+            DefenseResumeVo info = defenseRecordsService.detectResumableDefenseRecord(
+                    topicId, userId, presetCount, presetCount + EXTRA_QUESTION_LIMIT);
+            result.put("resumable", info.isResumable());
+            result.put("answeredCount", info.getAnsweredCount());
+            result.put("roundNum", info.getRoundNum());
+            result.put("totalRounds", info.getTotalRounds());
+            result.put("currentQuestion", info.getCurrentQuestion());
+        } catch (Exception e) {
+            log.warn("探测可续答场次失败（按全新答辩处理）- topicId: {}, userId: {}: {}",
+                    topicId, userId, e.getMessage());
+        }
+        return result;
+    }
+
+    /** 读题库题数（续答时需要判断「已答 N 轮」落在预设题阶段还是追问阶段） */
+    private int countPresetQuestions(Integer topicId) {
+        try {
+            Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (qr.getCode() == 1 && qr.getData() != null) {
+                return qr.getData().size();
+            }
+        } catch (Exception e) {
+            log.warn("读取题库题数失败 - topicId: {}", topicId, e);
+        }
+        return 0;
+    }
+
+    /**
+     * 续答时把历史回灌到 Redis 会话记忆：格式与正常轮次完全一致
+     * （开场白 + 每轮「学生答案 / 考官回复（点评 + 评分 + 下一题）」）。
+     *
+     * <p>最后一条回复的『下一题:』即当前待答题 —— 下一轮作答时
+     * {@code extractQuestionFromLastAiMessage} 取到的就是它，
+     * 保证「prompt 里的当前题」与「前端显示的题」同源一致。</p>
+     */
+    private void restoreChatMemory(String sessionId, DefenseResumeVo resume) {
+        try {
+            chatMemory.clear(sessionId);
+            List<Message> messages = new ArrayList<>();
+            List<DefenseResumeVo.Round> rounds = resume.getRounds();
+
+            if (!rounds.isEmpty() && rounds.get(0).getQuestion() != null) {
+                // 与首轮后端出题完全一致的开场白格式，前端可解析出题目区块
+                messages.add(new AssistantMessage(
+                        "点评:你好，我是本次答辩的AI考官。请开始作答。\n下一题:" + rounds.get(0).getQuestion()));
+            }
+
+            for (int i = 0; i < rounds.size(); i++) {
+                DefenseResumeVo.Round r = rounds.get(i);
+                if (r.getStudentAnswer() != null && !r.getStudentAnswer().isEmpty()) {
+                    messages.add(new UserMessage(r.getStudentAnswer()));
+                }
+                String nextQuestion = (i + 1 < rounds.size())
+                        ? rounds.get(i + 1).getQuestion() : resume.getCurrentQuestion();
+
+                StringBuilder ai = new StringBuilder();
+                if (r.getComment() != null && !r.getComment().isEmpty()) {
+                    ai.append("点评:").append(r.getComment()).append("\n");
+                }
+                if (r.getTotalScore() != null) {
+                    ai.append("评分:").append(formatScore(r.getTotalScore())).append("/50|")
+                            .append(formatScore(r.getExpression())).append("|")
+                            .append(formatScore(r.getLogic())).append("|")
+                            .append(formatScore(r.getProfessional())).append("|")
+                            .append(formatScore(r.getAdaptability())).append("|")
+                            .append(formatScore(r.getInnovation())).append("\n");
+                }
+                if (nextQuestion != null && !nextQuestion.isEmpty()) {
+                    ai.append("下一题:").append(nextQuestion);
+                }
+                if (ai.length() > 0) {
+                    messages.add(new AssistantMessage(ai.toString()));
+                }
+            }
+
+            if (!messages.isEmpty()) {
+                chatMemory.add(sessionId, messages);
+                trimChatMemory(sessionId);
+            }
+            log.info("续答回灌会话记忆完成 - defenseId: {}, 历史轮次: {}, 消息数: {}",
+                    resume.getDefenseId(), rounds.size(), messages.size());
+        } catch (Exception e) {
+            log.warn("续答回灌会话记忆失败（不影响轮次计数，作答仍可继续）: {}", e.getMessage());
+        }
+    }
+
+    /** 分数格式化：整数不带小数位（4.0 → 4），与前端展示口径一致 */
+    private String formatScore(Double value) {
+        if (value == null) {
+            return "0";
+        }
+        if (value == Math.floor(value) && !Double.isInfinite(value)) {
+            return String.valueOf(value.intValue());
+        }
+        return String.valueOf(value);
     }
 
     // ==================== Prompt 构建（极简管道格式） ====================
@@ -717,7 +869,15 @@ public class chatController {
                         record.setInnovationScore(toBigDecimal(scores.get("innovation")));
                         record.setComment(comment);
                         record.setCreatedAt(LocalDateTime.now());
-                        scorePersistenceService.saveRoundScoreAsync(record);
+                        // 【N21 · 2026-09-28】最后一轮改为同步落库：收尾要立刻聚合总分，
+                        // 异步落库存在「末轮分数还没写进库、总分已经算完」的漏算窗口。
+                        // 其余轮次保持异步，不拖慢答辩。
+                        boolean finalRound = assistantCountInHistory >= existingQuestionCount + EXTRA_QUESTION_LIMIT;
+                        if (finalRound) {
+                            scorePersistenceService.saveRoundScore(record);
+                        } else {
+                            scorePersistenceService.saveRoundScoreAsync(record);
+                        }
                     }
 
                     Double legacyScore = null;
@@ -1626,30 +1786,43 @@ public class chatController {
     /** 追问阶段放弃作答：将该回答按0分存入 defense_answers（问题行通常已由追问登记时创建） */
     private void saveGiveUpFollowUpAnswer(Integer defenseId, List<Message> history,
                                           String userInput, String feedback, Double score) {
-        String currentQuestion = extractQuestionFromLastAiMessage(history);
-        if (currentQuestion == null || currentQuestion.isEmpty()) {
-            log.warn("放弃作答处理：未从历史中解析到当前追问题，跳过回答落库 - defenseId: {}", defenseId);
-            return;
-        }
         try {
-            DefenseStudentQuestions existingQuestion = findExistingStudentQuestion(defenseId, currentQuestion);
+            // 【N5 · 2026-09-28】定位「本轮学生正在作答的那道追问」分两条路：
+            // ① 优先从会话历史取上一轮 AI 提出的题（最准）；
+            // ② 历史被 MAX_HISTORY_MESSAGES 裁剪时，退化为「最新登记的追问题」——
+            //    每轮末尾 submitIfNewQuestion 会把模型给出的下一题登记进 defense_student_questions，
+            //    所以 sort 最大的那条即本轮要答的题。
+            // 旧实现在 ① 失败时直接 return：评分行落了、答案行没落（N5），
+            // 导致 defense_answers 与 defense_score_record 行数对不上。
+            String currentQuestion = extractQuestionFromLastAiMessage(history);
             Integer sqId;
-            if (existingQuestion != null) {
-                sqId = existingQuestion.getSqId();
+            if (currentQuestion != null && !currentQuestion.isEmpty()) {
+                DefenseStudentQuestions existingQuestion = findExistingStudentQuestion(defenseId, currentQuestion);
+                if (existingQuestion != null) {
+                    sqId = existingQuestion.getSqId();
+                } else {
+                    int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
+                    DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
+                    studentQuestion.setDefenseId(defenseId);
+                    studentQuestion.setQuestionId(null);
+                    studentQuestion.setCustomQuestion(currentQuestion);
+                    studentQuestion.setCustomStandardAnswer("");
+                    studentQuestion.setQuestionType("ai");
+                    studentQuestion.setSort(nextSort);
+                    studentQuestion.setCreatedAt(LocalDateTime.now());
+                    defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
+                    sqId = studentQuestion.getSqId();
+                }
             } else {
-                int nextSort = defenseStudentQuestionsMapper.getNextSortNumber(defenseId);
-                DefenseStudentQuestions studentQuestion = new DefenseStudentQuestions();
-                studentQuestion.setDefenseId(defenseId);
-                studentQuestion.setQuestionId(null);
-                studentQuestion.setCustomQuestion(currentQuestion);
-                studentQuestion.setCustomStandardAnswer("");
-                studentQuestion.setQuestionType("ai");
-                studentQuestion.setSort(nextSort);
-                studentQuestion.setCreatedAt(LocalDateTime.now());
-                defenseStudentQuestionsMapper.insertStudentQuestion(studentQuestion);
-                sqId = studentQuestion.getSqId();
+                sqId = findLatestFollowUpSqId(defenseId);
+                if (sqId == null) {
+                    log.warn("放弃作答处理：历史已裁剪且无登记过的追问题，跳过回答落库 - defenseId: {}", defenseId);
+                    return;
+                }
+                log.info("放弃作答处理：历史已裁剪，改用最新登记的追问题定位 - defenseId: {}, sqId: {}", defenseId, sqId);
             }
             if (sqId == null) return;
+
             DefenseAnswers answer = new DefenseAnswers();
             answer.setDefenseId(defenseId);
             answer.setQuestionId(null);
@@ -1662,6 +1835,31 @@ public class chatController {
         } catch (Exception e) {
             log.warn("放弃作答追问回答落库失败 - defenseId: {}", defenseId, e);
         }
+    }
+
+    /**
+     * 取该场答辩「最新登记的追问题」的 sqId（N5 兜底路径）。
+     *
+     * <p>登记表里既有纯题目、也有整段 AI 回复（两个入库点写入格式不同），
+     * 用 {@link AiTextUtils#cleanQuestionText} 过滤出真正能解析成题目的记录。</p>
+     */
+    private Integer findLatestFollowUpSqId(Integer defenseId) {
+        try {
+            List<DefenseStudentQuestions> questions = defenseStudentQuestionsMapper.getQuestionsByDefenseId(defenseId);
+            if (questions == null || questions.isEmpty()) {
+                return null;
+            }
+            // 已按 sort 升序，从后往前找第一条能解析出题目的记录
+            for (int i = questions.size() - 1; i >= 0; i--) {
+                DefenseStudentQuestions q = questions.get(i);
+                if (AiTextUtils.cleanQuestionText(q.getCustomQuestion()) != null) {
+                    return q.getSqId();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查找最新追问题失败 - defenseId: {}", defenseId, e);
+        }
+        return null;
     }
 
     /**
@@ -2021,38 +2219,16 @@ public class chatController {
         return null;
     }
 
-    /** 从单条 AI 回复文本中提取题目（三段式「下一题:」→ 旧格式【问题】→ 含问号行兜底） */
+    /**
+     * 从单条 AI 回复文本中提取题目。
+     *
+     * <p>实现统一收敛在 {@link AiTextUtils}：答辩主流程、续答回灌会话记忆、
+     * 防作弊比对已问题目三处共用同一份解析（原先各写一份，改一处漏两处）。
+     * 追问通常是"请说明HBase的读写流程"这类陈述句、不带问号，
+     * 只认含问号行会导致追问轮取不到题目（N5 的历史根因），解析顺序已覆盖该场景。</p>
+     */
     private String extractQuestionFromAiText(String text) {
-        if (text == null || text.isEmpty()) return null;
-        // ① 当前三段式：取「下一题:」（含全角冒号）之后的整行。
-        //    注意：追问通常是"请说明HBase的读写流程"这类陈述句、**不带问号**，
-        //    旧实现只认含 ?/？ 的行，导致追问轮取不到题目 →
-        //    题目与对应的答案行被一起跳过、均不落库（遗留问题 N5 的根因）。
-        int idx = text.lastIndexOf("下一题:");
-        if (idx < 0) {
-            idx = text.lastIndexOf("下一题：");
-        }
-        if (idx >= 0) {
-            String q = text.substring(idx + 4).trim();
-            int nl = q.indexOf('\n');
-            if (nl >= 0) {
-                q = q.substring(0, nl).trim();
-            }
-            if (!q.isEmpty()) return q;
-        }
-        // ② 旧格式
-        if (text.contains("【问题】")) {
-            int start = text.indexOf("【问题】") + 4;
-            String q = text.substring(start).trim();
-            if (!q.isEmpty()) return q;
-        }
-        // ③ 兜底：最后一个含问号的行
-        String[] lines = text.split("\n");
-        for (int j = lines.length - 1; j >= 0; j--) {
-            String line = lines[j].trim();
-            if (!line.isEmpty() && (line.contains("?") || line.contains("？"))) return line;
-        }
-        return null;
+        return AiTextUtils.extractQuestionFromAiText(text);
     }
 
     private DefenseStudentQuestions findExistingStudentQuestion(Integer defenseId, String question) {

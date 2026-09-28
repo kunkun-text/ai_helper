@@ -48,6 +48,10 @@ public class ChatConfiguration {
         private static final String KEY_PREFIX = "chat:memory:";
         private static final long EXPIRE_MINUTES = 30;
         private static final String LOCK_KEY_PREFIX = "chat:lock:";
+
+        /** 取锁失败后的重试次数与间隔：给并发的另一条请求留出释放锁的时间 */
+        private static final int LOCK_RETRY_TIMES = 5;
+        private static final long LOCK_RETRY_INTERVAL_MILLIS = 50;
         
         public RedisChatMemory(RedisTemplate<String, Object> redisTemplate) {
             this.redisTemplate = redisTemplate;
@@ -100,81 +104,78 @@ public class ChatConfiguration {
             String key = KEY_PREFIX + conversationId;
             String lockKey = LOCK_KEY_PREFIX + conversationId;
             String lockValue = java.util.UUID.randomUUID().toString() + ":" + System.currentTimeMillis();
-            
-            log.info("【Redis锁】尝试获取锁 - conversationId: {}, lockKey: {}", conversationId, lockKey);
-            
+
+            if (appendWithLock(key, lockKey, lockValue, messages, true)) {
+                return;
+            }
+
+            // 【N22 · 2026-09-28】取不到锁时改为「等待 + 重试」，重试仍失败则放弃本次写入。
+            // 旧实现走的是「无锁强制写」兜底 —— 并发下同一批消息会被重复写进会话记忆
+            // （两个请求都觉得自己该写），模型随后看到重复的问答，轮次与上下文一起错乱。
+            // 放弃写入的代价只是少一条上下文（下一轮仍可继续作答），远小于污染整场会话。
+            for (int attempt = 1; attempt <= LOCK_RETRY_TIMES; attempt++) {
+                try {
+                    Thread.sleep(LOCK_RETRY_INTERVAL_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                if (appendWithLock(key, lockKey, lockValue, messages, false)) {
+                    log.info("【Redis锁】第 {} 次重试取得锁并写入 - conversationId: {}", attempt, conversationId);
+                    return;
+                }
+            }
+            log.error("【Redis锁】重试 {} 次仍未取得锁，放弃本次会话写入（避免无锁写入造成消息重复） - conversationId: {}",
+                    LOCK_RETRY_TIMES, conversationId);
+        }
+
+        /** 取锁成功则写入消息并释放锁；取不到锁返回 false（由调用方决定是否重试） */
+        private boolean appendWithLock(String key, String lockKey, String lockValue,
+                                       List<Message> messages, boolean firstAttempt) {
             Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
-            
-            if (Boolean.TRUE.equals(locked)) {
-                log.info("【Redis锁】成功获取锁 - conversationId: {}", conversationId);
-                try {
-                    int pushCount = 0;
-                    for (Message msg : messages) {
-                        Map<String, Object> map = new HashMap<>();
-                        if (msg instanceof UserMessage userMsg) {
-                            map.put("type", "user");
-                            map.put("content", userMsg.getText());
-                            log.info("【Redis保存】准备保存用户消息: {}", userMsg.getText().substring(0, Math.min(50, userMsg.getText().length())));
-                        } else if (msg instanceof AssistantMessage asstMsg) {
-                            map.put("type", "assistant");
-                            map.put("content", asstMsg.getText());
-                            log.info("【Redis保存】准备保存AI消息: {}", asstMsg.getText().substring(0, Math.min(50, asstMsg.getText().length())));
-                        }
-                        
-                        redisTemplate.opsForList().rightPush(key, map);
-                        pushCount++;
-                        log.info("【Redis保存】已推送第 {} 条消息", pushCount);
-                    }
-                    
-                    log.info("【Redis保存】共推送 {} 条消息到列表", pushCount);
-                    
-                    redisTemplate.expire(key, EXPIRE_MINUTES, TimeUnit.MINUTES);
-                    log.info("【Redis保存】设置过期时间为 {} 分钟", EXPIRE_MINUTES);
-                    
-                    Long listSize = redisTemplate.opsForList().size(key);
-                    log.info("【Redis保存】当前列表中消息总数: {}", listSize);
-                } finally {
-                    String currentLockValue = (String) redisTemplate.opsForValue().get(lockKey);
-                    if (lockValue.equals(currentLockValue)) {
-                        redisTemplate.delete(lockKey);
-                        log.info("【Redis锁】释放锁成功 - conversationId: {}", conversationId);
-                    } else {
-                        log.warn("【Redis锁】锁已被其他线程持有，不删除 - conversationId: {}, expected: {}, actual: {}", 
-                                conversationId, lockValue, currentLockValue);
-                    }
+            if (!Boolean.TRUE.equals(locked)) {
+                if (firstAttempt) {
+                    log.warn("【Redis锁】未取得锁，进入重试 - lockKey: {}", lockKey);
                 }
+                return false;
+            }
+            try {
+                appendMessages(key, messages);
+            } finally {
+                releaseLock(lockKey, lockValue);
+            }
+            return true;
+        }
+
+        /** 写入消息并续期（写入与 TTL 只有这一处实现，加锁 / 重试两条路径共用） */
+        private void appendMessages(String key, List<Message> messages) {
+            int pushCount = 0;
+            for (Message msg : messages) {
+                Map<String, Object> map = new HashMap<>();
+                if (msg instanceof UserMessage userMsg) {
+                    map.put("type", "user");
+                    map.put("content", userMsg.getText());
+                } else if (msg instanceof AssistantMessage asstMsg) {
+                    map.put("type", "assistant");
+                    map.put("content", asstMsg.getText());
+                } else {
+                    continue;
+                }
+                redisTemplate.opsForList().rightPush(key, map);
+                pushCount++;
+            }
+            redisTemplate.expire(key, EXPIRE_MINUTES, TimeUnit.MINUTES);
+            log.info("【Redis保存】写入 {} 条消息，当前总数: {} - key: {}",
+                    pushCount, redisTemplate.opsForList().size(key), key);
+        }
+
+        private void releaseLock(String lockKey, String lockValue) {
+            String currentLockValue = (String) redisTemplate.opsForValue().get(lockKey);
+            if (lockValue.equals(currentLockValue)) {
+                redisTemplate.delete(lockKey);
             } else {
-                log.error("【Redis锁】无法获取锁，跳过存储操作 - conversationId: {}, lockKey: {}", conversationId, lockKey);
-                
-                String existingLock = (String) redisTemplate.opsForValue().get(lockKey);
-                log.error("【Redis锁】当前锁的值: {}", existingLock);
-                
-                log.warn("【Redis锁】尝试强制保存（无锁模式）");
-                try {
-                    int pushCount = 0;
-                    for (Message msg : messages) {
-                        Map<String, Object> map = new HashMap<>();
-                        if (msg instanceof UserMessage userMsg) {
-                            map.put("type", "user");
-                            map.put("content", userMsg.getText());
-                        } else if (msg instanceof AssistantMessage asstMsg) {
-                            map.put("type", "assistant");
-                            map.put("content", asstMsg.getText());
-                        }
-                        
-                        redisTemplate.opsForList().rightPush(key, map);
-                        pushCount++;
-                    }
-                    
-                    log.info("【Redis强制保存】共推送 {} 条消息到列表", pushCount);
-                    
-                    redisTemplate.expire(key, EXPIRE_MINUTES, TimeUnit.MINUTES);
-                    
-                    Long listSize = redisTemplate.opsForList().size(key);
-                    log.info("【Redis强制保存】当前列表中消息总数: {}", listSize);
-                } catch (Exception e) {
-                    log.error("【Redis强制保存】失败", e);
-                }
+                log.warn("【Redis锁】锁已被其他线程持有，不删除 - lockKey: {}, expected: {}, actual: {}",
+                        lockKey, lockValue, currentLockValue);
             }
         }
         

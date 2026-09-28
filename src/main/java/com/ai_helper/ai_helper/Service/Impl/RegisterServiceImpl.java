@@ -5,6 +5,7 @@ import com.ai_helper.ai_helper.Service.RegisterService;
 import com.ai_helper.ai_helper.mapper.RegisterMapper;
 import com.ai_helper.ai_helper.pojo.dto.UserDto;
 import com.ai_helper.ai_helper.result.Result;
+import com.ai_helper.ai_helper.util.LoginTokenValue;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -116,10 +117,12 @@ public class RegisterServiceImpl implements RegisterService {
             // 4. 生成随机 token 并存入 Redis
             //    有效期由 app.auth.token-ttl-minutes 控制：一场答辩可能远超 30 分钟，
             //    token 过早失效会导致学生答到一半被踢出（改由配置驱动，不再写死 30 分钟）。
+            //    【N19】值格式为 userNumber|role，供 AuthInterceptor 做角色校验；
+            //    编码逻辑与读取端共用 LoginTokenValue，避免两端格式各写一份。
             String token = UUID.randomUUID().toString();
             stringRedisTemplate.opsForValue().set(
-                    "login:token:" + token,
-                    dbUser.getUserNumber(),
+                    LoginTokenValue.tokenKey(token),
+                    LoginTokenValue.encode(dbUser.getUserNumber(), dbUser.getRole()),
                     appProperties.getAuth().getTokenTtlMinutes(), TimeUnit.MINUTES
             );
 

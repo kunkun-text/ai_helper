@@ -1,7 +1,9 @@
 package com.ai_helper.ai_helper.Controller.teacher;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
+import com.ai_helper.ai_helper.interceptor.RequireRole;
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
+import com.ai_helper.ai_helper.pojo.enums.UserRole;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
@@ -15,11 +17,15 @@ import java.util.List;
 
 
 /**
-    答辩记录展示
-*/
+ * 答辩记录展示（教师端）。
+ *
+ * <p>【N19 · 2026-09-28】整类要求 teacher 角色：此前查全站记录/详情无任何角色校验，
+ * 学生登录后可查看他人答辩记录。</p>
+ */
 @RestController
 @Slf4j
 @RequestMapping("/teacher/defense")
+@RequireRole(UserRole.TEACHER)
 public class DefenseRecordsController {
 
     @Resource

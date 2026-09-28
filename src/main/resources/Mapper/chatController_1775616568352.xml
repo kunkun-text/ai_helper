@@ -23,4 +23,12 @@
         WHERE defense_id = #{defenseId} AND sq_id IS NOT NULL
     </delete>
 
+    <!-- 重进答辩续答时回灌会话记忆：按作答顺序取全部答案行 -->
+    <select id="getAnswersByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseAnswers">
+        SELECT answer_id, defense_id, question_id, sq_id, student_answer, score, feedback, created_at
+        FROM defense_answers
+        WHERE defense_id = #{defenseId}
+        ORDER BY answer_id ASC
+    </select>
+
 </mapper>

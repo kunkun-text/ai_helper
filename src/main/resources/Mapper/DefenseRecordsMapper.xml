@@ -209,25 +209,13 @@
         VALUES (#{userId}, #{topicId}, #{reportUrl}, 'pending', NOW(), NOW(), NOW())
     </insert>
 
-    <!-- ========== 原子化 UPSERT 操作（线程安全） ========== -->
-
-    <insert id="upsertVideoUrl">
-        INSERT INTO defense_records (user_id, topic_id, video_url, status, defense_date, created_at, updated_at)
-        VALUES (#{userId}, #{topicId}, #{videoUrl}, 'pending', NOW(), NOW(), NOW())
-        ON DUPLICATE KEY UPDATE video_url = #{videoUrl}, updated_at = NOW()
-    </insert>
-
-    <insert id="upsertReportUrl">
-        INSERT INTO defense_records (user_id, topic_id, report_url, status, defense_date, created_at, updated_at)
-        VALUES (#{userId}, #{topicId}, #{reportUrl}, 'pending', NOW(), NOW(), NOW())
-        ON DUPLICATE KEY UPDATE report_url = #{reportUrl}, updated_at = NOW()
-    </insert>
-
-    <insert id="upsertDefenseRecord">
-        INSERT INTO defense_records (user_id, topic_id, status, defense_date, created_at, updated_at)
-        VALUES (#{userId}, #{topicId}, 'pending', NOW(), NOW(), NOW())
-        ON DUPLICATE KEY UPDATE updated_at = NOW()
-    </insert>
+    <!-- ========== 原「原子化 UPSERT」三语句已删除（2026-09-28 · 清单「新-2」） ==========
+         upsertVideoUrl / upsertReportUrl / upsertDefenseRecord 依赖 (user_id, topic_id) 唯一索引，
+         该索引已于 2026-09-10 改为普通索引（记录模型改为「一次答辩一条记录」，不能加唯一索引），
+         于是这些语句退化成纯 INSERT —— 每次调用凭空多建一条空壳记录
+         （正是「172 条重复空壳记录」的成因之一）。附件链路此前已改按 defense_id 显式 UPDATE，
+         这三个语句已无任何调用点（死代码），故直接删除，避免日后被误用。
+         需要「取或建记录」时用 getOrCreateDefenseRecord / getOrCreateLatestDefenseRecord（先查后建）。 -->
 
     <!-- 每次答辩独立成一条记录：只取进行中（pending）的最新一条，全部已完成则由调用方创建新记录 -->
     <!-- 归属校验：该答辩记录是否属于该用户（不 join 用户表，直接用 user_id 比对，避免表名/字段差异） -->

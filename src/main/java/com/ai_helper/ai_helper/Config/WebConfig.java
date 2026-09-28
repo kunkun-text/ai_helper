@@ -26,14 +26,19 @@ public class WebConfig implements WebMvcConfigurer {
     /**
      * 需要登录才能访问的路径。
      *
-     * <p>本轮采用「按需保护」而非全站保护：只覆盖附件上传与学生数据接口，
-     * 答辩链路（/api/chat 等）不受影响，避免影响面过大。
-     * 教师端接口与 /editUserInfo 的角色校验留待后续统一处理。</p>
+     * <p>采用「按需保护」而非全站保护：答辩链路（/api/chat 等）不在其中，避免影响面过大。</p>
+     *
+     * <p><b>2026-09-28（N19 越权修复）</b>：补入 {@code /teacher/**} 与 {@code /editUserInfo}。
+     * 此前这两块不在保护范围内，学生只要登录就能删改课题、改任意他人资料。
+     * 教师端所需角色由 Controller 上的 {@code @RequireRole} 声明（见 AuthInterceptor），
+     * 本数组只负责「是否要求先登录」。</p>
      */
     private static final String[] PROTECTED_PATHS = {
             "/api/video/**",
             "/api/report/**",
-            "/student/**"
+            "/student/**",
+            "/teacher/**",
+            "/editUserInfo"
     };
 
     private final AuthInterceptor authInterceptor;

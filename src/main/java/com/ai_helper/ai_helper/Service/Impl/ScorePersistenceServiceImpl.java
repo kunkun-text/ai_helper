@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,16 +33,44 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
 
     @Override
     @Async("taskExecutor")
-    public void saveRoundScoreAsync(DefenseScoreRecord record) {
+    public CompletableFuture<Boolean> saveRoundScoreAsync(DefenseScoreRecord record) {
+        // 异步线程内执行实际写入；返回值供调用方按需感知成败（N21）
+        return CompletableFuture.completedFuture(doSave(record));
+    }
+
+    @Override
+    public void saveRoundScore(DefenseScoreRecord record) {
+        doSave(record);
+    }
+
+    /**
+     * 实际落库。
+     *
+     * <p>失败不抛出（调用方可能是异步线程或答辩主流程），但必须留下 error 日志
+     * 与明确的 false 返回值 —— 旧实现只打一行日志，上层完全无法感知落库失败。</p>
+     */
+    private boolean doSave(DefenseScoreRecord record) {
         try {
+            // 【N4 · 2026-09-28】幂等：同一轮（defense_id + round_num）只落一行。
+            // 前端重试会把同一轮请求重发，旧实现会重复落行 → 权威轮次计数 +1 → 提前一轮收尾。
+            // 这里先查后插挡住重复；并发场景由 docs 迁移脚本里的唯一索引兜底。
+            if (record.getDefenseId() != null && record.getRoundNum() != null
+                    && scoreRecordMapper.countByDefenseIdAndRound(record.getDefenseId(), record.getRoundNum()) > 0) {
+                log.warn("该轮评分已存在，跳过重复落库（幂等）- defenseId: {}, roundNum: {}",
+                        record.getDefenseId(), record.getRoundNum());
+                return true;
+            }
             scoreRecordMapper.insertScoreRecord(record);
-            log.info("异步保存评分成功 - defenseId: {}, roundNum: {}, 各维度: 表达={}, 逻辑={}, 专业={}, 应变={}, 创新={}",
+            log.info("保存评分成功 - defenseId: {}, roundNum: {}, 各维度: 表达={}, 逻辑={}, 专业={}, 应变={}, 创新={}",
                     record.getDefenseId(), record.getRoundNum(),
                     record.getExpressionScore(), record.getLogicScore(),
                     record.getProfessionalScore(), record.getAdaptabilityScore(),
                     record.getInnovationScore());
+            return true;
         } catch (Exception e) {
-            log.error("异步保存评分失败 - defenseId: {}, roundNum: {}", record.getDefenseId(), record.getRoundNum(), e);
+            log.error("保存评分失败（该轮分数未落库，将影响轮次计数与总分） - defenseId: {}, roundNum: {}",
+                    record.getDefenseId(), record.getRoundNum(), e);
+            return false;
         }
     }
 

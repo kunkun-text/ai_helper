@@ -81,13 +81,10 @@ public interface DefenseRecordsMapper {
 
     String getReportUrlByUserIdAndTopicId(@Param("userId") String userId, @Param("topicId") Integer topicId);
 
-    // ========== 原子化 UPSERT（线程安全） ==========
-
-    void upsertVideoUrl(@Param("userId") String userId, @Param("topicId") Long topicId, @Param("videoUrl") String videoUrl);
-
-    void upsertReportUrl(@Param("userId") String userId, @Param("topicId") Integer topicId, @Param("reportUrl") String reportUrl);
-
-    void upsertDefenseRecord(@Param("userId") String userId, @Param("topicId") Integer topicId);
+    // 原 upsertVideoUrl / upsertReportUrl / upsertDefenseRecord 已删除（2026-09-28 · 清单「新-2」）：
+    // 三者依赖的 (user_id, topic_id) 唯一索引已改为普通索引，语句退化成纯 INSERT，
+    // 每次调用会凭空新建空壳记录，且早已无调用点。附件链路按 defense_id 显式 UPDATE；
+    // 需要「取或建记录」时用 getOrCreateDefenseRecord / getOrCreateLatestDefenseRecord。
 
     Integer getDefenseIdByUserAndTopic(@Param("userId") String userId, @Param("topicId") Integer topicId);
 

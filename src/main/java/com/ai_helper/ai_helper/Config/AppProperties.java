@@ -27,6 +27,9 @@ public class AppProperties {
     /** 鉴权配置 */
     private Auth auth = new Auth();
 
+    /** 答辩续答配置 */
+    private Defense defense = new Defense();
+
     @Data
     public static class Storage {
         /**
@@ -102,5 +105,17 @@ public class AppProperties {
 
         /** 无需登录即可访问的路径（Ant 风格），由 WebConfig 读取 */
         private List<String> excludePaths = new ArrayList<>();
+    }
+
+    @Data
+    public static class Defense {
+        /**
+         * 续答时间窗口（分钟）。
+         *
+         * <p>只有「最后一次作答发生在该窗口内」的未完成场次才允许续答。
+         * 否则历史遗留的 pending 脏记录（例如已答满 10 轮却没写回收尾状态的记录）
+         * 会被当成"要接着答的场次"，学生一进答辩页就直接跳到追问/收尾阶段。</p>
+         */
+        private long resumeWindowMinutes = 30;
     }
 }
