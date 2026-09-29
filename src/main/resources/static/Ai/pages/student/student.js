@@ -608,6 +608,33 @@ Page({
     });
   },
 
+  /**
+   * 开始语音答辩（F10 · 2026-09-29）。
+   *
+   * 与文字答辩**同一套题库、同一套流程与评分口径**，只是把「打字作答」换成「说话作答」。
+   * 刻意沿用同一套 sessionId 规则（user_学号_topic_课题）→ 两种入口共用同一条答辩记录，
+   * 不会因为同时存在两个入口而产生两条平行场次（中途换入口会走既有的「继续作答」弹窗）。
+   */
+  startVoiceDefense() {
+    const { defenseTopics, user } = this.data;
+
+    if (!defenseTopics || defenseTopics.length === 0) {
+      wx.showToast({
+        title: '暂无答辩题目',
+        icon: 'none'
+      });
+      return;
+    }
+
+    const topic = defenseTopics[0];
+    const topicId = topic.topicId || topic.id;
+    const topicName = topic.topicName;
+
+    wx.navigateTo({
+      url: `/pages/defense-voice/defense-voice?topicId=${topicId}&topicName=${encodeURIComponent(topicName)}&userId=${user.userNumber}`,
+    });
+  },
+
   // 显示所有答辩题目弹窗
   showAllTopicsModal() {
     this.setData({

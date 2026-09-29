@@ -1613,3 +1613,266 @@ N50 已录入 `需求清单-2026-09-15.md`（P1，汇总表第 41 行）；同�
    服务端只认点评开头的 `[错误]` 才打折（故未误杀），但后缀会原样展示给学生 —— N50 遗留的展示层问题
    （9-27 明确"刻意没做"），建议后续在展示文案里剥掉。
 
+---
+
+# 2026-09-29 实测：P0/P1 待测项清完（N19 / N21 / N22 通过，N20 部分达成）
+
+> 对应登记：`需求清单-2026-09-15.md` 头部「2026-09-28 改动登记」。
+> 原 `docs/P0-待测项-2026-09-28.md` 的验证步骤已全部走完，**该文件已删除**，结论并入本文与需求清单。
+> 本轮**未改任何业务代码**，只做验证（环境：后端 8080 + MySQL 3306 + Redis 6379 + Ollama 均本机运行中）。
+
+## 一、测试方式
+
+- 数据/接口层自动化验证：`curl` 打后端 + `mysql.exe` 直查 + `redis-cli` 查会话记忆与锁 + `logs/ai-helper.log` 核对
+- 为测试注册两个**一次性账号**（密码均 `test123456`）：学生 `99900000001`（user_id=24）、教师 `99900000002`（user_id=25）
+- 答辩链路模拟：`POST /api/chat/clear` 建房 → 连续 10 次 `POST /api/chat`，跑完一场完整答辩
+
+## 二、N19 教师端越权修复 —— 通过 ✅
+
+| # | 步骤 | 结果 |
+|---|---|---|
+| 1 | 学生登录 | ✅ 返回 `token` + `role: student`（Redis 值格式 `userNumber\|role`） |
+| 2 | 学生 token → `GET /teacher/defense/records` | ✅ **403** `当前账号无权访问该功能` |
+| 3 | 学生 token → `POST /teacher/addDefense` | ✅ **403**，未写入任何课题 |
+| 4 | 无 token → `GET /teacher/getAllDefense` | ✅ **401** `未登录或 token 缺失` |
+| 5 | 教师 token → `GET /teacher/defense/records` | ✅ **200**，返回 63 条记录 |
+| 6 | 学生改自己资料（`id` = 自己） | ✅ `保存成功`，库中字段已更新 |
+| 7 | 学生改他人资料（`id` = 他人） | ✅ `只能修改自己的资料`，**库中目标行未被改动** |
+| 8 | 教师端页面走查（课题增删改 + 记录查询 + 改资料） | ✅ 用户实机确认无回归 |
+
+## 三、N22 会话记忆锁 —— 通过 ✅（两条路径都验到）
+
+**正常并发路径**：同一 sessionId 并发两个 `/api/chat`，两个请求均正常返回；
+`LLEN chat:memory:n22_conc_test` = **4**（每请求 2 条，不翻倍、不丢失），日志两次写入串行（`当前总数: 2` → `4`）。
+
+**锁冲突降级路径**（主动构造）：先 `SET chat:lock:n22_conc_test HOLDER_TEST` 占住锁，再发请求：
+
+```
+【Redis锁】未取得锁，进入重试 - lockKey: chat:lock:n22_conc_test
+【Redis锁】重试 5 次仍未取得锁，放弃本次会话写入（避免无锁写入造成消息重复） - conversationId: n22_conc_test
+```
+
+结果：`LLEN` 保持 4 **未增长**（确认**没有无锁强写**）、锁未被误删、请求本身仍正常返回 AI 回复（不阻塞答辩）。
+即 N22 的「去掉无锁强写兜底」目标达成。
+
+## 四、N21 完整 10 轮 + 末轮同步落库 —— 通过 ✅（首次跑满 10 轮新代码）
+
+- 完整跑满 10 轮（**defenseId=304**，topicId=28，学生 99900000001），第 10 轮正常输出
+  `总结:...总分30.6/50（表达6.2 逻辑6.3 专业6.6 应变5.8 创新5.7）。`
+- 库中：`defense_score_record` **10 行**、`round_num` 1~10 连续无重复；`defense_answers` **10 行**
+- **总分口径一致**：各轮五维和 = 0+34+33+34+35+32+37+37+32+32 = 306 → 306/10 = **30.60**
+  = `defense_records.score`，`finishDefenseAggregation` 用的正是「各轮五维之和的平均」→ **末轮分数未被漏算**
+- **末轮同步落库实锤**（日志线程名）：roundNum 1~9 的写库线程是 `mvc-task-*`（异步），
+  **roundNum 10 是 `http-nio-8080-exec-2`（主线程同步）** —— N21 的核心改动确认生效
+- **补上此前缺失的证据链**：直接从 Redis 会话记忆里取到原始评分行
+  `35/50|7|7|7|7|7`、`32/50|7|7|6|6|6`、`37/50|6|8|10|7|6`、`37/50|8|7|8|7|7`、`32/50|6|7|7|6|6`、`32/50|7|6|7|6|6`
+  （对应第 5~10 轮，前 4 轮已被 `MAX_HISTORY_MESSAGES=12` 裁剪），与库中逐轮五维分**逐条一致**
+
+> 顺带说明：`docs/P0-待测项-2026-09-28.md` 第 3 步给的核对 SQL 用了 `AVG(五维和/5)`（算得 6.1），
+> 而 `defense_records.score` 的口径是 `AVG(五维和)`（30.6）——**文档口径笔误**，照抄会误判为"不一致"；正确写法是不除 5。
+
+## 五、N20 写流程事务 —— ⚠️ 部分达成，派生 N55
+
+**构造方式**：`ALTER TABLE defense_answers ADD CONSTRAINT chk_rb_test CHECK (student_answer <> 'ROLLBACK_TEST');`
+→ 进答辩、第 1 题作答 `ROLLBACK_TEST` → 查库 → 清理约束。
+
+| 待测项预期 | 实测 |
+|---|---|
+| 答案行不落库 | ✅ `defense_answers` **0 行**（事务回滚生效） |
+| **评分行必须一起回滚** | ❌ **`defense_score_record` 落了 1 行**（round 1，五维全 0，defense_id=303） |
+| 前端报错/不再静默 | ❌ HTTP **200** + 正常三段式回复，前端完全无感 |
+
+**日志实锤（同一毫秒级相邻）**：
+```
+14:40:17.817 [http-nio-8080-exec-10] insertAnswer 参数含 ROLLBACK_TEST      ← 主线程写答案
+14:40:17.821 [mvc-task-1]             insertScoreRecord <== Updates: 1      ← 异步线程写评分并提交
+14:40:17.822 [mvc-task-1]             保存评分成功 - defenseId: 303, roundNum: 1
+14:40:17.829 [http-nio-8080-exec-10]  保存预设问题回答时发生异常             ← 答案失败，但分已落地
+```
+
+**根因**：`chatController.java:872-880` 先 `saveRoundScoreAsync`（`@Async` 独立线程 + 独立事务，先提交）
+再 `savePresetQuestionAnswer`（另一事务），两者不在同一事务边界；且 `chatController.java:901-903` 的 `catch`
+只 `log.error`，异常未上抛前端。
+
+**代码审查（待测项"方式 B"）**：`DefenseTopicsServiceImpl.addDefense/editDefense`、
+`DefenseRecordsServiceImpl.savePresetQuestionAnswer/saveAiQuestion` 均已正确标注
+`@Transactional(rollbackFor = Exception.class)` 且不再 catch-return ✅；
+仅 `startOrResumeDefenseRecord` 仍 `catch → return vo`（事务同样不会回滚，非阻塞）。
+
+→ 已登记为 **N55**（见 `需求清单-2026-09-15.md`），**未修**，待用户拍板方案。
+
+## 六、测试残留数据（未自动清理，等用户决定）
+
+| 残留 | 说明 |
+|---|---|
+| `users` id=24 / 25 | 一次性测试账号（99900000001 / 99900000002） |
+| `defense_records` **303** | N20 的失败现场（评分行 1 行、答案行 0 行），**故意保留作证据** |
+| `defense_records` **304** | N21 的完整 10 轮场次（可作教师端"记录列表/详情"回归样例） |
+| Redis `chat:memory:n22_conc_test` | N22 并发测试会话（4 条消息） |
+| `docs/migration-20260928-score-record-unique.sql` | 仍未执行（代码侧幂等已生效，唯一索引是并发兜底） |
+
+---
+
+# 2026-09-29 新增：F10 语音答辩（AI 语音提问 + 学生语音作答，待真机实测）
+
+> 需求登记见 `需求清单-2026-09-15.md` **F10**；方案详见 `docs/P0-需求-语音答辩-2026-09-28.md`。
+> **本次未改任何后端代码**（接口零新增），全部改动在前端小程序侧。
+
+## 一、核心原则
+
+**语音只是「输入 / 输出」的载体，不是新流程。**
+
+```
+AI 提问 → 前端把「下一题:」的题目文本用 TTS 念出来
+学生作答 → 前端用 ASR 把语音转成文字 → 回填（可编辑）→ 拿这段文字调【现有的 /api/chat】
+```
+
+于是：题库、10 轮节奏（5 预设题 + 5 追问）、五维评分、三档标记、判定复核、幂等、权威轮次、
+收尾带总分、续答与「重新开始」弹窗、防作弊 —— **全部直接复用，零改动**。
+
+## 二、用户拍板（2026-09-29）
+
+| # | 拍板项 | 结论 |
+|---|---|---|
+| 1 | TTS / ASR 方案 | **微信同声传译插件**（ASR + TTS 一个插件全包；免费、零后端改动、不增加 8G 机器负担） |
+| 2 | 入口形态 | 首页「下一轮答辩」卡片内**并列两个按钮**（文字答辩 / 语音答辩），卡片本身与现有尺寸不变 |
+| 3 | 是否归档录音 | **V1 不做**；归档与回放另立 **F11**（P0，待 F10 跑通后开工） |
+| 4 | 与文字答辩的关系 | 同一套题库、同一套流程与评分，只是交互方式不同；**共用同一条答辩记录** |
+| 5 | 识别结果编辑权 | **允许编辑后提交**（兜 ASR 错字） |
+| 6 | 首页答辩记录卡片 | **保留**（用户 2026-09-29 明确改主意：不删） |
+
+## 三、改动清单
+
+**新增（4 个文件）**：
+
+| 文件 | 说明 |
+|---|---|
+| `static/Ai/pages/defense-voice/defense-voice.js` | 页面逻辑：复用文字答辩的请求/解析/序号/收尾，叠加 TTS 播报与录音识别 |
+| `static/Ai/pages/defense-voice/defense-voice.wxml` | 结构复用文字答辩；底部「输入栏」换成「按住说话 + 识别回填」 |
+| `static/Ai/pages/defense-voice/defense-voice.wxss` | `@import "../defense/defense.wxss"` 复用全部既有样式，仅补语音作答区 |
+| `static/Ai/pages/defense-voice/defense-voice.json` | 自定义导航栏，与文字答辩一致 |
+
+**修改（5 个文件）**：
+
+| 文件 | 改动 |
+|---|---|
+| `static/Ai/app.json` | 注册 `pages/defense-voice/defense-voice` 路由；声明 `WechatSI` 插件（provider `wx069ba97219f66d99`，v0.3.5）；补 `scope.record` 权限说明 |
+| `static/Ai/project.config.json` | `plugins` 由 `{}` 改为声明 `WechatSI` |
+| `static/Ai/pages/student/student.wxml` | 「开始答辩」→ 卡片内并列「文字答辩 / 语音答辩」两个按钮 |
+| `static/Ai/pages/student/student.wxss` | 新增 `.defense-entry-row` 等并排样式（高度 80rpx、圆角 16rpx 全部沿用 `.primary-btn`，**不改动原尺寸**） |
+| `static/Ai/pages/student/student.js` | 新增 `startVoiceDefense()`（跳语音答辩页，参数与文字答辩同构） |
+
+## 四、实现要点
+
+1. **接口零新增**：`/api/chat/resume-info`、`/api/chat/clear`、`/api/chat` 原样复用；回复解析函数
+   （`parseAiResponse` / `parseSegmentFormat` / `parsePipeFormat` / `markQuestionNumber`）与 `defense.js` **逐字同口径**，
+   保证两个入口的分数、序号、进度显示完全一致。
+2. **AI 语音提问**：每轮 AI 回复解析出题目后自动 TTS 播报（收尾轮播总结）；题目区块新增「🔊 重播」。
+   开始录音前会先 `stopSpeak()`，避免把播报声录进去。iOS 静音模式下也能播（`setInnerAudioOption({ obeyMuteSwitch: false })`）。
+3. **学生语音作答**：按住「按住 说话」→ `getRecordRecognitionManager().start()`；松开 → `stop()` → `onStop` 回填识别文本。
+   录音中有**计时 + 波形**提示；识别失败提示「没听清，请重试」；权限被拒引导 `wx.openSetting()`。
+4. **降级保护**：`requirePlugin('WechatSI')` 已 `try/catch` —— 插件未配置/加载失败时页面**不白屏**，
+   自动降级为「直接输入文字作答」（识别框本身就是可编辑输入框），答辩流程不中断。
+5. **不产生平行场次**：沿用同一 sessionId 规则 `user_学号_topic_课题` —— 与文字答辩共用同一条答辩记录；
+   中途换入口会走既有的「继续作答 / 重新开始」弹窗，不会出现两条并行 pending 记录。
+6. **录制中防误操作**：快速点按（松手早于 `onStart`）不会卡住录音（用 `_voicePressed` 标记 + `stop()` 兜底）；
+   `touchcancel`（手指滑出按钮）同样结束录音；录音/识别中禁止发送。
+
+## 五、⚠️ 测试前置（阻断）
+
+1. **需在微信公众平台添加插件**：设置 → 第三方设置 → 插件管理 → 添加「微信同声传译」。
+   否则开发者工具会报 `plugin not found`（`app.json` 已声明该插件）。
+2. **录音（ASR）仅真机可用** —— 开发者工具模拟器不支持录音，必须用**真机预览**测试。
+3. 首次使用需授权 `scope.record`（拒绝后可从「设置」重新开启，页面已做引导）。
+
+## 六、待实测
+
+| # | 验收项 | 标准 |
+|---|---|---|
+| 1 | 提问播报 | 每轮题目自动播报、可重播，播报不阻塞录音 |
+| 2 | 语音作答 | 按住录/松开停，有录音中状态与计时、波形提示 |
+| 3 | 识别回填 | 结果可编辑后再发送；识别失败有提示 + 可重录 |
+| 4 | 10 轮流程 | 与文字答辩完全一致（同题库 q45/q69/q70/q71/q72 + 追问） |
+| 5 | 落库一致 | `defense_score_record` / `defense_answers` 与文字答辩同结构；五维和 == 答案分 |
+| 6 | 收尾与续答 | 第 10 轮收尾、总结带总分；中途退出重进（<30 分钟）弹窗可续答 |
+| 7 | 回归 | **文字答辩功能不受影响**（首页按钮、文字答辩页均无回归） |
+
+## 七、遗留（已登记）
+
+- **F11**（P0）：录音归档与回放（`voice_responses` + `POST /api/voice/upload` + 记录页回放）—— 待 F10 跑通后开工。
+- 识别专业术语（Hadoop / MapReduce / AQI / HDFS）准确率待真机实测评估；不足时 V3 加热词纠错。
+
+---
+
+# 2026-09-29 续：F10 语音答辩方案落地（**方案已变更：改后端本地实现**）
+
+> ⚠️ 本节记录**与上面「2026-09-29 新增 F10」不同的部分** —— 上面那节写的是「微信同声传译插件」方案，
+> **该方案已废弃**（见下）。以本节为准。
+
+## 一、方案变更原因（关键结论）
+
+**微信「同声传译」插件：个人主体的小程序无法添加** —— 已在插件管理页与微信服务市场反复尝试，
+用插件名、插件 AppID（`wx069ba97219f66d99`）都搜不到，改成「工具 > 信息查询」类目后依然搜不到。
+（另有官方社区与多篇资料佐证：个人主体不可用该类语音插件。）
+
+→ 因此**彻底放弃插件**，改为**后端本地实现**，不依赖小程序主体资质、不联网：
+
+| 能力 | 实现 |
+|---|---|
+| AI 提问朗读（TTS） | Windows 自带 SAPI 离线合成（`SapiTtsServiceImpl`），结果缓存在存储目录 `tts/` |
+| 学生语音作答（ASR） | 小程序原生录音（`wx.getRecorderManager`，无需插件）→ 上传 → 后端 whisper.cpp 识别 |
+| 音频转码 | **ffmpeg**（必需，见下） |
+
+## 二、依赖与目录（换机器部署必看）
+
+| 位置 | 内容 |
+|---|---|
+| `F:\whisper\whisper-cli.exe` | 识别引擎（whisper.cpp BLAS 版，release b5130） |
+| `F:\whisper\models\ggml-small.bin` | 中文模型（465 MB） |
+| `F:\whisper\ffmpeg.exe` | 音频转码（**必需**，本机取自 B 站客户端自带的 ffmpeg 3.0.1） |
+| `scripts/install-whisper.ps1` | 一键安装：下载引擎/模型 + **自动复用本机已有 ffmpeg** |
+
+配置项：`app.voice.*`（`whisper-exe` / `whisper-model` / `ffmpeg-exe` / `language` / `prompt` / `timeout-seconds`），
+留空即自动查找，见 `application.yml.example`。
+
+## 三、实测结论
+
+- ✅ **TTS 播报**：题目自动朗读、可重播，正常。
+- ✅ **ASR 全链路**：模拟器录音 → ffmpeg 转 16kHz wav → whisper 识别 → 文字回填输入框 → 发送评分 → 正常落库
+  （`defense_answers` 中可见识别文本，如 answer_id=475）。
+- 识别耗时：约 5~10 秒/条（CPU，small 模型）。
+
+## 四、踩过的坑（都已解决，勿重复踩）
+
+1. **微信开发者工具（模拟器）录出来的是 `webm/opus`** —— 浏览器内核产物，**会忽略小程序指定的 `format`**
+   （即使写 `wav` 也仍是 webm）。Java 解码器与 whisper 都不认 webm → **必须用 ffmpeg 转码**。
+   真机则是标准 `mp3`。→ 后端已改为「**按文件头嗅探真实格式**」，再决定转码方式。
+2. **whisper 只稳吃 wav** → 后端统一转成 16kHz 单声道 wav 再识别。
+3. **whisper 中文输出简繁不稳定**（同一段话时简时繁，库中 474 条繁体 / 475 条简体）→
+   加 **initial prompt 引导简体** + **opencc4j 繁转简**后处理。
+
+## 五、⚠️ 未完成（下次接手先做，按顺序）
+
+- [ ] **`mvn compile` 尚未验证**：新增了 `opencc4j` 依赖、`app.voice.prompt` 配置、繁简转换与提示词改动，
+      最后一次编译**被中断**，需先跑一次 `mvn compile` 确认（`opencc4j` 需联网下载）。
+- [ ] 重启后端，实测**提示词 + 繁简转换**效果（预期：`Watelotlib`→`Matplotlib`、繁体→简体）。
+- [ ] **识别准确率仍是短板**：`small` 模型对「中文夹英文术语」偏弱。
+      实测同一段录音：加提示词后 `Matplotlib`/`pandas` 能纠正，但 `avg(pm25)`、`汇制浙线读` 仍错。
+      可选升级（按性价比）：① `ggml-large-v3-turbo`（+1.6GB，更准但 CPU 慢 3~5 倍）；
+      ② **CUDA 版引擎 + large-v3-turbo**（本机 RTX 2060 可用，又快又准，+643MB）。
+- [ ] 学生念代码/符号（如 `avg(pm25)`）识别率天然低 —— 建议在答辩须知中提示学生「用中文口语描述」。
+- [ ] Git 提交与推送（尚未执行）。
+
+## 六、本次改动文件清单
+
+**后端**：`pom.xml`（+mp3spi、+opencc4j）、`Config/AppProperties.java`（+`voice` 配置段）、
+`Service/TtsService.java`、`Service/AsrService.java`、`Service/Impl/SapiTtsServiceImpl.java`、
+`Service/Impl/WhisperAsrServiceImpl.java`、`Controller/VoiceController.java`、`application.yml.example`
+
+**前端**：`app.json`（去插件声明、加页面路由、`scope.record`）、`project.config.json`（**AppID 换为 `wx1e49b1999649224d`**、去插件）、
+`pages/defense-voice/defense-voice.{js,wxml,wxss,json}`（新增）、`pages/student/student.{wxml,wxss,js}`（并列入口 + `startVoiceDefense`）
+
+**脚本**：`scripts/install-whisper.ps1`（新增）
+
+**新增接口**：`POST /api/voice/tts`、`POST /api/voice/asr`、`GET /api/voice/status`
+

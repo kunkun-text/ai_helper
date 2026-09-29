@@ -30,6 +30,9 @@ public class AppProperties {
     /** 答辩续答配置 */
     private Defense defense = new Defense();
 
+    /** 语音答辩配置（TTS 播报 + ASR 语音识别） */
+    private Voice voice = new Voice();
+
     @Data
     public static class Storage {
         /**
@@ -117,5 +120,64 @@ public class AppProperties {
          * 会被当成"要接着答的场次"，学生一进答辩页就直接跳到追问/收尾阶段。</p>
          */
         private long resumeWindowMinutes = 30;
+    }
+
+    /**
+     * 语音答辩配置。
+     *
+     * <p>语音识别（学生说话 → 文字）由后端调用 <b>whisper.cpp</b> 完成：
+     * 小程序原生录音（不需要任何插件）→ 上传音频 → 后端跑 whisper 得到文字 → 回填给学生。
+     * 引擎与模型都是本机文件、离线运行，不依赖小程序主体资质、也不联网。</p>
+     */
+    @Data
+    public static class Voice {
+        /**
+         * whisper.cpp 可执行文件路径（whisper-cli.exe 或旧版的 main.exe）。
+         *
+         * <p>留空时按常见目录自动查找（见 {@code WhisperAsrServiceImpl}），
+         * 换机器只需改这一处配置，或把引擎放到默认目录。</p>
+         */
+        private String whisperExe = "";
+
+        /** 模型文件（ggml-*.bin）路径。留空时在引擎同目录的 models/ 下自动挑选 */
+        private String whisperModel = "";
+
+        /**
+         * ffmpeg 可执行文件路径（可选，但强烈建议装上）。
+         *
+         * <p>作用：把小程序录出的各种容器格式（**webm / mp3 / aac**）统一转成 16kHz wav。
+         * 为什么必须：**微信开发者工具（模拟器）录出的是 webm/opus**（浏览器内核产物，
+         * 会忽略小程序指定的格式），Java 自带解码器与 whisper 都不认 webm，只有 ffmpeg 能处理；
+         * 真机的 mp3/aac 同样可以交给它，比 Java 解码更稳。</p>
+         *
+         * <p>留空时自动查找：引擎同目录、whisper 目录、PATH。</p>
+         */
+        private String ffmpegExe = "";
+
+        /** 识别语言（zh = 中文） */
+        private String language = "zh";
+
+        /**
+         * 识别提示词（whisper 的 initial prompt）。
+         *
+         * <p>双重作用：① 引导模型输出**简体中文**（whisper 默认可能输出繁体，
+         * 同一段话时简时繁）；② 提供**专业术语表** —— 实测加提示词后
+         * 「Watelotlib」能纠正成「Matplotlib」、「Pandas」规范成「pandas」。</p>
+         *
+         * <p>注意：whisper 的 prompt 约 224 token 上限，别写太长。</p>
+         */
+        private String prompt = "以下是《大数据技术与原理》课程答辩中，学生回答考官提问的语音转写，"
+                + "口语化表达，请用规范的简体中文输出。常见术语："
+                + "Hadoop HDFS MapReduce YARN Hive HBase ZooKeeper Kafka Spark Flume Sqoop "
+                + "NameNode DataNode ResourceManager NodeManager RDD Shuffle ETL "
+                + "数据仓库 数据清洗 数据挖掘 数据可视化 时间序列 趋势分析 月均值 年均值 "
+                + "AQI PM2.5 PM10 超标 优良率 数据倾斜 副本 分片 容错 高可用 集群 主从架构 "
+                + "批处理 流处理 离线计算 实时计算 pandas numpy matplotlib CSV SQL MySQL Redis";
+
+        /** 单次识别超时（秒）：超时即放弃本次识别，前端提示"没听清，重录" */
+        private long timeoutSeconds = 180;
+
+        /** 单次录音时长上限（秒），仅提示前端，超过会自动停止录音 */
+        private int maxRecordSeconds = 60;
     }
 }

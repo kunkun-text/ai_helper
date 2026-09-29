@@ -1,0 +1,162 @@
+/* 语音答辩页样式。
+   头部 / 消息气泡 / 结构化区块 / 完成弹窗全部复用文字答辩的样式（@import），
+   只在这里补充「语音作答区」的专属样式 —— 保证两页视觉完全一致。 */
+@import "../defense/defense.wxss";
+
+/* ======== 顶部「语音答辩」标识 ======== */
+.header-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.voice-badge {
+  font-size: 20rpx;
+  color: #1890ff;
+  border: 1rpx solid #1890ff;
+  border-radius: 8rpx;
+  padding: 0 8rpx;
+  margin-left: 8rpx;
+  line-height: 28rpx;
+}
+
+/* ======== 题目区块的操作按钮（重播 / 复制） ======== */
+.question-ops {
+  display: flex;
+  align-items: center;
+}
+
+.question-ops .copy-link {
+  margin-left: 16rpx;
+}
+
+/* ======== 底部语音作答区（对应文字答辩的输入栏） ======== */
+.voice-bar {
+  flex-shrink: 0;
+  background: #ffffff;
+  padding: 16rpx 24rpx;
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  box-shadow: 0 -2rpx 8rpx rgba(0, 0, 0, 0.06);
+}
+
+.voice-tip {
+  min-height: 32rpx;
+  font-size: 22rpx;
+  color: #999999;
+  text-align: center;
+  margin-bottom: 12rpx;
+}
+
+.voice-tip.recording {
+  color: #ff4d4f;
+}
+
+.voice-tip.speaking {
+  color: #1890ff;
+}
+
+.voice-answer-input {
+  width: 100%;
+  min-height: 96rpx;
+  max-height: 220rpx;
+  box-sizing: border-box;
+  padding: 16rpx 20rpx;
+  background: #f4f6f9;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  color: #333333;
+  line-height: 1.5;
+}
+
+.voice-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 16rpx;
+}
+
+/* 按住说话：主按钮，录音中变红 */
+.voice-hold-btn {
+  flex: 1;
+  height: 96rpx;
+  line-height: 96rpx;
+  margin: 0;
+  padding: 0;
+  background: #4caf50;
+  color: #ffffff;
+  font-size: 30rpx;
+  border-radius: 16rpx;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.voice-hold-btn.recording {
+  background: #ff4d4f;
+}
+
+.voice-hold-btn::after {
+  border: none;
+}
+
+.voice-hold-btn[disabled] {
+  background: #c8cdd4;
+  color: #ffffff;
+}
+
+.voice-send-btn {
+  width: 180rpx;
+  margin-left: 16rpx;
+}
+
+/* ======== 录音中的波形提示 ======== */
+.recording-wave {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 32rpx;
+  margin-left: 12rpx;
+}
+
+.wave-bar {
+  width: 6rpx;
+  margin: 0 4rpx;
+  background: #ff4d4f;
+  border-radius: 4rpx;
+  animation: wave-bounce 0.9s ease-in-out infinite;
+}
+
+.wave-bar:nth-child(1) {
+  height: 12rpx;
+  animation-delay: 0s;
+}
+
+.wave-bar:nth-child(2) {
+  height: 24rpx;
+  animation-delay: 0.15s;
+}
+
+.wave-bar:nth-child(3) {
+  height: 16rpx;
+  animation-delay: 0.3s;
+}
+
+.wave-bar:nth-child(4) {
+  height: 28rpx;
+  animation-delay: 0.45s;
+}
+
+.wave-bar:nth-child(5) {
+  height: 12rpx;
+  animation-delay: 0.6s;
+}
+
+@keyframes wave-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}

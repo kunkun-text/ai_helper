@@ -33,7 +33,11 @@
           <view class="badge-icon">时间</view>
           <text class="muted">答辩时间：{{nextDefense.date}}</text>
         </view>
-        <button class="primary-btn" bindtap="startDefense">开始答辩</button>
+        <!-- 答辩入口：文字答辩 / 语音答辩（同级并列，题型与流程完全一致，仅交互方式不同） -->
+        <view class="defense-entry-row">
+          <button class="primary-btn entry-btn" bindtap="startDefense">文字答辩</button>
+          <button class="primary-btn entry-btn voice-entry-btn" bindtap="startVoiceDefense">语音答辩</button>
+        </view>
         <view style="margin-top: 16rpx; text-align: center;">
           <text class="link" bindtap="showTopicDescription">查看题目描述</text>
           <text class="muted" style="margin: 0 8rpx;">|</text>

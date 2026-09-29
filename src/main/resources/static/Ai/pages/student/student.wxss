@@ -181,6 +181,29 @@
   border: none;
 }
 
+/* 答辩入口并排（文字答辩 / 语音答辩）：
+   高度 80rpx、圆角 16rpx 全部沿用 .primary-btn，尺寸观感与原单个按钮保持一致 */
+.defense-entry-row {
+  display: flex;
+  align-items: center;
+  margin-top: 20rpx;
+}
+
+.defense-entry-row .entry-btn {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+
+.defense-entry-row .entry-btn:first-child {
+  margin-right: 20rpx;
+}
+
+/* 语音答辩用蓝色区分文字答辩的绿色，尺寸完全一致 */
+.voice-entry-btn {
+  background: #1890ff;
+}
+
 .outline-btn {
   margin-top: 20rpx;
   background: transparent;

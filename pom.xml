@@ -108,6 +108,28 @@
             <version>5.8.23</version>
         </dependency>
 
+        <!--
+            语音识别用：mp3 解码（Java Sound 的 SPI 实现，含 jlayer + tritonus-share）。
+            为什么需要它：小程序录音只能录 aac / mp3，而 whisper.cpp 对 mp3 的解码不稳定
+            （实测退出码 0 但不产出结果），所以服务端统一把上传音频转成 wav 再交给识别引擎。
+        -->
+        <dependency>
+            <groupId>com.googlecode.soundlibs</groupId>
+            <artifactId>mp3spi</artifactId>
+            <version>1.9.5.4</version>
+        </dependency>
+
+        <!--
+            语音识别后处理：繁体转简体。
+            原因：whisper 的中文输出简繁不稳定（同一段话有时简体、有时繁体），
+            统一转成简体，避免学生看到的识别结果一会儿繁一会儿简。
+        -->
+        <dependency>
+            <groupId>com.github.houbb</groupId>
+            <artifactId>opencc4j</artifactId>
+            <version>1.8.1</version>
+        </dependency>
+
     </dependencies>
     <dependencyManagement>
         <dependencies>

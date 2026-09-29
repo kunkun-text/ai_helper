@@ -4,6 +4,7 @@
     "pages/register/register",
     "pages/student/student",
     "pages/defense/defense",
+    "pages/defense-voice/defense-voice",
     "pages/teacher/teacher",
     "pages/forgetPassword/forgetPassword",
     "pages/webview/webview"
@@ -26,6 +27,9 @@
     },
     "scope.camera": {
       "desc": "允许使用相机拍摄视频"
+    },
+    "scope.record": {
+      "desc": "语音答辩需要录音权限，用于把你的语音回答转成文字"
     }
   }
 }
