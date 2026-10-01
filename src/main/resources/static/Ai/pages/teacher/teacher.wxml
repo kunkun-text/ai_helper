@@ -201,6 +201,22 @@
       </view>
 
       <view class="card">
+        <view class="cell" bindtap="goStats">
+          <text class="cell-text">数据总览</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell" bindtap="exportRecords">
+          <text class="cell-text">导出答辩成绩</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell" bindtap="goFeedbackAdmin">
+          <text class="cell-text">反馈管理</text>
+          <text class="cell-arrow">></text>
+        </view>
+        <view class="cell" bindtap="goFeedback">
+          <text class="cell-text">意见反馈</text>
+          <text class="cell-arrow">></text>
+        </view>
         <view class="cell" bindtap="switchTab" data-tab="settings">
           <text class="cell-text">设置</text>
           <text class="cell-arrow">></text>

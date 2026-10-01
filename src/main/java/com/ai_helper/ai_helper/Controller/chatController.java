@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
+import com.ai_helper.ai_helper.constant.AiProtocolConstants;
 import com.ai_helper.ai_helper.Service.ScorePersistenceService;
 import com.ai_helper.ai_helper.mapper.DefenseAnswersMapper;
 import com.ai_helper.ai_helper.mapper.DefenseScoreRecordMapper;
@@ -413,7 +414,8 @@ public class chatController {
             if (!rounds.isEmpty() && rounds.get(0).getQuestion() != null) {
                 // 与首轮后端出题完全一致的开场白格式，前端可解析出题目区块
                 messages.add(new AssistantMessage(
-                        "点评:你好，我是本次答辩的AI考官。请开始作答。\n下一题:" + rounds.get(0).getQuestion()));
+                        AiProtocolConstants.COMMENT_TAG + "你好，我是本次答辩的AI考官。请开始作答。\n"
+                                + AiProtocolConstants.NEXT_QUESTION_TAG + rounds.get(0).getQuestion()));
             }
 
             for (int i = 0; i < rounds.size(); i++) {
@@ -426,10 +428,10 @@ public class chatController {
 
                 StringBuilder ai = new StringBuilder();
                 if (r.getComment() != null && !r.getComment().isEmpty()) {
-                    ai.append("点评:").append(r.getComment()).append("\n");
+                    ai.append(AiProtocolConstants.COMMENT_TAG).append(r.getComment()).append("\n");
                 }
                 if (r.getTotalScore() != null) {
-                    ai.append("评分:").append(formatScore(r.getTotalScore())).append("/50|")
+                    ai.append(AiProtocolConstants.SCORE_TAG).append(formatScore(r.getTotalScore())).append("/50|")
                             .append(formatScore(r.getExpression())).append("|")
                             .append(formatScore(r.getLogic())).append("|")
                             .append(formatScore(r.getProfessional())).append("|")
@@ -437,7 +439,7 @@ public class chatController {
                             .append(formatScore(r.getInnovation())).append("\n");
                 }
                 if (nextQuestion != null && !nextQuestion.isEmpty()) {
-                    ai.append("下一题:").append(nextQuestion);
+                    ai.append(AiProtocolConstants.NEXT_QUESTION_TAG).append(nextQuestion);
                 }
                 if (ai.length() > 0) {
                     messages.add(new AssistantMessage(ai.toString()));
@@ -591,7 +593,9 @@ public class chatController {
                     String firstQuestion = qr.getData().get(0).getQuestion();
                     // 与常规轮次统一为三段式（点评:/下一题:），前端才能解析出题目区块并正确计数；
                     // 旧纯文本开场白导致前端渲染成普通气泡、且不计数使下一轮撞号"第1题"（2026.9.15 修复）
-                    String greeting = "点评:你好，我是本次答辩的AI考官。请开始作答。\n下一题:" + firstQuestion;
+                    // 标签用协议常量，与续答回灌（restoreChatMemory）的拼法严格一致，避免两处字面量漂移
+                    String greeting = AiProtocolConstants.COMMENT_TAG + "你好，我是本次答辩的AI考官。请开始作答。\n"
+                            + AiProtocolConstants.NEXT_QUESTION_TAG + firstQuestion;
                     chatMemory.add(sessionId, List.of(new AssistantMessage(greeting)));
                     trimChatMemory(sessionId);
                     log.info("首轮由后端直接出题: {}", firstQuestion);

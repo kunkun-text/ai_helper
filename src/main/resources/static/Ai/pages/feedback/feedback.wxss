@@ -1,0 +1,113 @@
+/* 意见反馈页 — 2026-10-01 新增 */
+.page {
+  min-height: 100vh;
+  background: var(--g-bg, #f5f7fa);
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部导航（返回 + 标题） */
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 24rpx;
+  background: #ffffff;
+  border-bottom: 1rpx solid var(--g-border, #f0f0f0);
+}
+
+.nav-back {
+  width: 60rpx;
+  font-size: 48rpx;
+  line-height: 1;
+  color: #333333;
+}
+
+.nav-title {
+  flex: 1;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.nav-placeholder {
+  width: 60rpx;
+}
+
+.content {
+  flex: 1;
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+
+/* 表单 */
+.fb-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 220rpx;
+  padding: 20rpx;
+  background: #f7f9fb;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  line-height: 1.6;
+}
+
+.fb-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 84rpx;
+  padding: 0 20rpx;
+  margin: 20rpx 0;
+  background: #f7f9fb;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+}
+
+.fb-placeholder {
+  color: #999999;
+}
+
+/* 反馈条目 */
+.fb-item {
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--g-border, #f0f0f0);
+}
+
+.fb-item:last-child {
+  border-bottom: none;
+}
+
+.fb-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.fb-time {
+  font-size: 22rpx;
+  color: #999999;
+}
+
+.fb-content {
+  font-size: 28rpx;
+  color: #333333;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.fb-reply {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  background: #f1f8f2;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  color: #2e7d32;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.fb-reply-label {
+  font-weight: 600;
+}

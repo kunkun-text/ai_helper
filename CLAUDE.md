@@ -117,7 +117,23 @@ AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，
 6. 开发协作流程（提问、review、开发标准）见 `.claude/skills/ai-defense-dev/SKILL.md`
 7. **部署与环境问题**（换机器、装组件、端口冲突、Ollama 报错、推理变慢）先读 `docs/从零部署手册-8G低功耗标准.md`，不要凭经验猜参数、也不要照搬旧机器的端口与路径。
 
-## 八、当前进行中的事（2026-09-29 更新）
+## 八、当前进行中的事（2026-10-01 更新）
+
+> **2026-10-01 大规模优化（借鉴开源项目 smart-medicine 的工程规范）**：新增
+> **教师端数据总览**（`/teacher/stats/overview`）、**答辩成绩导出 CSV**（`/teacher/export/records.csv`）、
+> **系统反馈模块**（学生 `/student/feedback/*`、教师 `/teacher/feedback/*`）、**答辩详情逐轮五维增强**；
+> 工程侧新增 `constant/AiProtocolConstants`、`result/ResultCode`、参数校验依赖；前端新增 3 个页面并统一全局样式。
+> 详见 `CHANGES.md` 顶部「2026-10-01 大规模优化」。
+> ⚠️ **反馈模块需先手动执行 `docs/ddl_system_feedback.sql` 建表**，否则反馈接口报表不存在。
+> ⚠️ 同时修复了 `AiHelperApplication.java:11` 的 `}.` 语法错误（该错误会导致整个项目无法编译）。
+>
+> **2026-10-01 同日·对抗性审计修复**：审查上述交付后修复 5 项 P1（CSV 公式注入防护、
+> 导出功能补前端入口、学生详情逐轮评分串台、`app.wxss` 剥离 `page` 全局视觉覆写仅留 CSS 变量、
+> feedback 列表静默失败）+ 6 项 P2（开场白常量化、反馈管理防抖、进度条溢出、
+> `(status, created_at)` 组合索引、非法 JSON 请求体提示等）。
+> 编译与前端语法校验均通过，逐项说明与待实测清单见 `CHANGES.md`「2026-10-01 审计修复」。
+> 已建过 `system_feedback` 表的库需手动补索引：`ALTER TABLE system_feedback ADD INDEX idx_status_created (status, created_at);`
+
 
 **✅ 9-28 那轮 P0/P1 改动：待测项已于 9-29 全部实测完毕**（结论见 `CHANGES.md`「2026-09-29 实测」；条目状态见 `需求清单-2026-09-15.md`）。
 原 `docs/P0-待测项-2026-09-28.md` 已完成使命，**已删除**（内容并入上述两份文档）。

@@ -1,5 +1,7 @@
 package com.ai_helper.ai_helper.util;
 
+import com.ai_helper.ai_helper.constant.AiProtocolConstants;
+
 /**
  * AI 回复文本的解析工具（纯函数，便于回归测试）。
  *
@@ -7,13 +9,10 @@ package com.ai_helper.ai_helper.util;
  * 目前有三处需要同一份解析：答辩主流程提取「上一轮 AI 提出的题」、
  * 重进答辩时回灌会话记忆、防作弊比对已问题目——统一收敛到本类，
  * 避免三处各写一份、改一处漏两处。</p>
+ *
+ * <p>协议标签统一取自 {@link AiProtocolConstants}。</p>
  */
 public final class AiTextUtils {
-
-    /** 题目标签（全角 / 半角冒号都要认，前端与 prompt 两处都用过两种写法） */
-    private static final String[] QUESTION_TAGS = {"下一题:", "下一题："};
-
-    private static final String LEGACY_QUESTION_TAG = "【问题】";
 
     private AiTextUtils() {
     }
@@ -32,7 +31,7 @@ public final class AiTextUtils {
         }
 
         // ① 当前三段式：取「下一题:」之后的整行
-        for (String tag : QUESTION_TAGS) {
+        for (String tag : AiProtocolConstants.NEXT_QUESTION_TAGS) {
             int idx = text.lastIndexOf(tag);
             if (idx >= 0) {
                 String q = text.substring(idx + tag.length()).trim();
@@ -47,8 +46,9 @@ public final class AiTextUtils {
         }
 
         // ② 旧格式
-        if (text.contains(LEGACY_QUESTION_TAG)) {
-            String q = text.substring(text.indexOf(LEGACY_QUESTION_TAG) + LEGACY_QUESTION_TAG.length()).trim();
+        String legacyTag = AiProtocolConstants.LEGACY_QUESTION_TAG;
+        if (text.contains(legacyTag)) {
+            String q = text.substring(text.indexOf(legacyTag) + legacyTag.length()).trim();
             if (!q.isEmpty()) {
                 return q;
             }
@@ -80,6 +80,8 @@ public final class AiTextUtils {
             return extracted;
         }
         // 整段都不是题目（含点评等标签）→ 视为无效
-        return storedText.contains("点评:") || storedText.contains("点评：") ? null : storedText.trim();
+        return storedText.contains(AiProtocolConstants.COMMENT_TAG)
+                || storedText.contains(AiProtocolConstants.COMMENT_TAG_FULL)
+                ? null : storedText.trim();
     }
 }

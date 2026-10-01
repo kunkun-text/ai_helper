@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Service.Impl;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.ScorePersistenceService;
+import com.ai_helper.ai_helper.constant.AiProtocolConstants;
 import com.ai_helper.ai_helper.mapper.DefenseScoreRecordMapper;
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import jakarta.annotation.Resource;
@@ -124,17 +125,17 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
             String nextLine = null;
             for (String line : lines) {
                 String t = line.trim();
-                if (t.startsWith("点评:") && commentLine == null) {
-                    commentLine = t.substring(3).trim();
-                } else if (t.startsWith("下一题:") && nextLine == null) {
-                    nextLine = t.substring(4).trim();
+                if (t.startsWith(AiProtocolConstants.COMMENT_TAG) && commentLine == null) {
+                    commentLine = t.substring(AiProtocolConstants.COMMENT_TAG.length()).trim();
+                } else if (t.startsWith(AiProtocolConstants.NEXT_QUESTION_TAG) && nextLine == null) {
+                    nextLine = t.substring(AiProtocolConstants.NEXT_QUESTION_TAG.length()).trim();
                 }
             }
             // 找评分管道行（优先"评分:"前缀）
             String pipeLine = null;
             for (String line : lines) {
                 String t = line.trim();
-                if (t.startsWith("评分:")) {
+                if (t.startsWith(AiProtocolConstants.SCORE_TAG)) {
                     pipeLine = t;
                     break;
                 }

@@ -1,0 +1,50 @@
+<!-- 反馈管理（教师端）— 2026-10-01 新增 -->
+<view class="page">
+
+  <view class="nav-bar">
+    <view class="nav-back" bindtap="goBack">‹</view>
+    <view class="nav-title">反馈管理</view>
+    <view class="nav-placeholder"></view>
+  </view>
+
+  <view class="filter-bar">
+    <view class="filter-item {{status === '' ? 'active' : ''}}" data-status="" bindtap="onFilter">全部</view>
+    <view class="filter-item {{status === 'pending' ? 'active' : ''}}" data-status="pending" bindtap="onFilter">待处理</view>
+    <view class="filter-item {{status === 'resolved' ? 'active' : ''}}" data-status="resolved" bindtap="onFilter">已回复</view>
+  </view>
+
+  <scroll-view class="content" scroll-y>
+
+    <view wx:if="{{list.length === 0}}" class="g-empty">暂无反馈</view>
+
+    <view wx:for="{{list}}" wx:key="feedbackId" class="g-card fa-item">
+      <view class="fa-head">
+        <text class="fa-user">{{item.userName}}（{{item.userNumber}}）</text>
+        <text class="g-tag {{item.status === 'resolved' ? 'g-tag-success' : 'g-tag-warning'}}">
+          {{item.status === 'resolved' ? '已回复' : '待处理'}}
+        </text>
+      </view>
+      <view class="fa-time">{{item.createdAt}}</view>
+      <view class="fa-content">{{item.content}}</view>
+      <view wx:if="{{item.contact}}" class="fa-contact">联系方式：{{item.contact}}</view>
+
+      <view wx:if="{{item.reply}}" class="fa-reply">
+        <text class="fa-reply-label">已回复：</text>{{item.reply}}
+      </view>
+
+      <view wx:if="{{item.status !== 'resolved'}}" class="fa-reply-box">
+        <input class="fa-input"
+               placeholder="输入回复内容"
+               value="{{replyInput[item.feedbackId]}}"
+               data-id="{{item.feedbackId}}"
+               bindinput="onReplyInput" />
+        <view class="g-btn g-btn-primary fa-reply-btn"
+              data-id="{{item.feedbackId}}"
+              bindtap="submitReply">回复</view>
+      </view>
+    </view>
+
+    <view wx:if="{{hasMore}}" class="load-more" bindtap="loadMore">加载更多</view>
+
+  </scroll-view>
+</view>

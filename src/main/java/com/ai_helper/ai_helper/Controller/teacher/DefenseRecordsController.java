@@ -3,6 +3,7 @@ package com.ai_helper.ai_helper.Controller.teacher;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.interceptor.RequireRole;
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.enums.UserRole;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
@@ -60,6 +61,14 @@ public class DefenseRecordsController {
     @GetMapping("/questions/{defenseId}")
     public Result<List<QuestionDetailVo>> getDefenseQuestions(@PathVariable Integer defenseId) {
         return defenseRecordsService.getDefenseQuestionsAnswers(defenseId);
+    }
+
+    /*
+    * 逐轮五维评分明细（2026-10-01 记录详情增强）
+    */
+    @GetMapping("/scoreDetail/{defenseId}")
+    public Result<List<DefenseScoreRecord>> getScoreDetail(@PathVariable Integer defenseId) {
+        return defenseRecordsService.getScoreDetail(defenseId);
     }
 
     /*

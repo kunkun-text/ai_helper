@@ -104,7 +104,10 @@ Page({
     
     // 添加回答详情字段
     selectedAnswers: null,
-    
+
+    // 逐轮五维评分明细（2026-10-01 详情增强；打开/关闭详情与加载失败时都会重置，防止上一条记录的分数串台显示）
+    scoreDetailLines: [],
+
     // 添加视频上传状态
     hasUploadedVideo: false,
 
@@ -304,6 +307,13 @@ Page({
           icon: 'error'
         });
       }
+    });
+  },
+
+  // 意见反馈
+  goFeedback() {
+    wx.navigateTo({
+      url: '/pages/feedback/feedback'
     });
   },
 
@@ -1123,6 +1133,8 @@ Page({
     }
     
     const that = this;
+    // 打开即重置：上一条记录的逐轮评分若不清理，换记录后仍会显示（2026-10-01 审计 P1-3 修复）
+    this.setData({ scoreDetailLines: [] });
     wx.showLoading({
       title: '加载回答详情...'
     });
@@ -1167,6 +1179,30 @@ Page({
           that.setData({
             selectedAnswers: processedAnswers
           });
+
+          // 2026-10-01 详情增强：并行拉取逐轮五维评分（defense_score_record），失败不影响回答详情
+          wx.request({
+            url: config.getBaseUrl() + '/student/scoreDetail/' + defenseId,
+            method: 'GET',
+            header: {
+              'Authorization': 'Bearer ' + that.data.token
+            },
+            success: (scoreRes) => {
+              const body = scoreRes && scoreRes.data;
+              if (body && body.code === 1 && Array.isArray(body.data) && body.data.length > 0) {
+                const lines = body.data.map((s) => '第' + s.roundNum + '轮：表达 ' + s.expressionScore +
+                  '、逻辑 ' + s.logicScore + '、专业 ' + s.professionalScore +
+                  '、应变 ' + s.adaptabilityScore + '、创新 ' + s.innovationScore);
+                that.setData({ scoreDetailLines: lines });
+              } else {
+                // 失败 / 空数据显式置空，避免残留上一条记录的分数（2026-10-01 审计 P1-3 修复）
+                that.setData({ scoreDetailLines: [] });
+              }
+            },
+            fail: () => {
+              that.setData({ scoreDetailLines: [] });
+            }
+          });
         } else {
           wx.showToast({
             title: res.data.msg || '加载回答详情失败',
@@ -1189,7 +1225,7 @@ Page({
 
   // 关闭回答详情
   closeAnswers() {
-    this.setData({ selectedAnswers: null });
+    this.setData({ selectedAnswers: null, scoreDetailLines: [] });
   },
 
   // 视频上传相关方法

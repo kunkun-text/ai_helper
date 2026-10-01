@@ -119,6 +119,21 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
         return Result.success(list);
     }
 
+    /**
+     * 逐轮五维评分明细（2026-10-01 记录详情增强）。
+     *
+     * <p>直接复用 {@link DefenseScoreRecordMapper#getScoreRecordsByDefenseId}，
+     * 不新增 SQL；无数据时返回空列表而不是报错，前端据此决定是否展示汇总区块。</p>
+     */
+    @Override
+    public Result<List<DefenseScoreRecord>> getScoreDetail(Integer defenseId) {
+        if (defenseId == null) {
+            return Result.error("答辩记录ID不能为空");
+        }
+        List<DefenseScoreRecord> records = scoreRecordMapper.getScoreRecordsByDefenseId(defenseId);
+        return Result.success(records == null ? new ArrayList<>() : records);
+    }
+
     @Override
     public TextQuery getDefenseWordsRecords(Integer topicId) {
 

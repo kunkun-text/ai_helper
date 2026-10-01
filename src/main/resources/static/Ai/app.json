@@ -7,7 +7,10 @@
     "pages/defense-voice/defense-voice",
     "pages/teacher/teacher",
     "pages/forgetPassword/forgetPassword",
-    "pages/webview/webview"
+    "pages/webview/webview",
+    "pages/feedback/feedback",
+    "pages/feedback-admin/feedback-admin",
+    "pages/stats/stats"
   ],
   "window": {
     "navigationBarTextStyle": "black",

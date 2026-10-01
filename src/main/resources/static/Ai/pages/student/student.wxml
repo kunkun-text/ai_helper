@@ -248,6 +248,10 @@
       </view>
 
       <view class="card">
+        <view class="cell" bindtap="goFeedback">
+          <text class="cell-text">意见反馈</text>
+          <text class="cell-arrow">></text>
+        </view>
         <view class="cell" bindtap="changePassword">
           <text class="cell-text">修改密码</text>
           <text class="cell-arrow">></text>
@@ -358,6 +362,12 @@
           <text class="modal-close" bindtap="closeAnswers">×</text>
         </view>
         <scroll-view class="modal-body" scroll-y="true">
+          <!-- 逐轮五维评分汇总（2026-10-01 详情增强：来自 defense_score_record） -->
+          <view wx:if="{{scoreDetailLines.length > 0}}" class="form-item">
+            <text class="label">逐轮五维评分</text>
+            <view wx:for="{{scoreDetailLines}}" wx:key="*this" class="muted"
+                  style="font-size: 24rpx; line-height: 1.8;">{{item}}</view>
+          </view>
           <block wx:for="{{selectedAnswers}}" wx:key="answerId">
             <view class="answer-item">
               <view class="answer-header">

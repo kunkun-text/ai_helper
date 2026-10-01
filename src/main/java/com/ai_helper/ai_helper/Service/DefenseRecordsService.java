@@ -1,6 +1,7 @@
 package com.ai_helper.ai_helper.Service;
 
 import com.ai_helper.ai_helper.pojo.dto.DefenseRecordsDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.pojo.query.TextQuery;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
@@ -94,4 +95,12 @@ public interface DefenseRecordsService {
      * 答辩结束收尾：聚合总分（0-50制）与总结评语写回 defense_records
      */
     void finishDefenseRecord(Integer defenseId, java.math.BigDecimal totalScore, String summary);
+
+    /**
+     * 某场答辩的逐轮五维评分明细（2026-10-01 新增，用于记录详情页展示）。
+     *
+     * @param defenseId 答辩记录 ID
+     * @return 按轮次升序的评分行；无数据时返回空列表
+     */
+    Result<List<DefenseScoreRecord>> getScoreDetail(Integer defenseId);
 }

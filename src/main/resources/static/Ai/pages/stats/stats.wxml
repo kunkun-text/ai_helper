@@ -1,0 +1,66 @@
+<!-- 数据总览（教师端）— 2026-10-01 新增 -->
+<view class="page">
+
+  <view class="nav-bar">
+    <view class="nav-back" bindtap="goBack">‹</view>
+    <view class="nav-title">数据总览</view>
+    <view class="nav-placeholder"></view>
+  </view>
+
+  <scroll-view class="content" scroll-y>
+
+    <view class="g-stats">
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.totalDefenses || 0}}</view>
+        <view class="g-stat-label">答辩总场次</view>
+      </view>
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.completedDefenses || 0}}</view>
+        <view class="g-stat-label">已完成场次</view>
+      </view>
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.pendingDefenses || 0}}</view>
+        <view class="g-stat-label">进行中场次</view>
+      </view>
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.avgScore === null || overview.avgScore === undefined ? '—' : overview.avgScore}}</view>
+        <view class="g-stat-label">平均得分</view>
+      </view>
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.totalTopics || 0}}</view>
+        <view class="g-stat-label">课题总数</view>
+      </view>
+      <view class="g-stat">
+        <view class="g-stat-value">{{overview.totalStudents || 0}}</view>
+        <view class="g-stat-label">学生总数</view>
+      </view>
+    </view>
+
+    <view class="g-card">
+      <view class="g-card-title">课题答辩分布</view>
+      <view wx:if="{{topicDistribution.length === 0}}" class="g-empty">暂无数据</view>
+      <view wx:for="{{topicDistribution}}" wx:key="topicId" class="dist-item">
+        <view class="dist-head">
+          <text class="dist-name">{{item.topicName}}</text>
+          <text class="dist-count">{{item.defenseCount}} 场</text>
+        </view>
+        <view class="g-bar">
+          <view class="g-bar-inner" style="width: {{item.percent}}%"></view>
+        </view>
+      </view>
+    </view>
+
+    <view class="g-card">
+      <view class="g-card-title">近 14 天答辩趋势</view>
+      <view wx:if="{{dailyTrend.length === 0}}" class="g-empty">暂无数据</view>
+      <view wx:for="{{dailyTrend}}" wx:key="day" class="trend-item">
+        <text class="trend-day">{{item.day}}</text>
+        <view class="g-bar trend-bar">
+          <view class="g-bar-inner" style="width: {{item.percent}}%"></view>
+        </view>
+        <text class="trend-count">{{item.cnt}}</text>
+      </view>
+    </view>
+
+  </scroll-view>
+</view>

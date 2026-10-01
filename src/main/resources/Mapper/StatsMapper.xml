@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+    教师端数据统计（StatsMapper）
+    ==========================================================================
+    说明：本文件为新增统计模块，仅做只读聚合，不写任何表。
+    风格沿用现有 XML：resultType + 下划线转驼峰（map-underscore-to-camel-case: true）。
+    注意：聚合列别名避免使用 MySQL 保留字（如 count、rank），故用 cnt / defenseCount。
+-->
+<mapper namespace="com.ai_helper.ai_helper.mapper.StatsMapper">
+
+    <!-- 总体概览：答辩总场次 / 已完成 / 进行中 / 课题数 / 学生数 / 平均分 -->
+    <select id="selectOverview" resultType="java.util.HashMap">
+        SELECT
+            (SELECT COUNT(*) FROM defense_records) AS totalDefenses,
+            (SELECT COUNT(*) FROM defense_records WHERE status = 'completed') AS completedDefenses,
+            (SELECT COUNT(*) FROM defense_records WHERE status = 'pending') AS pendingDefenses,
+            (SELECT COUNT(*) FROM defense_topics) AS totalTopics,
+            (SELECT COUNT(*) FROM users WHERE role = 'student') AS totalStudents,
+            (SELECT ROUND(AVG(score), 1) FROM defense_records WHERE score IS NOT NULL) AS avgScore
+    </select>
+
+    <!-- 各课题答辩场次分布（含 0 场课题），按场次倒序 -->
+    <select id="selectTopicDistribution" resultType="java.util.HashMap">
+        SELECT
+            t.topic_id   AS topicId,
+            t.topic_name AS topicName,
+            COUNT(r.defense_id) AS defenseCount
+        FROM defense_topics t
+        LEFT JOIN defense_records r ON r.topic_id = t.topic_id
+        GROUP BY t.topic_id, t.topic_name
+        ORDER BY defenseCount DESC, t.topic_id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 最近 N 天每日答辩场次 -->
+    <select id="selectDailyTrend" resultType="java.util.HashMap">
+        SELECT
+            DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
+            COUNT(*) AS cnt
+        FROM defense_records
+        WHERE created_at &gt;= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+        ORDER BY day ASC
+    </select>
+
+</mapper>

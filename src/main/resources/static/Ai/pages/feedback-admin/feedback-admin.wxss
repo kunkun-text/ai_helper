@@ -1,0 +1,143 @@
+/* 反馈管理（教师端）— 2026-10-01 新增 */
+.page {
+  min-height: 100vh;
+  background: var(--g-bg, #f5f7fa);
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 24rpx;
+  background: #ffffff;
+  border-bottom: 1rpx solid var(--g-border, #f0f0f0);
+}
+
+.nav-back {
+  width: 60rpx;
+  font-size: 48rpx;
+  line-height: 1;
+  color: #333333;
+}
+
+.nav-title {
+  flex: 1;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.nav-placeholder {
+  width: 60rpx;
+}
+
+/* 筛选栏 */
+.filter-bar {
+  display: flex;
+  gap: 16rpx;
+  padding: 20rpx 24rpx;
+  background: #ffffff;
+}
+
+.filter-item {
+  padding: 10rpx 28rpx;
+  border-radius: 30rpx;
+  background: #f2f4f7;
+  color: #666666;
+  font-size: 26rpx;
+}
+
+.filter-item.active {
+  background: #e8f5e9;
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+
+.fa-item {
+  padding: 24rpx;
+}
+
+.fa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fa-user {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.fa-time {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #999999;
+}
+
+.fa-content {
+  margin-top: 16rpx;
+  font-size: 28rpx;
+  color: #333333;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.fa-contact {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.fa-reply {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  background: #f1f8f2;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  color: #2e7d32;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.fa-reply-label {
+  font-weight: 600;
+}
+
+.fa-reply-box {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.fa-input {
+  flex: 1;
+  height: 76rpx;
+  padding: 0 20rpx;
+  background: #f7f9fb;
+  border-radius: 14rpx;
+  font-size: 26rpx;
+}
+
+.fa-reply-btn {
+  width: 140rpx;
+  height: 76rpx;
+  font-size: 26rpx;
+}
+
+.load-more {
+  text-align: center;
+  padding: 24rpx 0;
+  color: #008cba;
+  font-size: 26rpx;
+}

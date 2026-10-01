@@ -35,4 +35,19 @@ public class Result<T> implements Serializable {
         return result;
     }
 
+    /**
+     * 带语义错误码的失败结果。
+     *
+     * <p>成功仍为 {@code code=1}、默认失败仍为 {@code code=0}，前端 {@code code === 1}
+     * 判定不受影响；本重载只是把参数错误 / 未授权 / 无权限 / 资源不存在等语义显式化。</p>
+     *
+     * @see ResultCode
+     */
+    public static <T> Result<T> error(int code, String msg) {
+        Result<T> result = new Result<T>();
+        result.code = code;
+        result.msg = msg;
+        return result;
+    }
+
 }

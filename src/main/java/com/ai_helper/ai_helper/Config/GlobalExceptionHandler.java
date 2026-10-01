@@ -2,13 +2,17 @@ package com.ai_helper.ai_helper.Config;
 
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.result.Result;
+import com.ai_helper.ai_helper.result.ResultCode;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.catalina.connector.ClientAbortException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+import jakarta.validation.ConstraintViolationException;
 import java.io.IOException;
 
 /**
@@ -49,7 +53,44 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public Result<Void> handleMissingParameter(MissingServletRequestParameterException e) {
         log.warn("缺少必要参数: {}", e.getParameterName());
-        return Result.error("缺少必要参数：" + e.getParameterName());
+        return Result.error(ResultCode.PARAM_ERROR, "缺少必要参数：" + e.getParameterName());
+    }
+
+    /**
+     * 请求体参数校验失败（DTO 上的 {@code @NotBlank} 等）。返回第一条提示即可，
+     * 前端只需给用户一句能看懂的话。
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public Result<Void> handleValidation(MethodArgumentNotValidException e) {
+        String msg = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(FieldError::getDefaultMessage)
+                .orElse("参数校验失败");
+        log.warn("参数校验失败: {}", msg);
+        return Result.error(ResultCode.PARAM_ERROR, msg);
+    }
+
+    /**
+     * 请求体不是合法 JSON / 类型对不上（前端传错格式时此前会落到兜底 Exception，
+     * 提示成"服务器处理失败"，误导排查方向）。
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public Result<Void> handleUnreadableBody(org.springframework.http.converter.HttpMessageNotReadableException e) {
+        log.warn("请求体解析失败: {}", e.getMessage());
+        return Result.error(ResultCode.PARAM_ERROR, "请求数据格式不正确");
+    }
+
+    /**
+     * 方法参数（@RequestParam / @PathVariable）上的约束校验失败。
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public Result<Void> handleConstraintViolation(ConstraintViolationException e) {
+        String msg = e.getConstraintViolations().stream()
+                .findFirst()
+                .map(v -> v.getMessage())
+                .orElse("参数校验失败");
+        log.warn("参数约束校验失败: {}", msg);
+        return Result.error(ResultCode.PARAM_ERROR, msg);
     }
 
     /**

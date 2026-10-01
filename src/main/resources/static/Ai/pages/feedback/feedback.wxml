@@ -1,0 +1,52 @@
+<!-- 意见反馈（学生 / 教师均可进入）— 2026-10-01 新增 -->
+<view class="page">
+
+  <view class="nav-bar">
+    <view class="nav-back" bindtap="goBack">‹</view>
+    <view class="nav-title">意见反馈</view>
+    <view class="nav-placeholder"></view>
+  </view>
+
+  <scroll-view class="content" scroll-y>
+
+    <view class="g-card">
+      <view class="g-card-title">我要反馈</view>
+      <view class="g-card-sub">遇到问题或有改进建议，欢迎告诉我们</view>
+      <textarea class="fb-textarea"
+                placeholder="请描述你遇到的问题或建议（最多 1000 字）"
+                placeholder-class="fb-placeholder"
+                maxlength="1000"
+                value="{{content}}"
+                bindinput="onContentInput"></textarea>
+      <input class="fb-input"
+             placeholder="联系方式（可选，便于回复你）"
+             placeholder-class="fb-placeholder"
+             maxlength="100"
+             value="{{contact}}"
+             bindinput="onContactInput" />
+      <view class="g-btn g-btn-primary {{submitting ? 'g-btn-disabled' : ''}}" bindtap="submitFeedback">
+        {{submitting ? '提交中…' : '提交反馈'}}
+      </view>
+    </view>
+
+    <view class="g-card">
+      <view class="g-card-title">我的反馈</view>
+
+      <view wx:if="{{list.length === 0}}" class="g-empty">暂无反馈记录</view>
+
+      <view wx:for="{{list}}" wx:key="feedbackId" class="fb-item">
+        <view class="fb-item-head">
+          <text class="g-tag {{item.status === 'resolved' ? 'g-tag-success' : 'g-tag-warning'}}">
+            {{item.status === 'resolved' ? '已回复' : '待处理'}}
+          </text>
+          <text class="fb-time">{{item.createdAt}}</text>
+        </view>
+        <view class="fb-content">{{item.content}}</view>
+        <view wx:if="{{item.reply}}" class="fb-reply">
+          <text class="fb-reply-label">老师回复：</text>{{item.reply}}
+        </view>
+      </view>
+    </view>
+
+  </scroll-view>
+</view>

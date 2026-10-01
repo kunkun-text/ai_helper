@@ -610,6 +610,59 @@ loadMoreTopics() {
     wx.stopPullDownRefresh();
   },
 
+  // 数据总览
+  goStats() {
+    wx.navigateTo({ url: '/pages/stats/stats' });
+  },
+
+  // 反馈管理
+  goFeedbackAdmin() {
+    wx.navigateTo({ url: '/pages/feedback-admin/feedback-admin' });
+  },
+
+  // 导出答辩成绩 CSV（后端 /teacher/export/records.csv，UTF-8 BOM，教师 token 鉴权）
+  exportRecords() {
+    const token = wx.getStorageSync('token');
+    if (!token) {
+      wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+      return;
+    }
+    wx.showLoading({ title: '导出中...' });
+    wx.downloadFile({
+      url: config.getBaseUrl() + '/teacher/export/records.csv',
+      header: { 'Authorization': 'Bearer ' + token },
+      success: (res) => {
+        wx.hideLoading();
+        // 401/403 等非 200 时 tempFilePath 里是错误 JSON，不能当文件交付
+        if (res.statusCode !== 200) {
+          wx.showToast({ title: '导出失败，请重新登录后重试', icon: 'none' });
+          return;
+        }
+        wx.openDocument({
+          filePath: res.tempFilePath,
+          showMenu: true,
+          fail: () => {
+            // openDocument 官方不支持 csv 类型，部分设备必然失败——降级为提示已下载
+            wx.showModal({
+              title: '导出成功',
+              content: '文件已下载到临时目录。当前设备暂不支持直接打开 CSV，可通过右上角菜单转发到电脑查看。',
+              showCancel: false
+            });
+          }
+        });
+      },
+      fail: () => {
+        wx.hideLoading();
+        wx.showToast({ title: '网络请求失败', icon: 'none' });
+      }
+    });
+  },
+
+  // 意见反馈
+  goFeedback() {
+    wx.navigateTo({ url: '/pages/feedback/feedback' });
+  },
+
   switchTab(e) {
     const tab = e.currentTarget.dataset.tab;
     if (tab) {

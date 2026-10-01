@@ -216,3 +216,38 @@
   margin-top: auto; /* 关键属性：把文字推到容器底部 */
   margin-bottom: 20rpx; /* 离屏幕底部留间距 */
 }
+
+/* ============================================================
+   补齐 wxml 中引用但此前缺失的类（2026-10-01）
+   背景：login.wxml 使用了 title-wrapper / decorate-line / btn-group，
+        但 login.wxss 从未定义，导致标题与按钮组处于「无样式」状态。
+   ============================================================ */
+.title-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 48rpx;
+}
+
+.decorate-line {
+  width: 120rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  background: linear-gradient(90deg, #4CAF50, #29a3d1);
+}
+
+.title-wrapper .decorate-line:first-child {
+  margin-bottom: 28rpx;
+}
+
+.title-wrapper .decorate-line:last-child {
+  margin-top: 28rpx;
+}
+
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-top: 40rpx;
+}

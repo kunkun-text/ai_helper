@@ -14,6 +14,12 @@
     </view>
   </view>
 
+  <!-- 顶部可视化进度条（2026-10-01 交互增强：纯 WXML 表达式计算，不改 js） -->
+  <view class="progress-strip">
+    <view class="progress-strip-inner"
+          style="width: {{totalRounds ? (questionCount * 100 / totalRounds) : 0}}%"></view>
+  </view>
+
   <!-- 消息列表 -->
   <scroll-view class="msg-list" scroll-y="true" scroll-into-view="{{scrollToId}}" scroll-with-animation="true"
     upper-threshold="50" bindscrolltoupper="onScrollToTop">

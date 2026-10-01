@@ -4,6 +4,108 @@
 
 ---
 
+## 2026-10-01 审计修复（对抗性代码审查 P1/P2 落地）
+
+> 对同日「大规模优化」交付做全栈对抗性审查后修复。**后端 `mvn -o -q compile` BUILD SUCCESS**（JDK 17），
+> 改动的 4 个页面 JS `node --check` 全部通过。审查结论：无 P0（越权/注入/协议位移均未命中），修复 5 项 P1 + 6 项 P2。
+
+### P1 修复（5 项）
+
+| # | 问题 | 修复 |
+|---|---|---|
+| P1-1 | **CSV 公式注入**：`ExportController.csv()` 只转义逗号/引号/换行，`= + - @ Tab` 开头的单元格（姓名/课题名用户可控）在 Excel 中会被当公式执行（CWE-1236） | `csv()` 对危险前缀统一前置单引号中和；顺带把行分隔符固定为 `\r\n`（`println` 随平台变化）、`Content-Disposition` 补 ASCII 回退 `filename="records.csv"` |
+| P1-2 | **B3 导出功能无前端入口**：后端接口写好了，小程序里没有任何按钮触发，教师实际拿不到文件 | teacher 页新增「导出答辩成绩」入口 + `exportRecords()`：`wx.downloadFile` 带 token，非 200 拒绝交付（401/403 时 tempFilePath 里是错误 JSON），`openDocument` 失败（官方不支持 csv 类型）降级为"已下载可转发"提示 |
+| P1-3 | **`scoreDetailLines` 串台**：学生详情弹层的逐轮五维评分只在成功时 setData，换记录/加载失败/关闭时不清空 → B 记录弹层显示 A 记录的分数 | `openAnswerDetail` 打开即置空、scoreDetail 失败/空数据显式置空、`closeAnswers` 同步清空、`data` 补初始化 |
+| P1-4 | **`app.wxss` 全局样式污染**：新增的 `page` 规则带 background/color/font-size/font-family，作用于全部旧页面（与"只追加不改旧类"的注释承诺矛盾） | 保留 CSS 变量定义（`g-*` 类与新页面依赖），**剥离 4 条视觉覆写**；三个新页面的 `.page` 自带 `var(--g-bg, #f5f7fa)` 背景不受影响，旧页面回到原白底 |
+| P1-5 | **`feedback.js loadList()` 静默失败**：无 fail 回调、非 1 码无提示 → 401/断网时页面显示"暂无反馈记录"（空态冒充错误态） | 补 else（显示后端 msg）+ fail（网络提示）+ token 缺失提示；顺带删掉 `onLoad` 里的重复首载（onShow 已覆盖，首进连发两次） |
+
+### P2 修复（6 项）
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | `chatController` 主流程开场白仍硬编码 `"点评:…\n下一题:"`，与续答回灌的常量版并存，常量一旦改动两处漂移 | 首轮出题（原 :596）改用 `AiProtocolConstants`，拼法与 `restoreChatMemory` 严格一致（字符串值不变） |
+| 2 | feedback-admin `loadMore` 连点重复请求重复 append、`submitReply` 双击重复回复 | 加 `loadingMore` 在途标记（complete 释放）+ `_replying` 防双击标记 |
+| 3 | defense 进度条 `questionCount>totalRounds` 时 `width>100%` 向右溢出 | `.progress-strip` 补 `overflow: hidden` |
+| 4 | `ddl_system_feedback.sql` 无 `(status, created_at)` 组合索引，教师列表按状态过滤 + 时间倒序走不了索引 | 补 `idx_status_created`（**需重新执行 DDL 的用户注意：`CREATE TABLE IF NOT EXISTS` 幂等，已建表的库需手动 `ALTER TABLE system_feedback ADD INDEX idx_status_created (status, created_at)`**） |
+| 5 | 非法 JSON 请求体落到兜底 Exception，提示"服务器处理失败"误导排查 | `GlobalExceptionHandler` 补 `HttpMessageNotReadableException` → code 400「请求数据格式不正确」 |
+| 6 | `/teacher/feedback/pending-count` 前端零调用（死接口）、反馈无限频、my 列表无分页 | **未改**，登记待拍板（做角标/删接口、限流策略均需产品决策） |
+
+### 实测待验证（重启后端 + 开发者工具重编译）
+
+1. 学生 token 打 `GET /teacher/defense/scoreDetail/{id}`、`/teacher/stats/overview` → 403；无 token → 401。
+2. 学生 A token 查学生 B 的 `/student/scoreDetail/{B 的 defenseId}` → 「无权查看」。
+3. 教师页「导出答辩成绩」：下载成功；构造姓名 `=1+1` 的用户 → 导出单元格应为 `'=1+1`；Excel 打开中文不乱码。
+4. 详情弹层：打开 10 轮记录（如 304）→ 关闭 → 打开空壳记录 → 逐轮区块应消失（P1-3 验证）。
+5. **视觉回归**：login / student / teacher / defense / defense-voice / register / forgetPassword 逐页对比，确认剥离 `page` 视觉覆写后与改动前一致（P1-4 验证）。
+6. 反馈页断网/token 过期时应有 toast 而非"暂无反馈"（P1-5 验证）。
+7. 新开一场答辩：首轮开场白、题目解析、进度条与改动前一致（常量化回归）。
+
+---
+
+## 2026-10-01 大规模优化（工程规范 + 功能扩展 + UI）
+
+> 背景：参考开源项目 `373675032/smart-medicine`（智慧医药系统，Spring Boot 2.6.7 + Thymeleaf + 阿里云通义千问 API）。
+> **核实结论：该项目并未微调大模型**，而是通过 `dashscope-sdk-java` 调用通义千问 `QWEN_TURBO` 云 API，单轮无记忆。
+> 因此本次「借鉴」落在**工程规范与少量通用功能**上，而非业务代码照搬（两者领域完全不同）。
+
+### 一、工程规范加固
+
+| # | 改动 | 文件 |
+|---|---|---|
+| A1 | 新增 AI 协议常量类，收敛协议标签与三档标记 | `constant/AiProtocolConstants.java`（新增） |
+| A1 | 改用常量，删除本地重复定义 | `util/AiTextUtils.java` |
+| A1 | 解析「点评/下一题/评分」行改用常量 | `Service/Impl/ScorePersistenceServiceImpl.java` |
+| A1 | 续答回灌拼接标签改用常量（**prompt 文本一字未改**） | `Controller/chatController.java` |
+| A2 | 新增统一响应码常量（SUCCESS=1 / FAIL=0 不变，新增 4xx/5xx 语义码） | `result/ResultCode.java`（新增） |
+| A2 | 新增 `Result.error(int code, String msg)` 重载，**前端 `code===1` 判定零影响** | `result/Result.java` |
+| A2 | 缺参异常改用语义码 | `Config/GlobalExceptionHandler.java` |
+| A3 | 新增参数校验依赖 | `pom.xml` |
+| A3 | 新增 `MethodArgumentNotValidException` / `ConstraintViolationException` 全局处理 | `Config/GlobalExceptionHandler.java` |
+| A3 | 登录/注册 DTO 补 `@NotBlank`（与 Service 原手工校验一致，无行为变化） | `pojo/dto/UserDto.java` |
+| A3 | 4 个注册/登录接口补 `@Valid` | `Controller/login/registerAndLoginController.java` |
+| — | **修复预存在语法错误**：`AiHelperApplication.java:11` 的 `}.` → `}`（原本整个项目编译不通过） | `AiHelperApplication.java` |
+
+### 二、功能扩展
+
+| # | 功能 | 说明 |
+|---|---|---|
+| B2 | **教师端数据总览** | 新增 `StatsMapper(.java/.xml)`、`StatsService(+Impl)`、`Controller/teacher/StatsController`，接口 `GET /teacher/stats/overview`（总场次/已完成/进行中/课题数/学生数/平均分 + 课题分布 + 近 14 天趋势），只读聚合，不触碰答辩主链路 |
+| B3 | **答辩成绩导出** | 新增 `Controller/teacher/ExportController`，`GET /teacher/export/records.csv`，UTF-8 BOM，零新依赖（原生 `HttpServletResponse`），上限 10000 行 |
+| B4 | **系统反馈模块** | 建表 `docs/ddl_system_feedback.sql`（**需手动执行**）；`entity/SystemFeedback`、`dto/FeedbackDto`、`dto/FeedbackReplyDto`、`mapper/SystemFeedbackMapper(.java/.xml)`、`Service/FeedbackService(+Impl)`；学生接口 `/student/feedback/submit|my`、教师接口 `/teacher/feedback/list|pending-count|reply` |
+| B1 | **答辩记录详情增强** | 新增逐轮五维明细：`DefenseRecordsService#getScoreDetail`（复用在存 SQL）、`GET /student/scoreDetail/{id}`（带归属校验）、`GET /teacher/defense/scoreDetail/{id}`；前端回答详情弹层顶部展示逐轮五维 |
+
+> B4 权限说明：学生反馈接口刻意放在 `/student/**`（WebConfig 既有拦截范围）而非 `/api/feedback`，
+> 避免新增接口漏保护造成越权（严重 bug 红线）。
+
+### 三、UI / 交互
+
+| # | 改动 | 文件 |
+|---|---|---|
+| C1 | 全局设计系统：CSS 变量 + `g-card / g-btn / g-tag / g-stats / g-bar / g-empty` 通用类（**只追加，不改旧类**） | `app.wxss` |
+| C2 | 补齐登录页缺失样式（`title-wrapper` / `decorate-line` / `btn-group` 此前 wxml 引用了但从未定义） | `pages/login/login.wxss` |
+| C3 | 答辩页顶部新增可视化进度条（纯 WXML 表达式计算，不改 js 逻辑） | `pages/defense/defense.wxml`、`defense.wxss` |
+| B4 前端 | 新增「意见反馈」页（提交 + 我的反馈） | `pages/feedback/*`（新增） |
+| B4 前端 | 新增「反馈管理」页（教师端，筛选/分页/回复） | `pages/feedback-admin/*`（新增） |
+| B2 前端 | 新增「数据总览」页（概览卡 + 课题分布 + 趋势条） | `pages/stats/*`（新增） |
+| — | 注册 3 个新页面 | `app.json` |
+| — | 学生端个人中心加「意见反馈」入口 | `pages/student/student.wxml`、`student.js` |
+| — | 教师端个人中心加「数据总览 / 反馈管理 / 意见反馈」入口 | `pages/teacher/teacher.wxml`、`teacher.js` |
+
+### 四、部署 / 验证清单（**必做**）
+
+1. **执行建表脚本**：`mysql -uroot -p ai_helper < docs/ddl_system_feedback.sql`（不执行则反馈接口报表不存在，其它功能不受影响）。
+2. 后端编译：`mvn compile` ✅ **已通过**（JDK 17）。
+3. 需实测：① 登录/注册空学号密码 → 提示是否友好；② 教师端「数据总览」数字是否正确；③ 「导出成绩」能否下载且 Excel 不乱码；④ 反馈提交 → 教师回复 → 学生看到回复；⑤ **答辩主流程回归**（跑一场完整 10 轮，确认常量抽取未影响解析与续答）。
+
+### 五、未做 / 遗留
+
+- **N55（评分行与答案行不同事务）**：本次未动，仍为遗留问题。
+- **N56（`/editUserInfo` 全量 UPDATE）**：本次未动。
+- 导出为 CSV（无新依赖）；若需小程序端 `wx.openDocument` 直接打开，后续可改导出 xlsx（需引入 POI）。
+- `AiHelperApplication` 的 `}.` 语法错误来源未查明，建议核对是否有其它文件被动过。
+
+---
+
 ## 改动概述
 
 | 类别 | 文件数 | 变更量 |
