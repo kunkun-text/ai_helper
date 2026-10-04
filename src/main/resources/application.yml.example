@@ -142,13 +142,27 @@ app:
   # ⚠️ 为什么不用微信的「同声传译」插件：**个人主体的小程序无法添加该插件**
   #    （插件管理与微信服务市场都搜不到，改类目也无效）。因此改为后端本地实现：
   #      · 播报（TTS）→ Windows 自带语音合成，离线、零依赖、不需要装任何东西
-  #      · 识别（ASR）→ whisper.cpp 本地识别，需先运行 scripts/install-whisper.ps1 安装
+  #      · 识别（ASR）→ whisper.cpp 本地识别，组件缺失时**启动后自动下载**（见下方 auto-install）
+  #
+  # 【开箱即用】引擎/模型/ffmpeg 合计约 550MB，超过 Git 仓库单文件上限、不能随代码提交，
+  # 因此默认「启动后端后自动下载补齐」——新机器 clone 下来只需开 Redis + Ollama + 启动后端，
+  # 语音答辩即可用（下载进度见后端日志，期间文字答辩完全不受影响）。也可手动运行
+  # scripts/install-whisper.ps1 安装（离线机器可把已装好的 F:\whisper 整个目录拷过去）。
   #
   # 下面两个路径留空时会按常见目录自动查找（引擎 + 同目录 models/ggml-*.bin）：
   #   F:\whisper / D:\whisper / E:\whisper / C:\whisper / D:\tools\whisper / 项目下 whisper
-  # 只要用安装脚本装到默认位置，这里一个字都不用改。
   # ==========================================================================
   voice:
+    # 缺失组件时启动后自动下载（引擎约 15MB + 模型约 487MB + ffmpeg 约 40MB）。
+    # 关掉（false）则保持"只查找、不下载"的旧行为。
+    auto-install: true
+    # 自动安装目录。留空 = 自动选择本机存在的存储盘（如 F:\whisper）
+    install-dir: ""
+    # 模型档位：tiny / base / small / medium。small 中文效果最均衡（约 487MB，8G 机器偏慢）；
+    # 网速/内存紧张可改 base（约 142MB，识别快一倍）
+    model: small
+    # 下载代理（可选，如 http://127.0.0.1:7890）；留空 = 直连。GitHub 访问慢时很有用
+    proxy: ""
     # whisper.cpp 可执行文件（whisper-cli.exe / 旧版 main.exe）。留空 = 自动查找
     whisper-exe: ""
     # 模型文件（ggml-*.bin）。留空 = 在引擎同目录的 models/ 下自动挑选

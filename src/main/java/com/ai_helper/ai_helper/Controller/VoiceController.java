@@ -149,12 +149,17 @@ public class VoiceController {
     /**
      * 语音能力状态：前端进页面时查一次，用于决定录音按钮是否可用，
      * 避免学生按了半天才发现引擎没装。
+     *
+     * <p>新增 {@code asrInstalling} / {@code asrProgress}：首次启动自动下载语音组件期间，
+     * 前端应显示「组件准备中 x%」并在下载完成后自动放行，而不是直接报"不可用"。</p>
      */
     @GetMapping("/status")
     public Result<Map<String, Object>> status() {
         Map<String, Object> data = new HashMap<>();
         data.put("asrReady", asrService.available());
         data.put("asrMessage", asrService.unavailableReason());
+        data.put("asrInstalling", asrService.installing());
+        data.put("asrProgress", asrService.installProgress());
         return Result.success(data);
     }
 

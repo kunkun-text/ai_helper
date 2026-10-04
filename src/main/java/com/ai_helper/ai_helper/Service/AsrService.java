@@ -27,4 +27,19 @@ public interface AsrService {
 
     /** 引擎不可用的原因（用于日志与前端提示） */
     String unavailableReason();
+
+    /**
+     * 是否正在**首次自动下载**语音组件（引擎/模型/ffmpeg）。
+     *
+     * <p>下载期间前端应提示「组件准备中，稍候重试」，而不是直接报"不可用"，
+     * 否则学生会误以为功能坏了。默认 false（不支持自动安装的实现无需实现本方法）。</p>
+     */
+    default boolean installing() {
+        return false;
+    }
+
+    /** 自动下载进度（0-100）；未在下载时返回 0 */
+    default int installProgress() {
+        return 0;
+    }
 }

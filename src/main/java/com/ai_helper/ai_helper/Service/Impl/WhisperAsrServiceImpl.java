@@ -3,12 +3,15 @@ package com.ai_helper.ai_helper.Service.Impl;
 import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.AsrService;
 import com.ai_helper.ai_helper.Service.FileStorageService;
+import com.ai_helper.ai_helper.constant.VoiceConstants;
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.util.UploadUtils;
 import com.github.houbb.opencc4j.util.ZhConverterUtil;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -47,16 +50,6 @@ public class WhisperAsrServiceImpl implements AsrService {
     /** 单次上传音频大小上限（20MB ≈ 十几分钟 mp3），防御性限制 */
     private static final long MAX_AUDIO_BYTES = 20L * 1024 * 1024;
 
-    /** 引擎可执行文件名（新版为 whisper-cli.exe，旧版为 main.exe） */
-    private static final List<String> EXE_NAMES = List.of("whisper-cli.exe", "main.exe");
-
-    /** 模型文件名，按优先级排列（优先中文效果与速度平衡的 small） */
-    private static final List<String> MODEL_NAMES = List.of(
-            "ggml-small.bin", "ggml-base.bin", "ggml-medium.bin", "ggml-tiny.bin");
-
-    /** ffmpeg 可执行文件名：把 webm / mp3 / aac 统一转成 16kHz wav */
-    private static final String FFMPEG_EXE_NAME = "ffmpeg.exe";
-
     /** ffmpeg 转码超时（秒） */
     private static final long FFMPEG_TIMEOUT_SECONDS = 120L;
 
@@ -65,6 +58,13 @@ public class WhisperAsrServiceImpl implements AsrService {
 
     @Resource
     private FileStorageService fileStorageService;
+
+    /** 语音组件自动下载器（引擎/模型/ffmpeg 缺失时启动后自动补齐） */
+    @Resource
+    private VoiceComponentInstaller voiceComponentInstaller;
+
+    /** 本次启动是否需要自动补齐语音组件（@PostConstruct 时判定缺失且开启了 auto-install） */
+    private volatile boolean bootstrapNeeded = false;
 
     /** 解析好的引擎路径（null = 未找到） */
     private volatile String exePath;
@@ -80,21 +80,72 @@ public class WhisperAsrServiceImpl implements AsrService {
 
     @PostConstruct
     public void init() {
+        if (refresh()) {
+            return;
+        }
+        // 组件缺失：开启自动安装则由「启动就绪事件」在后台补齐（不阻塞启动，也不影响文字答辩）
+        if (appProperties.getVoice().isAutoInstall()) {
+            bootstrapNeeded = true;
+            unavailableReason = "语音组件正在首次准备，请稍候";
+            log.info("语音组件缺失，已开启自动安装（app.voice.auto-install=true）："
+                    + "将在启动完成后于后台自动下载引擎/模型/ffmpeg，详见后续日志");
+        } else {
+            log.warn("语音识别未就绪：{}。学生语音作答将不可用；"
+                    + "可手动运行 scripts/install-whisper.ps1 安装，"
+                    + "或在 application.yml 开启 app.voice.auto-install", unavailableReason);
+        }
+    }
+
+    /**
+     * 应用完全启动后再触发下载：避免几百 MB 的下载拖住 Spring 启动（接口先可用）。
+     *
+     * <p>下载在 daemon 后台线程中进行，完成后自动 {@link #refresh()} 让语音立即可用；
+     * 下载期间 {@link #installing()} 为 true，前端据此提示"组件准备中"。</p>
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        if (!bootstrapNeeded) {
+            return;
+        }
+        if (voiceComponentInstaller.isRunning()) {
+            return;
+        }
+        Thread worker = new Thread(() -> {
+            log.info("开始自动安装语音组件（首次启动需要下载，耗时取决于网速；"
+                    + "期间语音作答不可用，文字答辩不受影响）");
+            boolean ok = voiceComponentInstaller.install();
+            refresh();
+            if (ok) {
+                log.info("语音组件自动安装完成 - 引擎: {}, 模型: {}, 音频转码: {}",
+                        exePath, modelPath,
+                        ffmpegPath == null ? "未找到 ffmpeg（仅支持 wav/mp3）" : ffmpegPath);
+            } else {
+                log.warn("语音组件自动安装未成功：{}（可手动运行 scripts/install-whisper.ps1）",
+                        unavailableReason);
+            }
+        }, "voice-bootstrap");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * 重新解析引擎 / 模型 / ffmpeg 路径，并刷新就绪状态。
+     *
+     * <p>启动时与自动下载完成后各调一次 —— 这样"下载完自动可用"无需重启。</p>
+     *
+     * @return true 表示引擎与模型都已就绪（ffmpeg 为可选增强，不影响返回值）
+     */
+    private boolean refresh() {
         this.exePath = resolveExe();
         if (exePath == null) {
             unavailableReason = "未找到语音识别引擎（whisper-cli.exe / main.exe）";
-            log.warn("语音识别未就绪：{}。学生语音作答将不可用；"
-                    + "可在项目根目录运行 scripts/install-whisper.ps1 安装，"
-                    + "或在 application.yml 配置 app.voice.whisper-exe", unavailableReason);
-            return;
+            return false;
         }
 
         this.modelPath = resolveModel();
         if (modelPath == null) {
             unavailableReason = "未找到语音识别模型（ggml-*.bin）";
-            log.warn("语音识别未就绪：{}。请在引擎目录下的 models 文件夹放入 ggml-small.bin"
-                    + "（或运行 scripts/install-whisper.ps1 自动下载）", unavailableReason);
-            return;
+            return false;
         }
 
         unavailableReason = "";
@@ -104,12 +155,13 @@ public class WhisperAsrServiceImpl implements AsrService {
         if (ffmpegPath == null) {
             log.warn("未找到 ffmpeg，将只用 Java 解码器（仅支持 wav / mp3）——"
                     + "**开发者工具里录出来的 webm 音频将无法识别**；"
-                    + "可运行 scripts/install-whisper.ps1 安装，或在 application.yml 配置 app.voice.ffmpeg-exe");
+                    + "可在 application.yml 配置 app.voice.ffmpeg-exe");
         }
 
         log.info("语音识别已就绪 - 引擎: {}, 模型: {}, 语言: {}, 音频转码: {}",
                 exePath, modelPath, appProperties.getVoice().getLanguage(),
                 ffmpegPath == null ? "未找到 ffmpeg（仅支持 wav/mp3）" : ffmpegPath);
+        return true;
     }
 
     @Override
@@ -119,7 +171,27 @@ public class WhisperAsrServiceImpl implements AsrService {
 
     @Override
     public String unavailableReason() {
+        // 正在首次自动下载：给出进度，避免前端显示成"不可用"让学生以为坏了
+        if (!available() && voiceComponentInstaller.isRunning()) {
+            return "语音识别组件首次下载中（" + voiceComponentInstaller.percent() + "%）："
+                    + voiceComponentInstaller.stage();
+        }
+        // 自动安装失败过：保留原始原因并附上手动安装指引
+        if (!available() && !voiceComponentInstaller.lastError().isEmpty()) {
+            return unavailableReason + "（自动安装失败：" + voiceComponentInstaller.lastError()
+                    + "，可手动运行 scripts/install-whisper.ps1）";
+        }
         return unavailableReason;
+    }
+
+    @Override
+    public boolean installing() {
+        return !available() && voiceComponentInstaller.isRunning();
+    }
+
+    @Override
+    public int installProgress() {
+        return voiceComponentInstaller.percent();
     }
 
     @Override
@@ -361,7 +433,7 @@ public class WhisperAsrServiceImpl implements AsrService {
         }
 
         for (Path dir : searchDirs()) {
-            for (String name : EXE_NAMES) {
+            for (String name : VoiceConstants.ENGINE_EXE_NAMES) {
                 Path candidate = dir.resolve(name);
                 if (Files.isRegularFile(candidate)) {
                     return candidate.toString();
@@ -387,7 +459,7 @@ public class WhisperAsrServiceImpl implements AsrService {
         }
         List<Path> dirs = List.of(exeDir.resolve("models"), exeDir);
         for (Path dir : dirs) {
-            for (String name : MODEL_NAMES) {
+            for (String name : VoiceConstants.MODEL_FILE_NAMES) {
                 Path candidate = dir.resolve(name);
                 if (Files.isRegularFile(candidate)) {
                     return candidate.toString();
@@ -404,7 +476,7 @@ public class WhisperAsrServiceImpl implements AsrService {
             return configured;
         }
 
-        String fromPath = findInPath(FFMPEG_EXE_NAME);
+        String fromPath = findInPath(VoiceConstants.FFMPEG_EXE_NAME);
         if (fromPath != null) {
             return fromPath;
         }
@@ -419,7 +491,7 @@ public class WhisperAsrServiceImpl implements AsrService {
         addDirSafe(dirs, Path.of(fileStorageService.rootDir(), "whisper"));
         addDirSafe(dirs, Path.of(System.getProperty("user.dir", "."), "whisper"));
         for (Path dir : dirs) {
-            Path candidate = dir.resolve(FFMPEG_EXE_NAME);
+            Path candidate = dir.resolve(VoiceConstants.FFMPEG_EXE_NAME);
             if (Files.isRegularFile(candidate)) {
                 return candidate.toString();
             }

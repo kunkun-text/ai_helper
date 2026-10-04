@@ -16,7 +16,7 @@
 
 ---
 
-## 当前进度（2026-10-04）
+## 当前进度（2026-10-05）
 
 ### 已完成 ✅
 
@@ -26,7 +26,7 @@
 | 评分可信度 | 已实现待复验 | N45~N54 八项修复已落地，需多场答辩累积样本验证 |
 | 教师端功能 | 已上线 | 数据总览、成绩导出CSV、反馈管理 |
 | 系统反馈模块 | 已上线 | 学生提交/教师回复（需执行 `docs/ddl_system_feedback.sql`） |
-| 语音答辩 | 已开发待实测 | F10 V2方案（SAPI TTS + whisper.cpp ASR），待真机验证 |
+| 语音答辩 | 已开发待实测 | F10 V2（SAPI TTS + whisper.cpp ASR）；组件缺失时**启动后自动下载**（约550MB，开箱即用），待真机验证 |
 | 鉴权/越权 | 已加固 | N19 角色校验、只能改自己资料 |
 | 事务/幂等 | ✅ 已闭环 | N4幂等、N21末轮同步；N55 已修复（评分行/答案行/追问题同事务，任一失败整体回滚） |
 | 答辩链路鉴权 | ✅ 已加固 | A1：/api/chat、/api/final-evaluate、/api/voice/** 纳入登录保护，身份取登录态 |
@@ -52,7 +52,7 @@
 2. **N43命名方案？** 推荐方案1：`答辩报告_学号_原名_短随机.ext`
 3. **N55是否一次性合并改动？**（省多轮重启实测）
 4. **资源加固（三）是否仍挂账？** 建议至少做JVM `-Xmx512m`
-5. **F10何时真机实测？** 需先在微信公众平台添加「微信同声传译」插件
+5. **F10何时真机实测？** 无需插件（已改后端 TTS/ASR）；whisper.cpp 引擎/模型/ffmpeg 会**启动后自动下载**，装好即可真机验证
 
 ---
 
@@ -75,7 +75,7 @@ ai/                                    # 项目根
 │   ├── Mapper/                        # MyBatis Mapper
 │   ├── pojo/                          # 实体/VO/枚举
 │   ├── util/                          # 工具类
-│   ├── constant/                      # 常量（AiProtocolConstants 等）
+│   ├── constant/                      # 常量（AiProtocolConstants / VoiceConstants 等）
 │   ├── result/                        # 统一响应（Result/ResultCode）
 │   └── interceptor/                   # 鉴权拦截器
 ├── src/main/resources/

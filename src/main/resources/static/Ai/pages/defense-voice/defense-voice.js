@@ -109,6 +109,7 @@ Page({
     this._unloaded = true;
     this._stopWaitTimer();
     this._stopRecordTimer();
+    this._stopVoiceStatusTimer();
     this.stopSpeak();
     if (this._asrUploadTask) {
       try { this._asrUploadTask.abort(); } catch (e) { /* 已结束 */ }
@@ -127,6 +128,7 @@ Page({
 
   /** 切到后台同样停掉识别上传与轮询（回来后学生可重新触发） */
   onHide() {
+    this._stopVoiceStatusTimer();
     if (this._asrUploadTask) {
       try { this._asrUploadTask.abort(); } catch (e) { /* 已结束 */ }
       this._asrUploadTask = null;
@@ -244,18 +246,53 @@ Page({
         }
         const data = (res.data && res.data.data) || {};
         const ready = data.asrReady !== false;
-        this._safeSetData({
-          asrReady: ready,
-          asrTip: ready ? '' : ('语音识别未就绪：' + (data.asrMessage || '') + '（可先用文字作答）'),
-        });
-        if (!ready) {
-          console.warn('[语音答辩] 识别引擎未就绪：', data.asrMessage);
+        const installing = !!data.asrInstalling;
+        if (ready) {
+          this._stopVoiceStatusTimer();
+          this._safeSetData({ asrReady: true, asrTip: '' });
+          return;
         }
+        // 【语音自举】首次启动后台下载组件中：显示进度并轮询，下载完成自动放行
+        // （避免学生必须退出重进页面才能用语音）
+        if (installing) {
+          const percent = data.asrProgress || 0;
+          this._safeSetData({
+            asrReady: false,
+            asrTip: '语音组件首次下载中（' + percent + '%），完成后即可使用（可先用文字作答）',
+          });
+          this._scheduleVoiceStatusRetry();
+          return;
+        }
+        this._stopVoiceStatusTimer();
+        this._safeSetData({
+          asrReady: false,
+          asrTip: '语音识别未就绪：' + (data.asrMessage || '') + '（可先用文字作答）',
+        });
+        console.warn('[语音答辩] 识别引擎未就绪：', data.asrMessage);
       },
       fail: () => {
         // 查询失败不阻塞答辩：按可用处理，真按下去了再由识别接口给出提示
       },
     });
+  },
+
+  /** 组件下载期间定时回查：就绪后自动放行，无需学生退出重进 */
+  _scheduleVoiceStatusRetry() {
+    this._stopVoiceStatusTimer();
+    this._voiceStatusTimer = setTimeout(() => {
+      this._voiceStatusTimer = null;
+      if (this._unloaded) {
+        return;
+      }
+      this.checkVoiceStatus();
+    }, 15000);
+  },
+
+  _stopVoiceStatusTimer() {
+    if (this._voiceStatusTimer) {
+      clearTimeout(this._voiceStatusTimer);
+      this._voiceStatusTimer = null;
+    }
   },
 
   /** 按住说话：开始录音 */

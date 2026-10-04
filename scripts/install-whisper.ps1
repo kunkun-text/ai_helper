@@ -180,9 +180,35 @@ try {
             Write-Ok "ffmpeg copied from: $picked"
         }
         else {
-            Write-Warn2 "No local ffmpeg found"
-            Write-Host "      Please copy ffmpeg.exe into: $InstallDir" -ForegroundColor Yellow
-            Write-Host "      (Devtools records webm audio; without ffmpeg it cannot be recognized.)" -ForegroundColor Yellow
+            Write-Step "No local ffmpeg found, downloading a Windows build ..."
+            $ffZip = Join-Path $tempDir 'ffmpeg.zip'
+            $ffUrls = @(
+                'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
+                'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+            )
+            $ffOk = $false
+            foreach ($url in $ffUrls) {
+                try {
+                    Get-RemoteFile $url $ffZip 'ffmpeg'
+                    $ffDir = Join-Path $tempDir 'ffmpeg-unzip'
+                    Expand-Archive -Path $ffZip -DestinationPath $ffDir -Force
+                    $ffExe = Get-ChildItem -Path $ffDir -Recurse -Filter 'ffmpeg.exe' -File |
+                        Select-Object -First 1
+                    if (-not $ffExe) { throw 'ffmpeg.exe not found in the archive' }
+                    Copy-Item $ffExe.FullName $ffmpegDest -Force
+                    Write-Ok "ffmpeg downloaded and installed: $ffmpegDest"
+                    $ffOk = $true
+                    break
+                }
+                catch {
+                    Write-Warn2 "ffmpeg download failed: $url"
+                }
+            }
+            if (-not $ffOk) {
+                Write-Warn2 "ffmpeg could not be installed automatically"
+                Write-Host "      Please copy ffmpeg.exe into: $InstallDir" -ForegroundColor Yellow
+                Write-Host "      (Devtools records webm audio; without ffmpeg it cannot be recognized.)" -ForegroundColor Yellow
+            }
         }
     }
 

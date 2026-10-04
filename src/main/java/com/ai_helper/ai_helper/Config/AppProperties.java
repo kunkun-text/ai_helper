@@ -179,5 +179,33 @@ public class AppProperties {
 
         /** 单次录音时长上限（秒），仅提示前端，超过会自动停止录音 */
         private int maxRecordSeconds = 60;
+
+        /**
+         * 缺失组件时是否**启动后自动下载**（引擎约 15MB + 模型约 487MB + ffmpeg 约 40MB）。
+         *
+         * <p>默认开启，目的是让新机器 clone 下来「开 Redis + 开 Ollama + 启动后端」即可用语音，
+         * 无需手动跑安装脚本（引擎/模型体积远超 Git 仓库单文件上限，无法随代码提交）。
+         * 首次启动会在后台下载并打进度日志，不阻塞应用启动。</p>
+         */
+        private boolean autoInstall = true;
+
+        /**
+         * 语音组件安装目录。
+         *
+         * <p>留空时自动选择：优先本机存在的存储盘（如 `F:\whisper`），与
+         * {@code WhisperAsrServiceImpl} 的自动查找目录保持一致。</p>
+         */
+        private String installDir = "";
+
+        /**
+         * whisper 模型档位：`tiny` / `base` / `small` / `medium`（也可直接写 `ggml-xxx.bin`）。
+         *
+         * <p>默认 small：中文答辩场景准确率与速度最均衡，但模型约 487MB；
+         * 8G 低功耗机若嫌首次下载慢/识别慢，可改 base（约 142MB，快一倍）。</p>
+         */
+        private String model = "small";
+
+        /** 下载代理（可选，如 `http://127.0.0.1:7890`）；留空 = 直连 */
+        private String proxy = "";
     }
 }

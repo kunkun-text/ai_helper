@@ -75,6 +75,22 @@
 - **F6**：`app.json` 删除 `scope.userLocation`、`scope.writePhotosAlbum`；`project.config.json` 删除位置权限与 `requiredBackgroundModes:["audio"]`；学生页权限判断同步只认 camera。
 - **F7**：报告上传表单带 `originalFileName/fileSize/kind`；后端生成 `答辩报告_学号_原名_短随机.ext` 安全存储名（去路径字符、长度截断），docx/xlsx/pptx/pdf 增加魔数文件头校验。
 
+### 七、语音组件开箱即用（启动自举，2026-10-05 增补）
+
+> 目标：新机器 clone 后只需开 Redis + Ollama + 启动后端，语音答辩即可用，**无需手动下载**。
+> **状态：`mvn -o -q compile` BUILD SUCCESS；`node --check defense-voice.js` 通过；下载源已探测可达，未做完整 550MB 实测。**
+
+- **背景**：引擎（约 15MB）/ 模型（约 487MB）/ ffmpeg（约 40MB）合计约 550MB，超过 Git 仓库单文件上限（GitHub 100MB），不可能随代码提交，故改为「启动后自动补齐」。
+- **新增 `Service/Impl/VoiceComponentInstaller`**：缺失时自动下载，流式写盘（不进内存）、多镜像（hf-mirror 优先 / huggingface 兜底）、GitHub API 动态定位引擎包（固定 v1.9.2 兜底）、解压带 Zip Slip 防护、进度单调递增；ffmpeg 优先复用本机已有，找不到再下载。
+- **新增 `constant/VoiceConstants`**：引擎/模型/ffmpeg 文件名常量，「查找」与「下载」共用，避免"下载完却找不到"。
+- **`WhisperAsrServiceImpl`**：`@PostConstruct` 只做检测；缺失且 `app.voice.auto-install=true` 时改由 `ApplicationReadyEvent` 起 daemon 线程下载（**不阻塞启动**），完成后 `refresh()` 自动就绪、无需重启；`unavailableReason()` 在下载中返回带进度的文案。
+- **`AsrService`** 增 `installing()/installProgress()` 默认方法；`GET /api/voice/status` 增 `asrInstalling/asrProgress`。
+- **前端 `defense-voice.js`**：下载期间显示「语音组件首次下载中 x%」并每 15s 回查，完成后自动放行；`onUnload/onHide` 清理轮询定时器。
+- **配置**：`AppProperties.Voice` 增 `auto-install / install-dir / model / proxy`；`application.yml.example` 同步注释（默认 `auto-install: true`、`model: small`）。
+- **文档**：部署手册新增「十·一 语音答辩组件（默认自动安装）」+ 检查清单第 11 项。
+
+**验证**：编译通过；JS 语法通过；三个下载源 HEAD 探测均 200（hf-mirror 模型 / GitHub 引擎 / gyan.dev ffmpeg）；已实拉 `whisper-blas-bin-x64.zip`（21MB）确认包内为 `Release/whisper-cli.exe` + `whisper.dll` + `ggml-*.dll`，与解压后的定位逻辑吻合。**未做完整 550MB 端到端实测**——本机 `F:\whisper` 已存在，`hasEngine/hasModel` 命中会跳过下载；需在无 whisper 的干净机器（或临时指向空 `install-dir`）上首启验证。
+
 ---
 
 # 2026-10-02
