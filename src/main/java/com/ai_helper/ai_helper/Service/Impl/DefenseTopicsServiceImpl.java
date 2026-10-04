@@ -35,8 +35,9 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
     @Transactional(rollbackFor = Exception.class)
     public Result<Object> addDefense(EditDefenseDto editDefenseDto) {
         // 前置校验：还未写库，直接返回错误即可
-        if (editDefenseDto.getDefenseTime() == null) {
-            return Result.error("答辩时间不能为空");
+        // 【B3 · 2026-10-05】解析失败（null）必须拒绝，旧实现会把 null 拼成字符串 "null" 落库
+        if (editDefenseDto.getDefenseTimeAsLocalDate() == null) {
+            return Result.error("答辩时间不能为空，且格式必须为 yyyy-MM-dd");
         }
 
         // 1. 添加到 defense_topics 表
@@ -44,7 +45,7 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
         defenseTopics.setTeacherId(editDefenseDto.getTeacherId());
         defenseTopics.setTopicName(editDefenseDto.getTopicName());
         defenseTopics.setTopicDescription(editDefenseDto.getTopicDescription());
-        defenseTopics.setDefenseTime(String.valueOf(editDefenseDto.getDefenseTimeAsLocalDateTime()));
+        defenseTopics.setDefenseTime(editDefenseDto.getDefenseTimeAsLocalDateTime().toString());
         defenseTopics.setCreatedAt(LocalDateTime.now());
         defenseTopics.setUpdatedAt(LocalDateTime.now());
 
@@ -98,6 +99,10 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result<Object> editDefense(EditDefenseDto editDefenseDto) {
+        // 【B3】日期解析失败必须拒绝，禁止把 "null" 写库
+        if (editDefenseDto.getDefenseTimeAsLocalDate() == null) {
+            return Result.error("答辩时间不能为空，且格式必须为 yyyy-MM-dd");
+        }
         editDefenseDto.setUpdatedAt(LocalDateTime.now());
 
         // 1. 修改 defense_topics 表
@@ -106,7 +111,7 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
         defenseTopics.setTeacherId(editDefenseDto.getTeacherId());
         defenseTopics.setTopicName(editDefenseDto.getTopicName());
         defenseTopics.setTopicDescription(editDefenseDto.getTopicDescription());
-        defenseTopics.setDefenseTime(String.valueOf(editDefenseDto.getDefenseTimeAsLocalDateTime()));
+        defenseTopics.setDefenseTime(editDefenseDto.getDefenseTimeAsLocalDateTime().toString());
         defenseTopics.setUpdatedAt(LocalDateTime.now());
 
         defenseTopicsMapper.editDefense(defenseTopics);

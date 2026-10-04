@@ -1,5 +1,6 @@
 // 数据总览（教师端）— 2026-10-01 新增
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
 
 Page({
 
@@ -18,9 +19,9 @@ Page({
   },
 
   loadStats() {
-    const token = wx.getStorageSync('token');
+    const token = auth.getToken();
     if (!token) {
-      wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+      auth.handleAuthExpired();
       return;
     }
     wx.request({
@@ -28,6 +29,11 @@ Page({
       method: 'GET',
       header: { 'Authorization': 'Bearer ' + token },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const body = res && res.data;
         if (body && body.code === 1 && body.data) {
           const data = body.data;

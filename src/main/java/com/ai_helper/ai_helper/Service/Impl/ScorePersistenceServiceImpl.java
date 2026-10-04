@@ -9,6 +9,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -42,6 +43,63 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
     @Override
     public void saveRoundScore(DefenseScoreRecord record) {
         doSave(record);
+    }
+
+    /**
+     * 【N55 · 2026-10-02，B1 · 2026-10-05 强化】评分行 + 答案行同一事务。
+     *
+     * <p>历史实锤（2026-09-29 ROLLBACK_TEST 重演）：答案行被 CHECK 约束拒绝回滚时，
+     * 异步线程的评分行已先行提交 → 「评分行落了、答案行没有」且前端无感。
+     * 本方法把两行写库收进同一事务边界：评分行先写，随后执行答案写入；
+     * 任一写入抛出的异常都会让整个事务回滚，保证「要么都落、要么都不落」。</p>
+     *
+     * <p><b>B1 强化</b>：评分行插入失败不再吞异常返回 false —— 事务方法内吞掉异常
+     * 不会触发回滚，会留下「答案行落了、评分行没有」的另一半截数据；
+     * 现在评分行插入失败同样抛 {@code IllegalStateException} 触发整体回滚。
+     * 幂等跳过（同 defenseId+round 已存在）仍返回 true，属正常重复请求，不回滚。</p>
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean saveScoreThenAnswer(DefenseScoreRecord record, AnswerWriter answerWriter) {
+        boolean scoreSaved = insertScoreRecordOrThrow(record);
+        try {
+            answerWriter.write();
+        } catch (Exception e) {
+            log.error("答案落库失败，评分行随事务一并回滚 - defenseId: {}, roundNum: {}",
+                    record == null ? null : record.getDefenseId(),
+                    record == null ? null : record.getRoundNum(), e);
+            if (e instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new IllegalStateException("答案落库失败，评分行一并回滚", e);
+        }
+        return scoreSaved;
+    }
+
+    /**
+     * 【B1】事务版评分行插入：失败抛异常（由事务回滚），幂等跳过返回 true。
+     */
+    private boolean insertScoreRecordOrThrow(DefenseScoreRecord record) {
+        // 幂等：同一轮（defense_id + round_num）只落一行；并发场景由唯一索引 uk_defense_round 兜底
+        if (record.getDefenseId() != null && record.getRoundNum() != null
+                && scoreRecordMapper.countByDefenseIdAndRound(record.getDefenseId(), record.getRoundNum()) > 0) {
+            log.warn("该轮评分已存在，跳过重复落库（幂等）- defenseId: {}, roundNum: {}",
+                    record.getDefenseId(), record.getRoundNum());
+            return true;
+        }
+        try {
+            scoreRecordMapper.insertScoreRecord(record);
+        } catch (Exception e) {
+            log.error("保存评分失败（事务回滚，本轮评分与答案一并不落库） - defenseId: {}, roundNum: {}",
+                    record.getDefenseId(), record.getRoundNum(), e);
+            throw new IllegalStateException("评分落库失败，本轮评分与答案一并回滚", e);
+        }
+        log.info("保存评分成功 - defenseId: {}, roundNum: {}, 各维度: 表达={}, 逻辑={}, 专业={}, 应变={}, 创新={}",
+                record.getDefenseId(), record.getRoundNum(),
+                record.getExpressionScore(), record.getLogicScore(),
+                record.getProfessionalScore(), record.getAdaptabilityScore(),
+                record.getInnovationScore());
+        return true;
     }
 
     /**

@@ -1,4 +1,6 @@
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
+const protocol = require('../../utils/protocol.js');
 
 Page({
   data: {
@@ -50,10 +52,15 @@ Page({
       method: 'POST',
       data: { topicId: this.data.topicId, userId: this.data.userId },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       success: (res) => {
+        // 【C2】401/403 统一处理：登录过期不再表现为"探测失败直接开始新答辩"
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const info = res.data || {};
         if (info.resumable) {
           this.askResumeOrRestart(info);
@@ -89,10 +96,15 @@ Page({
         resume: !!resume,
       },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const data = res.data || {};
         if (data.resumed) {
           this.resumeDefense(data);
@@ -124,7 +136,9 @@ Page({
     this.addSystemMessage(`检测到未完成的答辩，已为你继续：前 ${answered} 题已完成，当前第 ${roundNum} 题。`);
 
     if (data.currentQuestion) {
-      const text = '点评:请继续作答。\n下一题:' + data.currentQuestion;
+      // 【F1】协议标签统一走 protocol 常量
+      const text = protocol.COMMENT_TAG + '请继续作答。\n'
+        + protocol.NEXT_QUESTION_TAG + data.currentQuestion;
       this.addAiMessage(text, this.parseAiResponse(text));
     } else {
       this.addSystemMessage('请继续作答上一轮考官提出的问题。');
@@ -133,6 +147,11 @@ Page({
 
   onUnload() {
     this._stopWaitTimer();
+    // 【C2/D2】卸载时中断在途 AI 请求，避免离开页面后回调报错
+    if (this._chatTask) {
+      try { this._chatTask.abort(); } catch (e) { /* 已结束 */ }
+      this._chatTask = null;
+    }
   },
 
   // ======== 等待计时器 ========
@@ -206,7 +225,7 @@ Page({
     this._startWaitTimer();
     this._lastPrompt = prompt; // 缓存用于重试
 
-    wx.request({
+    this._chatTask = wx.request({
       url: config.getBaseUrl() + '/api/chat',
       method: 'POST',
       timeout: 180000, // 3分钟
@@ -214,14 +233,20 @@ Page({
         prompt: prompt,
         topicId: this.data.topicId,
         sessionId: this.data.sessionId,
+        // 【A1】userId 为兼容字段：后端以登录态为准，伪造他人 userId 会被拒绝
         userId: this.data.userId,
       },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       responseType: 'text',
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         if (res.statusCode === 200) {
           const responseText = res.data || '';
           if (responseText.trim()) {
@@ -235,11 +260,11 @@ Page({
         }
       },
       fail: (err) => {
-        console.error('AI请求失败:', err);
-        const errMsg = err.errMsg || '网络请求失败';
+        const errMsg = (err && err.errMsg) || '网络请求失败';
         this.setData({ status: 'error', statusText: '网络异常', lastError: errMsg, showRetry: true });
       },
       complete: () => {
+        this._chatTask = null;
         this.setData({ isAiThinking: false });
         this._stopWaitTimer();
       },

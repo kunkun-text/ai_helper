@@ -129,12 +129,13 @@
       maxlength="2000" auto-height="{{true}}" show-confirm-bar="{{false}}" />
 
     <view class="voice-actions">
+      <!-- 【D2】识别中/录音中/引擎未就绪一律禁用，避免重复触发录音或识别期间再次上传 -->
       <button class="voice-hold-btn {{isRecording ? 'recording' : ''}}"
         bindtouchstart="onVoiceTouchStart"
         bindtouchend="onVoiceTouchEnd"
         bindtouchcancel="onVoiceTouchCancel"
-        disabled="{{isAiThinking || isFinished}}">
-        <text>{{isRecording ? '松开 结束' : (asrReady ? '按住 说话' : '语音识别未就绪')}}</text>
+        disabled="{{isAiThinking || isFinished || isRecording || isRecognizing || !asrReady}}">
+        <text>{{isRecording ? '松开 结束' : (isRecognizing ? '识别中…' : (asrReady ? '按住 说话' : '语音识别未就绪'))}}</text>
         <view wx:if="{{isRecording}}" class="recording-wave">
           <view class="wave-bar"></view>
           <view class="wave-bar"></view>

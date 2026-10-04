@@ -17,6 +17,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 语音答辩支撑接口（F10）。
@@ -24,9 +26,13 @@ import java.util.Map;
  * <p>背景：微信「同声传译」插件已确认**个人主体小程序无法使用**（插件管理与服务市场均搜不到），
  * 因此语音答辩改为「后端合成语音播报 + 小程序原生录音上传识别」，不依赖任何小程序插件。</p>
  *
- * <p><b>为何不加登录校验</b>：与答辩主链路 {@code /api/chat} 保持一致 ——
- * 整条答辩链路都不在 {@code WebConfig.PROTECTED_PATHS} 内，避免 token 过期导致答辩中途播报/识别失败。
- * 风险由「文本长度上限 / 音频大小上限 / 结果缓存」控制（见对应 Service 实现）。</p>
+ * <p><b>鉴权（A1 · 2026-10-05）</b>：{@code /api/voice/**} 已纳入
+ * {@code WebConfig.PROTECTED_PATHS}，所有接口只服务登录用户——语音答辩与文字答辩
+ * 同属答辩链路，不允许匿名调用。token 过期由前端统一处理（提示重新登录）。</p>
+ *
+ * <p><b>资源保护（D1 · 2026-10-05）</b>：识别前先在 Controller 层检查音频大小，
+ * 超限直接拒绝、不会读入内存；whisper 是 CPU 密集任务，用信号量限制并发为 1，
+ * 排队超时提示「稍后重试」（{@code WhisperAsrServiceImpl} 内保留二次大小校验）。</p>
  */
 @Slf4j
 @RestController
@@ -35,6 +41,12 @@ public class VoiceController {
 
     /** 上传音频允许的扩展名（录音来自小程序，正常只会是这几种） */
     private static final String[] ALLOWED_AUDIO_EXTS = {"mp3", "wav", "aac", "m4a", "pcm", "amr"};
+
+    /** 【D1】录音文件大小上限（与 WhisperAsrServiceImpl.MAX_AUDIO_BYTES 保持一致，20MB） */
+    private static final long MAX_AUDIO_BYTES = 20L * 1024 * 1024;
+
+    /** 【D1】ASR 并发上限：whisper 为 CPU 密集任务，同时只允许 1 个识别任务 */
+    private static final Semaphore ASR_PERMITS = new Semaphore(1);
 
     @Resource
     private TtsService ttsService;
@@ -87,6 +99,23 @@ public class VoiceController {
             return Result.error("录音内容为空，请重新录制");
         }
 
+        // 【D1】先检查大小再读内存：超限直接拒绝，不会把超大文件读进 JVM，也不会启动 ffmpeg/whisper
+        if (file.getSize() > MAX_AUDIO_BYTES) {
+            return Result.error("录音文件过大，请缩短作答时长后重试");
+        }
+
+        // 【D1】并发控制：whisper 同时只允许 1 个任务，排队等不到就提示稍后重试
+        boolean acquired = false;
+        try {
+            acquired = ASR_PERMITS.tryAcquire(3, TimeUnit.SECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        if (!acquired) {
+            log.warn("语音识别并发已满，本次请求被拒绝 - 客户端: {}", file.getOriginalFilename());
+            return Result.error("当前识别人数较多，请稍后重试");
+        }
+
         String ext = resolveExt(format, file.getOriginalFilename());
         byte[] audio;
         try {
@@ -94,10 +123,18 @@ public class VoiceController {
         } catch (IOException e) {
             log.error("读取上传录音失败", e);
             return Result.error("录音上传失败，请重试");
+        } catch (OutOfMemoryError oom) {
+            log.error("读取上传录音内存不足", oom);
+            return Result.error("录音上传失败，请重试");
         }
 
         long start = System.currentTimeMillis();
-        String text = asrService.transcribe(audio, ext);
+        String text;
+        try {
+            text = asrService.transcribe(audio, ext);
+        } finally {
+            ASR_PERMITS.release();
+        }
         long cost = System.currentTimeMillis() - start;
 
         log.info("语音识别请求完成 - 音频: {} 字节, 格式: {}, 耗时: {} ms, 识别长度: {}",

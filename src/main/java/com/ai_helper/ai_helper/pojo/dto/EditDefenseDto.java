@@ -30,13 +30,16 @@ public class EditDefenseDto {
 
     /**
      * 获取 LocalDate 格式的答辩时间
+     *
+     * <p>【B3 · 2026-10-05】格式必须为项目约定的 {@code yyyy-MM-dd}；
+     * 空串 / 非法格式一律返回 null，由 Service 层拒绝写库（旧实现会把 null 拼成字符串 "null" 落库）。</p>
      */
     public LocalDate getDefenseTimeAsLocalDate() {
         if (this.defenseTime == null || this.defenseTime.trim().isEmpty()) {
             return null;
         }
         try {
-            return LocalDate.parse(this.defenseTime, DateTimeFormatter.ISO_LOCAL_DATE);
+            return LocalDate.parse(this.defenseTime.trim(), DateTimeFormatter.ISO_LOCAL_DATE);
         } catch (Exception e) {
             return null;
         }

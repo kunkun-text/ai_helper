@@ -22,7 +22,8 @@ Page({
     pwdStrength: 0, // 密码强度 0-3
     pwdStrengthDesc: '未输入', // 密码强度描述
     pwdNotMatch: false, // 密码不一致
-    canRegister: false // 是否可注册
+    canRegister: false, // 是否可注册
+    submitting: false // 【C4】注册中，防重复提交
   },
 
   /**
@@ -223,12 +224,17 @@ Page({
 
   // 注册逻辑
   handleRegister() {
+    // 【C4】防重复提交：注册中连点不再发第二个请求
+    if (this.data.submitting) {
+      return;
+    }
     const { currentRole, account, name, email, password } = this.data;
     // 使用全局配置的服务器地址
     const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/register/${currentRole}`;
 
-    wx.showLoading({ title: '注册中...' });
+    this.setData({ submitting: true });
+    wx.showLoading({ title: '注册中...', mask: true });
 
     wx.request({
       url: requestUrl,
@@ -244,32 +250,24 @@ Page({
         'content-type': 'application/json'
       },
       success: (res) => {
-        wx.hideLoading();
-        if (res.data.code === 1) {
-          wx.showToast({
-            title: '注册成功',
-            icon: 'success'
-          });
+        if (res && res.data && res.data.code === 1) {
+          wx.showToast({ title: '注册成功', icon: 'success' });
           // 跳转到登录页
           setTimeout(() => {
-            wx.redirectTo({
-              url: '/pages/login/login?role=' + currentRole
-            });
+            wx.redirectTo({ url: '/pages/login/login?role=' + currentRole });
           }, 1500);
         } else {
-          wx.showToast({
-            title: res.data.msg || '注册失败',
-            icon: 'error'
-          });
+          wx.showToast({ title: (res && res.data && res.data.msg) || '注册失败', icon: 'none' });
         }
       },
-      fail: (err) => {
+      fail: () => {
+        // 【C5】不再打印请求详情
+        wx.showToast({ title: '网络请求失败', icon: 'none' });
+      },
+      complete: () => {
+        // 【C4】loading 三态闭环 + 恢复按钮
         wx.hideLoading();
-        wx.showToast({
-          title: '网络请求失败',
-          icon: 'error'
-        });
-        console.error('注册请求失败:', err);
+        this.setData({ submitting: false });
       }
     });
   }

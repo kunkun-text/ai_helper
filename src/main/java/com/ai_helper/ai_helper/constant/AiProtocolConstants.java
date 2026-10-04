@@ -34,6 +34,9 @@ public final class AiProtocolConstants {
     /** 总结行标签（半角冒号） */
     public static final String SUMMARY_TAG = "总结:";
 
+    /** 总结行标签（全角冒号，兼容模型偶尔输出） */
+    public static final String SUMMARY_TAG_FULL = "总结：";
+
     /** 题目标签（全角 / 半角冒号都要认） */
     public static final String[] NEXT_QUESTION_TAGS = {NEXT_QUESTION_TAG, NEXT_QUESTION_TAG_FULL};
 

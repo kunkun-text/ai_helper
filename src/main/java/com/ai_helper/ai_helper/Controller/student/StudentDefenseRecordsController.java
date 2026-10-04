@@ -8,6 +8,7 @@ import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
 import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
+import com.ai_helper.ai_helper.result.PageResult;
 import com.ai_helper.ai_helper.result.Result;
 import com.ai_helper.ai_helper.util.UploadUtils;
 import com.github.pagehelper.PageInfo;
@@ -86,10 +87,14 @@ public class StudentDefenseRecordsController {
 
     /*
      * 获取答辩题目（公共数据，不涉及个人信息）
+     * 【F3】分页：pageNum / pageSize / keyword（课题名模糊），默认第 1 页 10 条
      */
     @GetMapping("/getDefenseTopic")
-    public Result<List<DefenseTopics>> getDefenseTopic() {
-        return defenseRecordsService.getDefenseTopic();
+    public Result<PageResult<DefenseTopics>> getDefenseTopic(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String keyword) {
+        return defenseRecordsService.getDefenseTopic(pageNum, pageSize, keyword);
     }
 
     /**

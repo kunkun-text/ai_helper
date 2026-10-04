@@ -182,7 +182,9 @@ public class WhisperAsrServiceImpl implements AsrService {
 
             return runWhisper(inputForEngine, outputPrefix);
         } catch (IOException e) {
-            throw new BusinessException("语音识别失败：" + e.getMessage());
+            // 【F2】IO 细节（临时文件路径等）只记日志，前端给固定文案
+            log.error("语音识别 IO 异常", e);
+            throw new BusinessException("语音识别失败，请重试");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException("语音识别被中断，请重试");

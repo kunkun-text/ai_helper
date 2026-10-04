@@ -5,8 +5,9 @@
 #   - application.yml 已在 .gitignore 中被排除（内含密码，不入库），所以每台机器都要自己放一份
 #   - 本模板文件会被 git 跟踪，供换机器 / 新同学按图索骥
 #
-# 【启动顺序】MySQL(3306) → Redis(6379) → Ollama(11434) → 本服务(8080)
-# 【数据库】需先建好数据库 ai_helper 并导入表结构（参考 docs/ 下的 ddl）
+# 【启动顺序】MySQL(3307) → Redis(6379) → Ollama(11434) → 本服务(8080)
+# 【数据库】需先建好数据库 ai_helper 并导入表结构：mysql -uroot -p < docs/schema.sql（10 张表）
+# 【自检】powershell -ExecutionPolicy Bypass -File .\diagnose.ps1（会按本文件的 jdbc url 解析端口/库名）
 # ==========================================================================
 
 server:
@@ -35,9 +36,11 @@ spring:
       request-timeout: 180000
 
   # ---- MySQL ----
-  # TODO 改成你机器的账号与密码；库名 ai_helper 不要改
+  # TODO 改成你机器的账号与密码；库名 ai_helper 不要改。
+  # 端口与《从零部署手册-8G低功耗标准》保持一致：标准部署为 3307；
+  # 若你的 MySQL 跑在 3306，把下面 url 里的 3307 改成 3306（diagnose.ps1 会跟着本文件走，无需改脚本）。
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/ai_helper?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3307/ai_helper?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: your-mysql-password
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -157,6 +160,9 @@ app:
     ffmpeg-exe: ""
     # 识别语言（zh = 中文）
     language: zh
+    # 识别提示词（可选，留空用代码内置默认值）：引导简体中文输出 + 提供专业术语表。
+    # 注意 whisper 的 prompt 约 224 token 上限，别写太长。
+    # prompt: "以下是《大数据技术与原理》课程答辩中，学生回答考官提问的语音转写，口语化表达，请用规范的简体中文输出。常见术语：Hadoop HDFS MapReduce YARN Hive HBase Spark..."
     # 单次识别超时（秒）：超时即返回"没听清"，让学生重录
     timeout-seconds: 180
     # 前端单次录音时长上限（秒），超过会自动停止录音

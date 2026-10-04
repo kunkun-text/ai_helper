@@ -26,7 +26,9 @@ public class WebConfig implements WebMvcConfigurer {
     /**
      * 需要登录才能访问的路径。
      *
-     * <p>采用「按需保护」而非全站保护：答辩链路（/api/chat 等）不在其中，避免影响面过大。</p>
+     * <p>【A1 · 2026-10-05】答辩主链路（/api/chat、/api/final-evaluate、/api/voice/**）已补入保护：
+     * 此前不登录即可伪造任意 userId 发起/续答/汇总他人答辩。现在一律要求登录，
+     * 身份以登录态 userNumber 为准，body 里的 userId 仅作兼容字段（不匹配直接拒绝，见 chatController）。</p>
      *
      * <p><b>2026-09-28（N19 越权修复）</b>：补入 {@code /teacher/**} 与 {@code /editUserInfo}。
      * 此前这两块不在保护范围内，学生只要登录就能删改课题、改任意他人资料。
@@ -36,6 +38,10 @@ public class WebConfig implements WebMvcConfigurer {
     private static final String[] PROTECTED_PATHS = {
             "/api/video/**",
             "/api/report/**",
+            "/api/chat",
+            "/api/chat/**",
+            "/api/final-evaluate",
+            "/api/voice/**",
             "/student/**",
             "/teacher/**",
             "/editUserInfo"

@@ -8,6 +8,7 @@ import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DefenseResumeVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
+import com.ai_helper.ai_helper.result.PageResult;
 import com.ai_helper.ai_helper.result.Result;
 import com.github.pagehelper.PageInfo;
 
@@ -30,7 +31,14 @@ public interface DefenseRecordsService {
 
     Result<PageInfo<DefenseRecordsVo>> getStudentDefenseRecords(int pageNum, int pageSize, String userNumber);
 
-    Result<List<DefenseTopics>> getDefenseTopic();
+    /**
+     * 【F3】学生课题列表分页查询。
+     *
+     * @param pageNum  页码（从 1 开始）
+     * @param pageSize 每页条数
+     * @param keyword  课题名模糊搜索（可空）
+     */
+    Result<PageResult<DefenseTopics>> getDefenseTopic(int pageNum, int pageSize, String keyword);
 
     TextQuery getDefenseWordsRecords(Integer topicId);
 

@@ -1,6 +1,20 @@
 // 引入全局配置与通用上传模块（仅用到其中的地址解析）
 const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
+const auth = require('../../utils/auth.js');
+
+/**
+ * 【C2 · 2026-10-05】统一处理 401/403：token 过期 / 角色不符时，
+ * 清登录态 + 提示 + 回登录页（与全站行为一致），避免页面"假空态"。
+ * @returns {boolean} true = 已处理（调用方应直接 return）
+ */
+function handleUnauthorized(res) {
+  if (res && (res.statusCode === 401 || res.statusCode === 403)) {
+    auth.handleAuthExpired();
+    return true;
+  }
+  return false;
+}
 
 Page({
   data: {
@@ -55,11 +69,12 @@ Page({
     hasMore: true,
     loading: false,
     isEditingTopic: false, // 标识是否正在编辑题目
+    savingProfile: false, // 【C4】资料保存防重复提交
+    savingTopic: false, // 【C4】课题保存防重复提交
     selectedAnswers: null // 添加选中的回答详情
   },
 
   onLoad() {
-    console.log('老师页面onLoad执行');
     this.loadUserInfo();
     
     // 页面加载时获取第一页数据
@@ -101,10 +116,6 @@ Page({
       topicName: this.data.searchTopicName.trim() // 新增题目名称搜索参数
     };
     
-    console.log('搜索请求参数:', searchParams);
-    console.log('搜索请求URL:', requestUrl);
-    console.log('搜索请求Token:', token ? '存在' : '不存在');
-    
     wx.request({
       url: requestUrl,
       method: 'POST',
@@ -114,8 +125,7 @@ Page({
       },
       data: searchParams,
       success: (res) => {
-        console.log('搜索答辩记录成功:', res.data);
-        
+        if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const response = res.data.data;
           const newData = response.list.map(record => {
@@ -215,8 +225,7 @@ Page({
         pageSize: this.data.defenseRecordsPageSize
       },
       success: (res) => {
-        console.log('获取答辩记录成功:', res.data);
-        
+        if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const response = res.data.data;
           const newData = response.list.map(record => {
@@ -286,8 +295,7 @@ Page({
           });
         }
       },
-      fail: (error) => {
-        console.error('获取答辩记录失败:', error);
+      fail: () => {
         wx.showToast({
           title: '网络错误或服务器无响应',
           icon: 'error'
@@ -323,12 +331,9 @@ Page({
   // 执行搜索
   performSearch() {
     const { searchUserName, searchUserNumber, searchTopicName } = this.data;
-    
-    console.log('执行搜索 - 用户名:', searchUserName, '学号:', searchUserNumber, '题目名称:', searchTopicName);
-    
+
     // 如果所有搜索条件都为空，则清空搜索
     if (!searchUserName.trim() && !searchUserNumber.trim() && !searchTopicName.trim()) {
-      console.log('搜索条件为空，执行清空搜索');
       this.clearSearch();
       return;
     }
@@ -342,7 +347,6 @@ Page({
       defenseRecordsLoading: true
     });
     
-    console.log('开始执行搜索请求');
     // 执行搜索请求
     this.loadDefenseRecordsBySearch(true); // 使用刷新模式
   },
@@ -458,14 +462,9 @@ loadMoreTopics() {
   },
 
   loadUserInfo() {
-    // 从本地存储获取登录时保存的用户信息
-    const token = wx.getStorageSync('token') || '';
-    const userInfo = wx.getStorageSync('userInfo') || {};
-
-    console.log('=== 老师用户信息加载 ===');
-    console.log('从storage获取的token:', token);
-    console.log('从storage获取的userInfo:', userInfo);
-    console.log('当前data中的user:', this.data.user);
+    // 【C1】统一从 auth 模块读登录态（不再直接访问 storage key）
+    const token = auth.getToken();
+    const userInfo = auth.getUserInfo();
 
     // 使用后端返回的实际数据
     const name = userInfo.name || this.data.user.name;
@@ -473,13 +472,6 @@ loadMoreTopics() {
     const userNumber = userInfo.userNumber || this.data.user.userNumber || '未填写';  // 保留userNumber字段
     const phone = userInfo.phoneNumber || this.data.user.phone || '未绑定';
     const email = userInfo.email || this.data.user.email || '未绑定';
-
-    console.log('解析后的老师用户信息:');
-    console.log('- 姓名:', name);
-    console.log('- ID:', id);
-    console.log('- 工号:', userNumber);
-    console.log('- 手机:', phone);
-    console.log('- 邮箱:', email);
 
     this.setData({
       token,
@@ -498,9 +490,6 @@ loadMoreTopics() {
         email: email
       }
     });
-
-    console.log('更新后的data.user:', this.data.user);
-    console.log('=== 老师用户信息加载完成 ===');
   },
 
   // 加载答辩题目数据
@@ -528,8 +517,7 @@ loadMoreTopics() {
         pageSize: this.data.pageSize
       },
       success: (res) => {
-        console.log('获取答辩题目成功:', res.data);
-        
+        if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const response = res.data.data;
           const newData = response.list.map(topic => ({
@@ -714,7 +702,7 @@ loadMoreTopics() {
           'Authorization': token ? 'Bearer ' + token : ''
         },
         success: (res) => {
-          console.log('获取题目问题成功:', res.data);
+          if (handleUnauthorized(res)) { return; }
           if (res.data.code === 1) {
             // 将问题数据合并到topic对象中
             const topicWithQuestions = {
@@ -776,7 +764,7 @@ loadMoreTopics() {
           'Authorization': token ? 'Bearer ' + token : ''
         },
         success: (res) => {
-          console.log('获取反馈详情成功:', res.data);
+          if (handleUnauthorized(res)) { return; }
           if (res.data.code === 1) {
             const detailData = res.data.data;
             // 构建完整的反馈详情对象，确保包含topicName字段以匹配WXML期望的字段名
@@ -1075,8 +1063,12 @@ loadMoreTopics() {
   },
 
   addTopic() {
+    // 【C4】防重复提交：保存中连点不再发第二个请求
+    if (this.data.savingTopic) {
+      return;
+    }
     const { id, title, description, date, questions } = this.data.newTopic;
-    
+
     // 验证必填项
     if (!title || !title.trim()) {
       wx.showToast({
@@ -1124,17 +1116,20 @@ loadMoreTopics() {
     }
     
     // 显示加载提示
-    wx.showLoading({ 
-      title: this.data.isEditingTopic ? '更新中...' : '添加中...' 
+    this.setData({ savingTopic: true });
+    wx.showLoading({
+      title: this.data.isEditingTopic ? '更新中...' : '添加中...',
+      mask: true
     });
 
     // 构建要发送到后端的数据
+    // 【A3】不再传 teacherId：后端以登录态解析当前教师 user_id（旧实现写死 20，
+    // 任何教师登录新增的课题都会挂到 20 号教师名下）
     const requestData = {
       topicId: id, // 使用题目ID来区分编辑和新增操作
       topicName: title.trim(),
       topicDescription: description.trim(),
       defenseTime: date,
-      teacherId: 20, // 使用固定的teacherId 20，与后端测试数据一致
       questions: questions && questions.length > 0 ? questions.map(q => ({
         questionType: q.questionType || 'teacher', // 默认为teacher类型
         question: q.question.trim(),
@@ -1158,8 +1153,7 @@ loadMoreTopics() {
       },
       data: requestData,
       success: (res) => {
-        console.log(this.data.isEditingTopic ? '更新答辩题目成功:' : '添加答辩题目成功:', res.data);
-        
+        if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           wx.showToast({
             title: this.data.isEditingTopic ? '更新成功' : '添加成功',
@@ -1183,15 +1177,16 @@ loadMoreTopics() {
           });
         }
       },
-      fail: (error) => {
-        console.error(this.data.isEditingTopic ? '更新答辩题目失败:' : '添加答辩题目失败:', error);
+      fail: () => {
         wx.showToast({
           title: '网络错误或服务器无响应',
-          icon: 'error'
+          icon: 'none'
         });
       },
       complete: () => {
+        // 【C4】loading 三态闭环 + 恢复防重标志
         wx.hideLoading();
+        this.setData({ savingTopic: false });
       }
     });
   },
@@ -1215,6 +1210,7 @@ loadMoreTopics() {
               'Authorization': wx.getStorageSync('token') ? 'Bearer ' + wx.getStorageSync('token') : ''
             },
             success: (res) => {
+              if (handleUnauthorized(res)) { return; }
               if (res.data.code === 1) {
                 wx.showToast({
                   title: '删除成功',
@@ -1260,10 +1256,16 @@ loadMoreTopics() {
 
   saveProfile() {
     const that = this;
-    
+    // 【C4】防重复提交
+    if (this.data.savingProfile) {
+      return;
+    }
+    this.setData({ savingProfile: true });
+
     // 显示加载提示
     wx.showLoading({
-      title: '保存中...'
+      title: '保存中...',
+      mask: true
     });
 
     // 构造请求参数（与学生端相同的格式）
@@ -1274,8 +1276,6 @@ loadMoreTopics() {
       phoneNumber: this.data.editedUser.phone,
       email: this.data.editedUser.email
     };
-
-    console.log('发送到后端的数据:', requestData);
 
     // 发送请求到后端（与学生端相同的接口）
     // 使用全局配置的服务器地址
@@ -1289,8 +1289,7 @@ loadMoreTopics() {
         'Authorization': 'Bearer ' + this.data.token
       },
       success(res) {
-        console.log('后端响应:', res);
-        
+        if (handleUnauthorized(res)) { return; }
         if (res.statusCode === 200 && res.data.code === 1) {
           // 请求成功
           wx.showToast({
@@ -1312,29 +1311,27 @@ loadMoreTopics() {
             isEditing: false
           });
 
-          // 更新本地存储的用户信息
-          const userInfo = wx.getStorageSync('userInfo') || {};
-          Object.assign(userInfo, updatedUser);
-          wx.setStorageSync('userInfo', userInfo);
+          // 【C1】更新本地存储的用户信息（统一走 auth 模块）
+          auth.updateUserInfo(updatedUser);
 
         } else {
           // 请求失败
           wx.showToast({
-            title: res.data.msg || '保存失败',
-            icon: 'error'
+            title: (res.data && res.data.msg) || '保存失败',
+            icon: 'none'
           });
         }
       },
-      fail(err) {
-        console.error('请求失败:', err);
+      fail() {
         wx.showToast({
           title: '网络请求失败',
-          icon: 'error'
+          icon: 'none'
         });
       },
       complete() {
-        // 隐藏加载提示
+        // 【C4】loading 三态闭环 + 恢复防重标志
         wx.hideLoading();
+        that.setData({ savingProfile: false });
       }
     });
   },
@@ -1356,9 +1353,8 @@ loadMoreTopics() {
   },
 
   logout() {
-    wx.removeStorageSync('token');
-    wx.removeStorageSync('userInfo');
-    wx.removeStorageSync('user');
+    // 【C1】统一退出：清除 token/userInfo/userName/userRole 及历史遗留 user/role
+    auth.clearLogin();
     wx.reLaunch({
       url: '/pages/login/login'
     });
@@ -1387,7 +1383,7 @@ loadMoreTopics() {
         'Authorization': token ? 'Bearer ' + token : ''
       },
       success: (res) => {
-        console.log('获取回答详情成功:', res.data);
+        if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const answers = res.data.data;
           // 处理数据，添加必要的字段用于显示

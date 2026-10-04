@@ -61,8 +61,9 @@ public class PasswordResetServiceImpl implements PasswordResetService {
             log.info("密码重置邮件已发送至：" + email);
             return Result.success("重置邮件已发送，请查收");
         } catch (Exception e) {
-            log.error("邮件发送失败：" + e.getMessage());
-            return Result.error("邮件发送失败：" + e.getMessage());
+            // 【F2】SMTP 细节（主机/端口/账号）只记日志，不回传前端
+            log.error("密码重置邮件发送失败 - 收件人: {}", email, e);
+            return Result.error("邮件发送失败，请稍后重试或联系管理员");
         }
     }
 

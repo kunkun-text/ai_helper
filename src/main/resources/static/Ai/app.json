@@ -7,7 +7,6 @@
     "pages/defense-voice/defense-voice",
     "pages/teacher/teacher",
     "pages/forgetPassword/forgetPassword",
-    "pages/webview/webview",
     "pages/feedback/feedback",
     "pages/feedback-admin/feedback-admin",
     "pages/stats/stats"
@@ -22,14 +21,8 @@
   "sitemapLocation": "sitemap.json",
   "lazyCodeLoading": "requiredComponents",
   "permission": {
-    "scope.userLocation": {
-      "desc": "你的位置信息将用于获取附近的服务"
-    },
-    "scope.writePhotosAlbum": {
-      "desc": "允许保存和选择视频文件"
-    },
     "scope.camera": {
-      "desc": "允许使用相机拍摄视频"
+      "desc": "允许使用相机拍摄答辩视频"
     },
     "scope.record": {
       "desc": "语音答辩需要录音权限，用于把你的语音回答转成文字"

@@ -119,7 +119,7 @@
   </view>
 
   <!-- 注册按钮 -->
-  <button class="register-btn {{canRegister ? 'active' : ''}}" bindtap="handleRegister" disabled="{{!canRegister}}">完成注册</button>
+  <button class="register-btn {{canRegister ? 'active' : ''}}" bindtap="handleRegister" disabled="{{!canRegister || submitting}}">完成注册</button>
 
   <!-- 底部文字 -->
   <view class="footer-text">© 2025 AI答辩辅助系统 版权所有</view>

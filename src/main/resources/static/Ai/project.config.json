@@ -38,14 +38,7 @@
   },
   "appid": "wx1e49b1999649224d",
   "simulatorPluginLibVersion": {},
-  "requiredBackgroundModes": [
-    "audio"
-  ],
-  "permission": {
-    "scope.userLocation": {
-      "desc": "你的位置信息将用于获取附近的服务"
-    }
-  },
+  "permission": {},
   "plugins": {},
   "resizable": true,
   "networkTimeout": {

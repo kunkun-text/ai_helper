@@ -118,6 +118,7 @@
                or exists (select 1 from defense_answers da where da.defense_id = dr.defense_id))
         order by dr.defense_id desc
     </select>
+    <!-- 【F3 · 2026-10-05】课题列表分页：不再全表返回（大题库会拖慢页面） -->
     <select id="getDefenseTopic" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseTopics">
         select
             topic_id as topicId,
@@ -128,7 +129,22 @@
             created_at as createdAt
         from
             defense_topics
+        <where>
+            <if test="keyword != null and keyword != ''">
+                topic_name like concat('%', #{keyword}, '%')
+            </if>
+        </where>
         order by defense_time DESC
+        limit #{offset}, #{limit}
+    </select>
+
+    <select id="countDefenseTopic" resultType="long">
+        select count(*) from defense_topics
+        <where>
+            <if test="keyword != null and keyword != ''">
+                topic_name like concat('%', #{keyword}, '%')
+            </if>
+        </where>
     </select>
     <select id="selectByUserIdAndTopicId" resultType="java.lang.Integer">
         select count(dr.defense_id)

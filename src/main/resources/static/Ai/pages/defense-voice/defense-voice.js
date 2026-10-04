@@ -1,4 +1,7 @@
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
+const protocol = require('../../utils/protocol.js');
+const { resolveUrl } = require('../../utils/url.js');
 
 /**
  * 语音答辩页（F10 · 2026-09-29）。
@@ -81,10 +84,15 @@ Page({
       method: 'POST',
       data: { topicId: this.data.topicId, userId: this.data.userId },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const info = res.data || {};
         if (info.resumable) {
           this.askResumeOrRestart(info);
@@ -96,10 +104,42 @@ Page({
     });
   },
 
+  /** 【D2】页面卸载：停掉所有异步动作（定时器/播报/在途 ASR 上传/在途 chat），并置 _unloaded 防回调 setData */
   onUnload() {
+    this._unloaded = true;
     this._stopWaitTimer();
     this._stopRecordTimer();
     this.stopSpeak();
+    if (this._asrUploadTask) {
+      try { this._asrUploadTask.abort(); } catch (e) { /* 已结束 */ }
+      this._asrUploadTask = null;
+    }
+    if (this._chatTask) {
+      try { this._chatTask.abort(); } catch (e) { /* 已结束 */ }
+      this._chatTask = null;
+    }
+    try {
+      if (this._recorder) this._recorder.stop();
+    } catch (e) {
+      // 未在录音时忽略
+    }
+  },
+
+  /** 切到后台同样停掉识别上传与轮询（回来后学生可重新触发） */
+  onHide() {
+    if (this._asrUploadTask) {
+      try { this._asrUploadTask.abort(); } catch (e) { /* 已结束 */ }
+      this._asrUploadTask = null;
+      this.setData({ isRecognizing: false, voiceTip: '' });
+    }
+  },
+
+  /** 【D2】统一 setData 出口：页面已卸载时丢弃回调，避免"离开页面仍报错" */
+  _safeSetData(data) {
+    if (this._unloaded) {
+      return;
+    }
+    this.setData(data);
   },
 
   // ======== 语音能力（ASR + TTS） ========
@@ -130,6 +170,9 @@ Page({
     recorder.onStop((res) => {
       this._voicePressed = false;
       this._stopRecordTimer();
+      if (this._unloaded) {
+        return;
+      }
       this.setData({ isRecording: false });
 
       const filePath = res && res.tempFilePath;
@@ -145,6 +188,9 @@ Page({
     recorder.onError((err) => {
       this._voicePressed = false;
       this._stopRecordTimer();
+      if (this._unloaded) {
+        return;
+      }
       this.setData({ isRecording: false, isRecognizing: false });
       const msg = (err && (err.errMsg || err.msg)) || '';
       if (msg.indexOf('auth') > -1 || msg.indexOf('permission') > -1 || msg.indexOf('deny') > -1) {
@@ -186,12 +232,19 @@ Page({
       url: config.getBaseUrl() + '/api/voice/status',
       method: 'GET',
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
       },
       success: (res) => {
+        if (this._unloaded) {
+          return;
+        }
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const data = (res.data && res.data.data) || {};
         const ready = data.asrReady !== false;
-        this.setData({
+        this._safeSetData({
           asrReady: ready,
           asrTip: ready ? '' : ('语音识别未就绪：' + (data.asrMessage || '') + '（可先用文字作答）'),
         });
@@ -208,6 +261,14 @@ Page({
   /** 按住说话：开始录音 */
   onVoiceTouchStart() {
     if (this.data.isFinished) {
+      return;
+    }
+    // 【D2】识别中/录音中不允许再次开始（按钮 disabled 之外的兜底守卫）
+    if (this.data.isRecognizing) {
+      wx.showToast({ title: '正在识别，请稍候', icon: 'none' });
+      return;
+    }
+    if (this.data.isRecording) {
       return;
     }
     if (this.data.isAiThinking) {
@@ -275,16 +336,27 @@ Page({
    * 识别失败/引擎未就绪时给出可读提示，不阻塞答辩。
    */
   uploadAudioForText(tempFilePath) {
-    wx.uploadFile({
+    // 【D2】保存 UploadTask：卸载/切后台时 abort，离开页面不再继续回调
+    this._asrUploadTask = wx.uploadFile({
       url: config.getBaseUrl() + '/api/voice/asr',
       filePath: tempFilePath,
       name: 'file',
       formData: { format: this._recordFormat || 'mp3' },
       timeout: 180000,
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
       },
       success: (res) => {
+        this._asrUploadTask = null;
+        if (this._unloaded) {
+          return;
+        }
+        // 【C2/D2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          this._safeSetData({ isRecognizing: false });
+          auth.handleAuthExpired();
+          return;
+        }
         let payload = {};
         try {
           payload = JSON.parse(res.data || '{}');
@@ -295,7 +367,7 @@ Page({
         // code 非 1 = 后端给出的业务提示（引擎未就绪 / 超时 / 音频异常）
         if (payload.code !== 1) {
           const msg = payload.msg || '识别失败，请重试';
-          this.setData({ isRecognizing: false, voiceTip: msg });
+          this._safeSetData({ isRecognizing: false, voiceTip: msg });
           wx.showToast({ title: msg, icon: 'none', duration: 2500 });
           return;
         }
@@ -303,21 +375,27 @@ Page({
         const data = payload.data || {};
         const text = (data.text || '').trim();
         if (!text) {
-          this.setData({ isRecognizing: false, voiceTip: '没听清，请按住再说一次' });
+          this._safeSetData({ isRecognizing: false, voiceTip: '没听清，请按住再说一次' });
           wx.showToast({ title: '没听清，请重试', icon: 'none' });
           return;
         }
 
-        this.setData({
+        this._safeSetData({
           isRecognizing: false,
           answerText: text,
           voiceTip: '识别完成，确认无误后点「发送」',
         });
       },
       fail: (err) => {
-        console.error('[语音答辩] 上传识别失败：', err);
-        this.setData({ isRecognizing: false, voiceTip: '网络异常，识别失败，请重试' });
-        wx.showToast({ title: '识别失败，请重试', icon: 'none' });
+        this._asrUploadTask = null;
+        if (this._unloaded) {
+          return;
+        }
+        const aborted = err && err.errMsg && err.errMsg.indexOf('abort') >= 0;
+        this._safeSetData({ isRecognizing: false, voiceTip: aborted ? '' : '网络异常，识别失败，请重试' });
+        if (!aborted) {
+          wx.showToast({ title: '识别失败，请重试', icon: 'none' });
+        }
       },
     });
   },
@@ -344,20 +422,29 @@ Page({
       url: config.getBaseUrl() + '/api/voice/tts',
       method: 'POST',
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       data: { text: content },
       success: (res) => {
+        if (this._unloaded) {
+          return;
+        }
+        // 【C2】401/403 统一处理；合成失败静默跳过，不中断答辩
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const data = (res.data && res.data.data) || {};
         if (res.statusCode !== 200 || !data.url) {
           console.warn('[语音答辩] 语音合成未成功，跳过本次播报');
           return;
         }
-        this.playAudio(config.getBaseUrl() + data.url);
+        // 【D3】resolveUrl 兼容相对路径与绝对 CDN 地址，避免拼出 hosthttp://... 播不了
+        this.playAudio(resolveUrl(data.url));
       },
-      fail: (err) => {
-        console.error('[语音答辩] 语音合成请求失败：', err);
+      fail: () => {
+        // 合成失败只跳过播报（屏幕上有完整文字，不影响作答）
       },
     });
   },
@@ -514,7 +601,7 @@ Page({
     this._startWaitTimer();
     this._lastPrompt = prompt;
 
-    wx.request({
+    this._chatTask = wx.request({
       url: config.getBaseUrl() + '/api/chat',
       method: 'POST',
       timeout: 180000,
@@ -522,33 +609,45 @@ Page({
         prompt: prompt,
         topicId: this.data.topicId,
         sessionId: this.data.sessionId,
+        // 【A1】userId 为兼容字段：后端以登录态为准
         userId: this.data.userId,
       },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       responseType: 'text',
       success: (res) => {
+        if (this._unloaded) {
+          return;
+        }
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         if (res.statusCode === 200) {
           const responseText = res.data || '';
           if (responseText.trim()) {
             const parsed = this.parseAiResponse(responseText);
             this.addAiMessage(responseText, parsed);
           } else {
-            this.setData({ status: 'error', statusText: 'AI回复异常', lastError: 'AI回复为空，请重试', showRetry: true });
+            this._safeSetData({ status: 'error', statusText: 'AI回复异常', lastError: 'AI回复为空，请重试', showRetry: true });
           }
         } else {
-          this.setData({ status: 'error', statusText: '网络异常', lastError: `请求失败(${res.statusCode})`, showRetry: true });
+          this._safeSetData({ status: 'error', statusText: '网络异常', lastError: `请求失败(${res.statusCode})`, showRetry: true });
         }
       },
       fail: (err) => {
-        console.error('AI请求失败:', err);
-        const errMsg = err.errMsg || '网络请求失败';
-        this.setData({ status: 'error', statusText: '网络异常', lastError: errMsg, showRetry: true });
+        if (this._unloaded) {
+          return;
+        }
+        const errMsg = (err && err.errMsg) || '网络请求失败';
+        this._safeSetData({ status: 'error', statusText: '网络异常', lastError: errMsg, showRetry: true });
       },
       complete: () => {
-        this.setData({ isAiThinking: false });
+        this._chatTask = null;
+        this._safeSetData({ isAiThinking: false });
         this._stopWaitTimer();
       },
     });
@@ -722,10 +821,15 @@ Page({
         resume: !!resume,
       },
       header: {
-        'Authorization': 'Bearer ' + (wx.getStorageSync('token') || ''),
+        'Authorization': 'Bearer ' + auth.getToken(),
         'content-type': 'application/json',
       },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const data = res.data || {};
         if (data.resumed) {
           this.resumeDefense(data);
@@ -751,7 +855,9 @@ Page({
     this.addSystemMessage(`检测到未完成的答辩，已为你继续：前 ${answered} 题已完成，当前第 ${roundNum} 题。`);
 
     if (data.currentQuestion) {
-      const text = '点评:请继续作答。\n下一题:' + data.currentQuestion;
+      // 【F1】协议标签统一走 protocol 常量
+      const text = protocol.COMMENT_TAG + '请继续作答。\n'
+        + protocol.NEXT_QUESTION_TAG + data.currentQuestion;
       this.addAiMessage(text, this.parseAiResponse(text));
     } else {
       this.addSystemMessage('请继续作答上一轮考官提出的问题。');

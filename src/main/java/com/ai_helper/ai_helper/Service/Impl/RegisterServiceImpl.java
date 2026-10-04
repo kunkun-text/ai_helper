@@ -77,9 +77,9 @@ public class RegisterServiceImpl implements RegisterService {
                     return Result.error("该工号已注册，请更换账号");
                 }
             } catch (Exception e) {
-                // 其他异常（如字段错误/数据库连接错误）
-                log.error("注册失败：{}", e.getMessage());
-                return Result.error("注册失败：" + e.getMessage());
+                // 【F2】其他异常（字段错误/数据库连接错误）只记栈，不把细节回传前端
+                log.error("注册失败 - userNumber: {}", user.getUserNumber(), e);
+                return Result.error("注册失败，请稍后重试");
             }
         }
     }
@@ -138,8 +138,9 @@ public class RegisterServiceImpl implements RegisterService {
             // 5. 返回成功结果及 token
             return Result.success(resultMap);
         } catch (Exception e) {
-            e.printStackTrace();
-            return Result.error("登录失败：" + e.getMessage());
+            // 【F2】删掉 printStackTrace + 异常 message 透传：前端只见固定友好文案，栈进日志
+            log.error("登录异常 - userNumber: {}", userDto.getUserNumber(), e);
+            return Result.error("登录失败，请稍后重试");
         }
     }
 

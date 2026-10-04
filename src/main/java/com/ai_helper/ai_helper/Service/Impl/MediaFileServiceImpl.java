@@ -8,6 +8,7 @@ import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.enums.MediaKind;
 import com.ai_helper.ai_helper.util.UploadUtils;
+import cn.hutool.core.util.IdUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,12 +46,12 @@ public class MediaFileServiceImpl implements MediaFileService {
         }
 
         // 2. 落盘
+        // 【F7 · 2026-10-05】命名规范化：生成「答辩报告_学号_原名_短随机.ext」这类安全可读的存储名，
+        // 不再直接用原名（防目录穿越/重名覆盖），扩展名以白名单校验结果为准（不信前端传的临时路径）
+        String storedName = buildSafeStoredName(kind, loginUserNumber, file.getOriginalFilename());
         String relativePath;
         try (InputStream in = file.getInputStream()) {
-            relativePath = fileStorageService.save(
-                    kind.getSubDir(),
-                    fileStorageService.generateFileName(file.getOriginalFilename()),
-                    in);
+            relativePath = fileStorageService.save(kind.getSubDir(), storedName, in);
         } catch (Exception e) {
             log.error("附件落盘失败 - kind: {}, topicId: {}, user: {}", kind, topicId, loginUserNumber, e);
             throw new BusinessException("文件保存失败，请稍后重试", e);
@@ -162,6 +163,61 @@ public class MediaFileServiceImpl implements MediaFileService {
             throw new BusinessException(kind.getLabel() + "过大：" + UploadUtils.readableSize(file.getSize())
                     + "，上限为 " + UploadUtils.readableSize(rule.getMaxSize()));
         }
+
+        // 【F7】文件头校验：扩展名可能被伪造（把 .exe 改名成 .pdf），按魔数做一层兜底
+        try (InputStream head = file.getInputStream()) {
+            byte[] magic = head.readNBytes(4);
+            if ("pdf".equals(ext) && !isPdfMagic(magic)) {
+                throw new BusinessException("文件内容与扩展名不符，请上传真实的 PDF 文件");
+            }
+            if (("docx".equals(ext) || "xlsx".equals(ext) || "pptx".equals(ext)) && !isZipMagic(magic)) {
+                throw new BusinessException("文件内容与扩展名不符，请上传真实的 Office 文件");
+            }
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            log.warn("文件头校验读取失败（放行由后续解析兜底） - file: {}", file.getOriginalFilename());
+        }
+    }
+
+    /** PDF 魔数：%PDF */
+    private boolean isPdfMagic(byte[] magic) {
+        return magic != null && magic.length >= 4
+                && magic[0] == 0x25 && magic[1] == 0x50 && magic[2] == 0x44 && magic[3] == 0x46;
+    }
+
+    /** Office Open XML（docx/xlsx/pptx）魔数：PK\x03\x04（zip 容器） */
+    private boolean isZipMagic(byte[] magic) {
+        return magic != null && magic.length >= 4
+                && magic[0] == 0x50 && magic[1] == 0x4B
+                && magic[2] == 0x03 && magic[3] == 0x04;
+    }
+
+    /**
+     * 【F7】生成安全可读的存储名：{@code 答辩报告_学号_原名_短随机.ext}。
+     *
+     * <p>原名只保留字母/数字/中文与少量安全符号，长度截断；扩展名已由 {@link #validateFile}
+     * 按白名单校验，这里只做小写化，杜绝目录穿越与双扩展名。</p>
+     */
+    private String buildSafeStoredName(MediaKind kind, String userNumber, String originalFileName) {
+        String ext = UploadUtils.extensionOf(originalFileName);
+        String base = originalFileName == null ? "" : originalFileName;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+        // 去掉路径分隔符等危险字符，只保留中英文、数字、下划线、连字符与空格
+        base = base.replaceAll("[\\\\/:*?\"<>|\\r\\n]", "").trim();
+        if (base.isEmpty()) {
+            base = kind.getLabel();
+        }
+        if (base.length() > 40) {
+            base = base.substring(0, 40);
+        }
+        String user = (userNumber == null ? "" : userNumber.trim().replaceAll("[^0-9A-Za-z_\\-]", ""));
+        String random = IdUtil.simpleUUID().substring(0, 6);
+        return kind.getLabel() + "_" + user + "_" + base + "_" + random
+                + (ext.isEmpty() ? "" : "." + ext.toLowerCase());
     }
 
     private String readStoredUrl(String internalUserId, Integer topicId, MediaKind kind) {

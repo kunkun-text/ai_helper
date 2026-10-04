@@ -106,8 +106,8 @@ public class AppProperties {
         /** 登录 token 有效期（分钟）。太短会导致长答辩/大文件上传中途失效 */
         private long tokenTtlMinutes = 120;
 
-        /** 无需登录即可访问的路径（Ant 风格），由 WebConfig 读取 */
-        private List<String> excludePaths = new ArrayList<>();
+        // 【E4 · 2026-10-05】原 excludePaths 字段注释称"由 WebConfig 读取"，实际 WebConfig 从未读取
+        // （受保护路径是 WebConfig.PROTECTED_PATHS 常量），为避免配置项骗人，直接删除该字段。
     }
 
     @Data

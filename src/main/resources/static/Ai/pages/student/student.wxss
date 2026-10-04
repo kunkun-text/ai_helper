@@ -123,26 +123,6 @@
   margin-bottom: 16rpx;
 }
 
-.label {
-  font-size: 24rpx;
-  color: #666666;
-}
-
-.value {
-  font-size: 28rpx;
-  color: #333333;
-  margin-top: 10rpx;
-  display: block;
-  background: #f7f9fb;
-  padding: 16rpx 20rpx;
-  border-radius: 12rpx;
-  width: 100%;
-  box-sizing: border-box;
-  word-break: break-word; /* 确保长单词能正确换行 */
-  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
-  max-width: 650rpx; /* 限制最大宽度，防止超出弹窗容器 */
-}
-
 .row {
   display: flex;
   align-items: center;
@@ -454,22 +434,14 @@
 }
 
 .label {
-  display: block;
   font-size: 24rpx;
   color: #666666;
+  display: block;
   margin-bottom: 8rpx;
   font-weight: 500;
 }
 
-.value {
-  display: block;
-  font-size: 26rpx;
-  color: #333333;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.input {
+.vnput {
   margin-top: 10rpx;
   padding: 16rpx 20rpx;
   background: #f7f9fb;
@@ -508,6 +480,8 @@
   border-top: 2rpx solid #e8e8e8;
   display: flex;
   padding: 16rpx 0;
+  /* 【F4】全面屏底部安全区，避免 iPhone 横条遮挡 tab */
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
   flex-shrink: 0;
 }
 
@@ -762,8 +736,12 @@
   border-radius: 12rpx;
   width: 100%;
   box-sizing: border-box;
-  word-break: break-word; /* 确保长单词能正确换行 */
-  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
+  word-break: break-word;
+  /* 确保长单词能正确换行 */
+  white-space: pre-wrap;
+  /* 保留换行符并允许自动换行 */
+  max-width: 650rpx;
+  line-height: 1.5;
 }
 
 .video-container {

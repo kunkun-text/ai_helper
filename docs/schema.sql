@@ -150,7 +150,9 @@ CREATE TABLE `defense_score_record` (
   `comment` text COMMENT '本轮评语',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   PRIMARY KEY (`id`),
-  KEY `idx_defense_round` (`defense_id`,`round_num`),
+  -- 【B5 · 2026-10-05】与 docs/migration-20260928-score-record-unique.sql 同步：
+  -- (defense_id, round_num) 唯一索引兜底幂等评分；原普通索引 idx_defense_round 与其列重复，已删除
+  UNIQUE KEY `uk_defense_round` (`defense_id`,`round_num`),
   KEY `idx_defense_id` (`defense_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=294 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='答辩五维评分记录表';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -264,6 +266,36 @@ CREATE TABLE `voice_responses` (
   CONSTRAINT `voice_responses_ibfk_2` FOREIGN KEY (`question_id`) REFERENCES `defense_questions` (`question_id`) ON DELETE SET NULL ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 /*!40101 SET character_set_client = @saved_cs_client */;
+--
+-- Table structure for table `system_feedback`
+-- 【B5 · 2026-10-05】补入：与 docs/ddl_system_feedback.sql 完全一致（新库导入 schema.sql 即含反馈模块，
+-- 存量库仍可单独执行 ddl_system_feedback.sql）
+--
+
+DROP TABLE IF EXISTS `system_feedback`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `system_feedback` (
+  `feedback_id` int NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`     int DEFAULT NULL COMMENT '提交人 users.user_id',
+  `user_number` varchar(50)  DEFAULT NULL COMMENT '提交人学号/工号（冗余，便于展示）',
+  `user_name`   varchar(255) DEFAULT NULL COMMENT '提交人姓名（冗余，便于展示）',
+  `role`        varchar(20)  DEFAULT NULL COMMENT '提交人角色 student/teacher',
+  `content`     text NOT NULL COMMENT '反馈内容',
+  `contact`     varchar(255) DEFAULT NULL COMMENT '联系方式（可选）',
+  `status`      varchar(20) NOT NULL DEFAULT 'pending' COMMENT 'pending 待处理 / resolved 已回复',
+  `reply`       text COMMENT '教师回复内容',
+  `created_at`  datetime DEFAULT CURRENT_TIMESTAMP COMMENT '提交时间',
+  `updated_at`  datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`feedback_id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_user_number` (`user_number`),
+  KEY `idx_status` (`status`),
+  -- 教师端列表默认按状态过滤 + created_at 倒序分页（selectAll 的实际查询形态）
+  KEY `idx_status_created` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='系统反馈表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

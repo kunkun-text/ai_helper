@@ -10,7 +10,7 @@
 
   检查项（逐条 ✅ / ❌ + 修复提示）：
       1. 可用物理内存
-      2. MySQL 连通 + ai_helper 9 张表齐全
+      2. MySQL 连通 + ai_helper 10 张表齐全 + 关键索引（uk_defense_round / idx_status_created）
       3. Redis 连通（带密码）
       4. Ollama 服务 + 目标模型已 pull + 是否已加载进显存
       5. 后端端口占用
@@ -38,7 +38,8 @@ param(
     [int]   $BackendPort     = 8080,
     [double]$MinFreeMemoryGB = 1.0,                # 可用内存低于该值给警告
 
-    [switch]$SkipInferenceTest
+    [switch]$SkipInferenceTest,
+    [switch]$StrictLowPower                         # 【E2】低功耗环境变量缺失时判失败（答辩机为 8G 标准时使用）
 )
 
 $ErrorActionPreference = "Continue"
@@ -187,8 +188,9 @@ Write-Check -Name "端口 $MysqlPort 监听" -Ok $mysqlOk `
 $mysqlExePath = Find-Exe -Explicit $MysqlExe -ExeName "mysql.exe" -ListeningPort $MysqlPort `
     -SearchRoots @("D:\mysql", "D:\tools\mysql8", "C:\tools\mysql8", "C:\Program Files\MySQL")
 if ($mysqlOk -and $mysqlExePath) {
+    # 【E2 · 2026-10-05】必需 10 张表：补入 system_feedback（反馈模块，2026-10-01 上线）
     $expected = @("defense_answers","defense_questions","defense_records","defense_score_record",
-                  "defense_student_questions","defense_topics","system_settings","users","voice_responses")
+                  "defense_student_questions","defense_topics","system_feedback","system_settings","users","voice_responses")
     # 用数组展开传参：PowerShell 5.1 对「-p$变量」这类拼接 token 传给原生命令时处理不一致，
     # 实测会把密码传错（Access denied），@args 展开可稳定传递。
     $mysqlArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
@@ -197,9 +199,41 @@ if ($mysqlOk -and $mysqlExePath) {
     $tables = @($raw | Where-Object { $_ -and $_ -notmatch "Warning|ERROR" })
     if ($LASTEXITCODE -eq 0 -and $tables.Count -gt 0) {
         $missing = @($expected | Where-Object { $tables -notcontains $_ })
-        Write-Check -Name "表结构检查（必需 9 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
-            -Detail $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "9 张必需表齐全" }) `
-            -Fix "导入表结构：mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
+        $tableDetail = $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "10 张必需表齐全" })
+        Write-Check -Name "表结构检查（必需 10 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
+            -Detail $tableDetail `
+            -Fix $(if ($tables.Count -lt 3) {
+                    "空库：导入最新表结构 mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
+                  } elseif ($missing -contains "system_feedback") {
+                    "存量库补反馈表：mysql -uroot -p $MysqlDatabase < docs/ddl_system_feedback.sql"
+                  } else {
+                    "导入表结构：mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
+                  })
+
+        # 【E2】索引检查：uk_defense_round 必须 Non_unique=0（幂等评分的数据库侧兜底）
+        $idxArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
+                     "-P", "$MysqlPort", "-N", "-B", "-e",
+                     "SHOW INDEX FROM $MysqlDatabase.defense_score_record WHERE Key_name='uk_defense_round';")
+        $idxRaw = @(& $mysqlExePath @idxArgs 2>&1 | Where-Object { "$_" -notmatch "Warning" })
+        $ukOk = $false
+        if ($idxRaw.Count -gt 0) {
+            $fields = "$($idxRaw[0])" -split "`t"
+            if ($fields.Count -ge 2 -and $fields[1] -match '^\s*0\s*$') { $ukOk = $true }
+        }
+        Write-Check -Name "唯一索引 uk_defense_round(defense_id, round_num) 且 Non_unique=0" -Ok $ukOk `
+            -Detail $(if (-not $ukOk) { "缺失或不是唯一索引，评分幂等只剩代码侧先查后插" } else { "唯一索引就绪" }) `
+            -Fix "存量库执行：mysql -uroot -p $MysqlDatabase < docs/migration-20260928-score-record-unique.sql"
+
+        # 【E2】反馈表索引：教师端按状态+时间倒序分页的查询形态
+        if ($missing -notcontains "system_feedback") {
+            $fbArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
+                        "-P", "$MysqlPort", "-N", "-B", "-e",
+                        "SHOW INDEX FROM $MysqlDatabase.system_feedback WHERE Key_name='idx_status_created';")
+            $fbRaw = @(& $mysqlExePath @fbArgs 2>&1 | Where-Object { "$_" -notmatch "Warning" })
+            $fbOk = ($LASTEXITCODE -eq 0 -and $fbRaw.Count -gt 0)
+            Write-Check -Name "反馈表索引 idx_status_created(status, created_at)" -Ok $fbOk `
+                -Fix "执行 docs/ddl_system_feedback.sql（含该索引）"
+        }
 
         $scoreArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
                        "-P", "$MysqlPort", "-N", "-B", "-e",
@@ -327,7 +361,14 @@ foreach ($group in @(
         Write-Host $(if ($ok) { "  [OK] " } else { "  [!!] " }) -NoNewline
         Write-Host "$name = $(if ($val) { $val } else { '(未设置)' })" `
             -ForegroundColor $(if ($ok) { "Green" } else { "Yellow" })
-        if (-not $ok) { Write-Host "       作用: $($group.Items[$name])" -ForegroundColor Gray }
+        if (-not $ok) {
+            Write-Host "       作用: $($group.Items[$name])" -ForegroundColor Gray
+            # 【E2】-StrictLowPower：答辩机为 8G 低功耗标准时，低功耗变量缺失必须红灯
+            if ($StrictLowPower -and $group.Title -eq "8G 低功耗标准") {
+                Write-Check -Name "低功耗环境变量 $name 未设置（-StrictLowPower 模式判失败）" -Ok $false `
+                    -Fix "按部署手册 7.2 节设置 $name（用户级），并重启 Ollama"
+            }
+        }
     }
 }
 

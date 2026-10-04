@@ -19,6 +19,7 @@ import com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.DefenseResumeVo;
 import com.ai_helper.ai_helper.pojo.vo.DetailRecordsVo;
 import com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo;
+import com.ai_helper.ai_helper.result.PageResult;
 import com.ai_helper.ai_helper.result.Result;
 import com.ai_helper.ai_helper.util.AiTextUtils;
 import com.ai_helper.ai_helper.util.UploadUtils;
@@ -110,13 +111,26 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
 
     }
 
+    /**
+     * 【F3 · 2026-10-05】课题列表分页查询：旧实现无条件全表返回，
+     * 课题多时接口慢、页面卡；现在按 pageNum/pageSize 分页 + keyword 模糊搜索。
+     */
     @Override
-    public Result<List<DefenseTopics>> getDefenseTopic() {
-        List<DefenseTopics> list = defenseRecordsMapper.getDefenseTopic();
-        if (list == null) {
-            return Result.error("暂无答辩题目");
+    public Result<PageResult<DefenseTopics>> getDefenseTopic(int pageNum, int pageSize, String keyword) {
+        if (pageNum <= 0) {
+            pageNum = 1;
         }
-        return Result.success(list);
+        if (pageSize <= 0) {
+            pageSize = 10;
+        }
+        if (pageSize > 100) {
+            pageSize = 100; // 防大页拖库
+        }
+        String kw = keyword == null ? null : keyword.trim();
+        int offset = (pageNum - 1) * pageSize;
+        List<DefenseTopics> list = defenseRecordsMapper.getDefenseTopic(kw, offset, pageSize);
+        long total = defenseRecordsMapper.countDefenseTopic(kw);
+        return Result.success(new PageResult<>(list == null ? List.of() : list, total, pageNum, pageSize));
     }
 
     /**
@@ -208,9 +222,9 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                 answer.setSqId(studentQuestion.getSqId());
                 answer.setStudentAnswer(userInput != null ? userInput : "");
                 answer.setFeedback(feedback);
-                answer.setScore(score != null ? new java.math.BigDecimal(score) : null);
+                answer.setScore(score != null ? java.math.BigDecimal.valueOf(score) : null);
                 answer.setCreatedAt(LocalDateTime.now());
-                
+
                 int answerResult = defenseAnswersMapper.insertAnswer(answer);
                 if (answerResult > 0) {
                     log.info("✅ 学生回答保存成功到 defense_answers - answerId: {}, sqId: {}, 得分: {}", 
@@ -266,9 +280,9 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             answer.setSqId(null);
             answer.setStudentAnswer(studentAnswer != null ? studentAnswer : "");
             answer.setFeedback(aiFeedback);
-            answer.setScore(score != null ? new java.math.BigDecimal(score) : null);
+            answer.setScore(score != null ? java.math.BigDecimal.valueOf(score) : null);
             answer.setCreatedAt(LocalDateTime.now());
-            
+
             int result = defenseAnswersMapper.insertAnswer(answer);
             
             if (result > 0) {

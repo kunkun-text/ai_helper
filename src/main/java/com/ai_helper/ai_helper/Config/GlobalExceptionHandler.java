@@ -103,6 +103,25 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 【F2】数字参数格式错误（如 ?topicId=abc）。此前落到兜底 Exception → 500 + "服务器处理失败"。
+     */
+    @ExceptionHandler(NumberFormatException.class)
+    public Result<Void> handleNumberFormat(NumberFormatException e) {
+        log.warn("数字参数格式错误: {}", e.getMessage());
+        return Result.error(ResultCode.PARAM_ERROR, "参数格式不正确，请检查后重试");
+    }
+
+    /**
+     * 【F2】路径/查询参数类型不匹配（如把字符串传给 Integer 参数）。
+     */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public Result<Void> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException e) {
+        log.warn("参数类型不匹配 - name: {}, value: {}", e.getName(), e.getValue());
+        return Result.error(ResultCode.PARAM_ERROR, "参数格式不正确，请检查后重试");
+    }
+
+    /**
      * 兜底：其余未捕获异常统一返回结构化结果。
      */
     @ExceptionHandler(Exception.class)

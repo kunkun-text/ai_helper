@@ -196,7 +196,7 @@
           <input class="input" wx:if="{{isEditing}}" value="{{editedUser.email}}" bindinput="onEditEmail" />
           <text class="value" wx:else>{{user.email}}</text>
         </view>
-        <button class="primary-btn" wx:if="{{isEditing}}" bindtap="saveProfile">保存信息</button>
+        <button class="primary-btn" wx:if="{{isEditing}}" bindtap="saveProfile" disabled="{{savingProfile}}">保存信息</button>
         <button class="primary-btn" wx:else bindtap="startEdit">修改个人信息</button>
       </view>
 
@@ -307,7 +307,7 @@
         
         <view class="modal-actions">
           <button class="outline-btn" bindtap="closeAddTopic">取消</button>
-          <button class="primary-btn" bindtap="addTopic">{{isEditingTopic ? '更新题目' : '添加题目'}}</button>
+          <button class="primary-btn" bindtap="addTopic" disabled="{{savingTopic}}">{{isEditingTopic ? '更新题目' : '添加题目'}}</button>
         </view>
       </scroll-view>
     </view>

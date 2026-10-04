@@ -1,5 +1,15 @@
 // 反馈管理（教师端）— 2026-10-01 新增
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
+
+/** 【C2】401/403 统一处理入口 */
+function handleUnauthorized(res) {
+  if (res.statusCode === 401 || res.statusCode === 403) {
+    auth.handleAuthExpired();
+    return true;
+  }
+  return false;
+}
 
 Page({
 
@@ -27,9 +37,9 @@ Page({
   },
 
   loadList(reset) {
-    const token = wx.getStorageSync('token');
+    const token = auth.getToken();
     if (!token) {
-      wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+      auth.handleAuthExpired();
       return;
     }
     // 加载更多防连点：上一页还没回来不发新请求（2026-10-01 审计 P2 修复）
@@ -46,6 +56,9 @@ Page({
       header: { 'Authorization': 'Bearer ' + token },
       data: { pageNum: pageNum, pageSize: this.data.pageSize, status: this.data.status },
       success: (res) => {
+        if (handleUnauthorized(res)) {
+          return;
+        }
         const body = res && res.data;
         if (body && body.code === 1 && body.data) {
           const rows = body.data.list || [];
@@ -90,7 +103,7 @@ Page({
       wx.showToast({ title: '请输入回复内容', icon: 'none' });
       return;
     }
-    const token = wx.getStorageSync('token');
+    const token = auth.getToken();
     this._replying = true;
     wx.request({
       url: config.getBaseUrl() + '/teacher/feedback/reply',
@@ -101,6 +114,9 @@ Page({
       },
       data: { feedbackId: Number(id), reply: reply },
       success: (res) => {
+        if (handleUnauthorized(res)) {
+          return;
+        }
         const body = res && res.data;
         if (body && body.code === 1) {
           wx.showToast({ title: '回复成功', icon: 'success' });

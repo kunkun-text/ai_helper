@@ -1,5 +1,6 @@
 // 引入全局配置
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
 
 Page({
   /**
@@ -11,6 +12,7 @@ Page({
     password: '',             // 密码
     showPwd: false,           // 是否显示密码
     canLogin: false,          // 是否可登录
+    submitting: false,        // 【C4】登录请求防重复提交
     accountFocus: false,      // 账号输入框聚焦状态
     pwdFocus: false,          // 密码输入框聚焦状态
     longPressTimer: null      // 长按计时器（用于密码显隐）
@@ -108,21 +110,21 @@ Page({
 
   // 登录逻辑
   handleLogin() {
+    // 【C4】防重复提交：请求未返回前连点不再发第二个请求
+    if (this.data.submitting) {
+      return;
+    }
     const {currentRole, account, password} = this.data;
+    if (!account || !password) {
+      wx.showToast({ title: '请输入账号和密码', icon: 'none' });
+      return;
+    }
     // 使用全局配置的服务器地址
     const serverUrl = config.getBaseUrl();
     const requestUrl = `${serverUrl}/login/${currentRole}`;
 
-    wx.showLoading({title: '登陆中...'});
-    
-    console.log('发送登录请求:', {
-      url: requestUrl,
-      data: {
-        role: currentRole,
-        userNumber: account,
-        password: password
-      }
-    });
+    this.setData({ submitting: true });
+    wx.showLoading({ title: '登录中...', mask: true });
 
     wx.request({
       url: requestUrl,
@@ -136,118 +138,54 @@ Page({
         'content-type': 'application/json'
       },
       success: (res) => {
-        console.log('登录请求成功响应:', res);
-        
-        // 先隐藏加载提示
-        wx.hideLoading();
-        
-        // 检查响应是否包含所需字段
         if (res && res.data && typeof res.data === 'object') {
           if (res.data.code === 1) {
-            try {
-              const userInfo = res.data.data || {};
-              const token = userInfo.token;
-              const userName = userInfo.name || account;
+            const userInfo = res.data.data || {};
+            const token = userInfo.token;
+            const userName = userInfo.name || account;
 
-              if (!token) {
-                wx.showToast({
-                  title: '登录响应缺少token',
-                  icon: 'error'
-                });
-                return;
-              }
-
-              // 保存token到本地存储
-              wx.setStorageSync('token', token);
-              
-              // 保存用户名到本地存储
-              wx.setStorageSync('userName', userName);
-              
-              // 保存用户角色
-              wx.setStorageSync('userRole', userInfo.role || currentRole);
-
-              // 保存完整用户信息
-              wx.setStorageSync('userInfo', {
-                role: userInfo.role || currentRole,
-                name: userName,
-                id: userInfo.id || '',  // 添加ID字段
-                userNumber: userInfo.userNumber || account,
-                phoneNumber: userInfo.phoneNumber || '',
-                email: userInfo.email || '',
-                token
-              });
-
-
-              wx.showToast({
-                title: '登录成功',
-                icon: 'success'
-              });
-
-              // 延迟跳转到主页面
-              setTimeout(() => {
-                // 检查目标页面是否存在并决定使用哪种跳转方式
-                if (currentRole == 'student') {
-                  wx.reLaunch({
-                    url: '/pages/student/student'
-                  });
-                }
-                else if (currentRole == 'teacher') {
-                  wx.reLaunch({
-                    url: '/pages/teacher/teacher'
-                  });
-                }
-                
-                
-                // 如果reLaunch不行，尝试redirectTo
-                // wx.redirectTo({
-                //   url: '/pages/student/student'
-                // });
-              }, 1500);
-            } catch (error) {
-              console.error('处理登录响应数据出错:', error);
-              wx.showToast({
-                title: '数据处理错误',
-                icon: 'error'
-              });
+            if (!token) {
+              wx.showToast({ title: '登录响应缺少token', icon: 'error' });
+              return;
             }
-          } else {
-            // 登录失败
-            const msg = res.data.msg || '登录失败';
-            wx.showToast({
-              title: msg,
-              icon: 'error'
+
+            // 【C1】统一写入口：token / userName / userRole / userInfo 一次写入
+            auth.saveLogin({
+              role: userInfo.role || currentRole,
+              name: userName,
+              id: userInfo.id || '',
+              userNumber: userInfo.userNumber || account,
+              phoneNumber: userInfo.phoneNumber || '',
+              email: userInfo.email || '',
+              token: token
             });
 
-            
+            wx.showToast({ title: '登录成功', icon: 'success' });
+
+            // 延迟跳转到主页面
+            setTimeout(() => {
+              if (currentRole == 'student') {
+                wx.reLaunch({ url: '/pages/student/student' });
+              } else if (currentRole == 'teacher') {
+                wx.reLaunch({ url: '/pages/teacher/teacher' });
+              }
+            }, 1500);
+          } else {
+            // 登录失败
+            wx.showToast({ title: res.data.msg || '登录失败', icon: 'none' });
           }
         } else {
-          // 响应格式不正确
-          wx.showToast({
-            title: '服务器响应格式错误',
-            icon: 'error'
-          });
+          wx.showToast({ title: '服务器响应格式错误', icon: 'none' });
         }
       },
-      fail: (err) => {
-        
-        console.error('登录请求失败:', err);
+      fail: () => {
+        // 【C5】不再打印请求详情（含密码）；失败原因统一提示
+        wx.showToast({ title: '网络请求失败', icon: 'none' });
+      },
+      complete: () => {
+        // 【C4】无论成败都恢复按钮状态；loading 三态闭环
         wx.hideLoading();
-        wx.showToast({
-          title: '网络请求失败',
-          icon: 'error'
-        });
-                      // // 延迟跳转到主页面
-                      // setTimeout(() => {
-                      //   // 检查目标页面是否存在并决定使用哪种跳转方式
-                      //   wx.reLaunch({
-                      //     url: '/pages/student/student'
-                      //   });
-                        
-                      //   // 如果reLaunch不行，尝试redirectTo
-                      //   // wx.redirectTo({
-                      //   //   url: '/pages/student/student'
-                      //   // });
-                      // }, 1500);
+        this.setData({ submitting: false });
       }
     });
   },

@@ -26,7 +26,13 @@ public interface DefenseRecordsMapper {
 
     void insertVideoUrl(@Param("userId") String userId,@Param("topicId") Long topicId, @Param("videoUrl")  String videoUrl);
 
-    List<DefenseTopics> getDefenseTopic();
+    /** 【F3】分页查询课题（keyword 可选，按课题名模糊匹配） */
+    List<DefenseTopics> getDefenseTopic(@Param("keyword") String keyword,
+                                        @Param("offset") int offset,
+                                        @Param("limit") int limit);
+
+    /** 【F3】课题总数（与分页查询同条件） */
+    long countDefenseTopic(@Param("keyword") String keyword);
 
     int selectByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
 

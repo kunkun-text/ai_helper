@@ -1,21 +1,22 @@
 .page {
-  min-height: 100vh;
+  /* 【F4 · 2026-10-05】与学生页统一：整页固定视口高 + 内部 flex 滚动，
+     header/tab-bar 回归文档流，不再用 fixed + padding 补偿 */
+  height: 100vh;
+  overflow: hidden;
   background: #ededf0;
   display: flex;
   flex-direction: column;
 }
 
 .header-fixed {
+  /* 类名保留避免动 WXML，但布局已回归文档流（原 fixed 悬浮层会遮挡弹窗、切页残留） */
   height: 120rpx;
   background-color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 999;
+  position: relative;
+  flex-shrink: 0;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
 }
 
@@ -32,9 +33,9 @@
 
 .content {
   flex: 1;
-  padding: 140rpx 24rpx 140rpx; /* 增加上边距以避免内容被固定标题遮挡 */
+  min-height: 0; /* 关键：约束 scroll-view 不超出 flex 分配高度，避免把 tab-bar 顶出屏幕 */
+  padding: 24rpx 24rpx 30rpx; /* header/tab-bar 已回归文档流，无需再补偿 */
   box-sizing: border-box;
-  overflow-y: auto;
 }
 
 .section-title {
@@ -153,75 +154,10 @@
   box-shadow: 0 8rpx 20rpx rgba(0, 0, 0, 0.06);
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20rpx;
-}
-
 .card-title {
   font-size: 32rpx;
   font-weight: 600;
   color: #333333;
-}
-
-.label {
-  font-size: 24rpx;
-  color: #666666;
-}
-
-.input {
-  margin-top: 10rpx;
-  padding: 16rpx 20rpx;
-  background: #f7f9fb;
-  border-radius: 12rpx;
-  font-size: 26rpx;
-  width: 100%; /* 确保占满整个容器 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
-  min-height: 80rpx; /* 进一步增加最小高度以更好地显示多行内容 */
-  line-height: 1.5; /* 改善文本可读性 */
-  height: auto; /* 让高度可以根据内容自动调整 */
-}
-
-.picker {
-  margin-top: 10rpx;
-  padding: 16rpx 20rpx;
-  background: #f7f9fb;
-  border-radius: 12rpx;
-  font-size: 26rpx;
-  width: 100%;
-  box-sizing: border-box;
-  color: #333333;
-  display: flex;
-  align-items: center;
-  min-height: 60rpx; /* 增加最小高度以更好地显示内容 */
-}
-
-.textarea {
-  margin-top: 10rpx;
-  padding: 16rpx 20rpx;
-  background: #f7f9fb;
-  border-radius: 12rpx;
-  font-size: 26rpx;
-  min-height: 320rpx; /* 增加最小高度以更好地显示多行内容 */
-  width: 100%; /* 确保占满整个容器 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
-  line-height: 1.5; /* 改善文本可读性 */
-  max-height: 600rpx; /* 增加最大高度，允许输入更多内容 */
-}
-
-.value {
-  font-size: 28rpx;
-  color: #333333;
-  margin-top: 10rpx;
-  display: block;
-  background: #f7f9fb; /* 与输入框相同的背景色 */
-  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
-  border-radius: 12rpx; /* 与输入框相同的圆角 */
-  width: 100%; /* 与输入框相同的宽度 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
-  max-width: 650rpx; /* 限制最大宽度，防止超出弹窗容器 */
 }
 
 /* 回答详情样式 */
@@ -277,80 +213,7 @@
   box-sizing: border-box;
 }
 
-/* 优化值显示样式，确保内容不会被截断 */
-.value {
-  font-size: 28rpx;
-  color: #333333;
-  margin-top: 10rpx;
-  display: block;
-  background: #f7f9fb; /* 与输入框相同的背景色 */
-  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
-  border-radius: 12rpx; /* 与输入框相同的圆角 */
-  width: 100%; /* 与输入框相同的宽度 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
-  word-break: break-word; /* 确保长单词能正确换行 */
-  white-space: pre-wrap; /* 保留换行符并允许自动换行 */
-}
-
-.questions-container {
-  max-height: 400rpx;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 10rpx 0;
-}
-
-/* 问题项样式 */
-.question-item {
-  margin-bottom: 20rpx;
-}
-
-.form-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10rpx;
-}
-
-.add-question-btn {
-  font-size: 20rpx;
-  color: #008cba;
-  padding: 6rpx 20rpx;
-  border-radius: 12rpx;
-  background: #eaf2ff;
-  border: 1rpx solid #008cba;
-}
-
-.question-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10rpx;
-}
-
-.question-index {
-  font-size: 28rpx;
-  font-weight: 600;
-  color: #333333;
-}
-
-.remove-question-btn {
-  font-size: 24rpx;
-  color: #f44336;
-  padding: 4rpx 12rpx;
-  border-radius: 8rpx;
-  background: #ffebee;
-}
-
 .feedback {
-  color: #666666;
-  line-height: 1.5;
-}
-
-.value.feedback {
-  background: #f7f9fb;
-  padding: 16rpx;
-  border-radius: 12rpx;
-  font-size: 24rpx;
   color: #666666;
   line-height: 1.5;
 }
@@ -451,7 +314,9 @@
 .card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between; /* 使用space-between让按钮靠右对齐 */
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+  /* 使用space-between让按钮靠右对齐 */
   margin-bottom: 20rpx;
 }
 
@@ -622,8 +487,15 @@
   background: #f7f9fb;
   border-radius: 12rpx;
   font-size: 26rpx;
-  width: 100%; /* 确保占满整个容器 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  width: 100%;
+  /* 确保占满整个容器 */
+  box-sizing: border-box;
+  /* 包含padding在内的总宽度为100% */
+  min-height: 80rpx;
+  /* 进一步增加最小高度以更好地显示多行内容 */
+  line-height: 1.5;
+  /* 改善文本可读性 */
+  height: auto;
 }
 
 .picker {
@@ -637,6 +509,7 @@
   color: #333333;
   display: flex;
   align-items: center;
+  min-height: 60rpx;
 }
 
 .textarea {
@@ -646,9 +519,15 @@
   border-radius: 12rpx;
   font-size: 26rpx;
   min-height: 140rpx;
-  width: 100%; /* 确保占满整个容器 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
-  line-height: 1.5; /* 改善文本可读性 */
+  /* 增加最小高度以更好地显示多行内容 */
+  width: 100%;
+  /* 确保占满整个容器 */
+  box-sizing: border-box;
+  /* 包含padding在内的总宽度为100% */
+  line-height: 1.5;
+  /* 改善文本可读性 */
+  max-height: 600rpx;
+  width: 100%;
 }
 
 .value {
@@ -656,11 +535,21 @@
   color: #333333;
   margin-top: 10rpx;
   display: block;
-  background: #f7f9fb; /* 与输入框相同的背景色 */
-  padding: 16rpx 20rpx; /* 与输入框相同的内边距 */
-  border-radius: 12rpx; /* 与输入框相同的圆角 */
-  width: 100%; /* 与输入框相同的宽度 */
-  box-sizing: border-box; /* 包含padding在内的总宽度为100% */
+  background: #f7f9fb;
+  /* 与输入框相同的背景色 */
+  padding: 16rpx 20rpx;
+  /* 与输入框相同的内边距 */
+  border-radius: 12rpx;
+  /* 与输入框相同的圆角 */
+  width: 100%;
+  /* 与输入框相同的宽度 */
+  box-sizing: border-box;
+  /* 包含padding在内的总宽度为100% */
+  max-width: 650rpx;
+  /* 包含padding在内的总宽度为100% */
+  word-break: break-word;
+  /* 确保长单词能正确换行 */
+  white-space: pre-wrap;
 }
 
 .value.feedback {
@@ -698,15 +587,13 @@
 }
 
 .tab-bar {
-  position: fixed;
-  height: 40rpx;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* 【F4】回归文档流：作为 .page 的最后一个 flex 子项贴底，带底部安全区 */
   background: #ffffff;
   border-top: 2rpx solid #e8e8e8;
   display: flex;
   padding: 16rpx 0;
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  flex-shrink: 0;
 }
 
 .tab-item {
@@ -830,12 +717,20 @@
 }
 
 .add-question-btn {
-  color: #008cba;
   font-size: 24rpx;
+  color: #008cba;
+  padding: 6rpx 20rpx;
+  border-radius: 12rpx;
+  background: #eaf2ff;
+  border: 1rpx solid #008cba;
   font-weight: 500;
 }
 
 .questions-container {
+  max-height: 400rpx;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10rpx 0;
   margin-top: 10rpx;
 }
 
@@ -854,13 +749,17 @@
 }
 
 .question-index {
+  font-size: 28rpx;
   font-weight: 600;
   color: #333333;
 }
 
 .remove-question-btn {
-  color: #f44336;
   font-size: 24rpx;
+  color: #f44336;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: #ffebee;
   font-weight: 500;
 }
 

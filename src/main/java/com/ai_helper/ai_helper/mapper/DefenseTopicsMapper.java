@@ -35,4 +35,7 @@ public interface DefenseTopicsMapper {
     int deleteDefenseTopics(Integer topicId);
 
     TopicDto getTopicById(Integer topicId);
+
+    /** 【A3】查询课题归属教师 user_id（编辑/删除前的归属校验用） */
+    Integer selectTeacherIdByTopicId(@Param("topicId") Integer topicId);
 }

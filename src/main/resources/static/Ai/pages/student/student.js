@@ -1,26 +1,16 @@
 // 引入全局配置与通用上传模块
 const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
+const auth = require('../../utils/auth.js');
 
 /**
- * 登录态失效统一处理。
+ * 登录态失效统一处理（【C1】转交 auth 模块，行为与全站一致）。
  *
  * 后端启用登录校验后，token 过期会让 /student/** 全部返回 401。
  * 若不处理，页面表现为「答辩记录、回答详情全部空白」，极易被误判成数据丢失。
- * 这里改为明确提示并回到登录页；写成模块级函数，避免依赖各回调里的 this。
  */
 function handleAuthExpired() {
-  wx.showModal({
-    title: '登录已过期',
-    content: '登录状态已失效，请重新登录后继续使用',
-    showCancel: false,
-    confirmText: '去登录',
-    success: () => {
-      wx.removeStorageSync('token');
-      wx.removeStorageSync('userInfo');
-      wx.redirectTo({ url: '/pages/login/login' });
-    }
-  });
+  auth.handleAuthExpired();
 }
 
 Page({
@@ -261,6 +251,11 @@ Page({
       },
       success: (res) => {
         wx.hideLoading();
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          handleAuthExpired();
+          return;
+        }
         if (res.statusCode === 200 && res.data.code === 1) {
           // 更新本地用户信息
           const updatedUser = {
@@ -276,17 +271,9 @@ Page({
             isEditing: false
           });
 
-          // 更新本地存储的用户信息
-          try {
-            const userInfo = wx.getStorageSync('user') || {};
-            Object.assign(userInfo, updatedUser);
-            wx.setStorageSync('user', userInfo);
-            
-            // 同时更新userInfo存储（兼容性考虑）
-            wx.setStorageSync('userInfo', userInfo);
-          } catch (e) {
-            console.warn('更新本地存储失败:', e);
-          }
+          // 【C1】更新本地存储的用户信息（统一走 auth；旧实现读的是 'user' key，与登录写入的
+          // 'userInfo' 不一致，导致资料改完重进页面又变回旧值）
+          auth.updateUserInfo(updatedUser);
 
           wx.showToast({
             title: '保存成功',
@@ -321,31 +308,6 @@ Page({
   changePassword() {
     wx.navigateTo({
       url: '/pages/forgetPassword/forgetPassword'
-    });
-  },
-
-  // 退出登录
-  logout() {
-    const that = this;
-    
-    // 显示确认对话框
-    wx.showModal({
-      title: '确认退出',
-      content: '确定要退出登录吗？',
-      success(res) {
-        if (res.confirm) {
-          // 清除本地存储的token和用户信息
-          wx.removeStorageSync('token');
-          wx.removeStorageSync('user');
-          wx.removeStorageSync('role');
-          
-          
-          // 跳转到登录页面
-          wx.redirectTo({
-            url: '/pages/login/login'
-          });
-        }
-      }
     });
   },
 
@@ -474,6 +436,11 @@ Page({
       wx.showToast({ title: '请先选择对应的答辩题目', icon: 'none' });
       return;
     }
+    // 【C4】报告上传中不允许重复触发
+    if (this.data.isReportUploading) {
+      wx.showToast({ title: '报告正在上传，请稍候', icon: 'none' });
+      return;
+    }
 
     this.setData({
       isReportUploading: true,
@@ -502,6 +469,9 @@ Page({
           topicId: topicId,
           filePath: filePath,
           token: that.data.token,
+          // 【F7】上传命名规范化：带上原始文件名/大小，后端据此生成可读且安全的存储名
+          originalFileName: fileName,
+          fileSize: fileSize,
           onProgress: (percent) => {
             that.setData({ reportUploadProgress: percent });
           }
@@ -543,21 +513,21 @@ Page({
     const token = this.data.token;
     
     wx.request({
-      url: uploader.getBaseUrl() + '/student/getDefenseTopic',
+      // 【F3】分页：默认取第 1 页 50 条（后端不再全表返回）
+      url: uploader.getBaseUrl() + '/student/getDefenseTopic?pageNum=1&pageSize=50',
       method: 'GET',
       header: {
         'Authorization': 'Bearer ' + token
       },
       success: (res) => {
-        console.log('答辩题目接口响应:', res);
-
-        if (res.statusCode === 401) {
+        if (res.statusCode === 401 || res.statusCode === 403) {
           handleAuthExpired();
           return;
         }
-        
+
         if (res.statusCode === 200 && res.data.code === 1) {
-          const topics = res.data.data || [];
+          const page = res.data.data || {};
+          const topics = page.list || [];
           
           // 更新所有答辩题目列表
           this.setData({
@@ -676,14 +646,21 @@ Page({
     } else {
       // 如果没有加载题目列表，重新获取
       wx.request({
-        url: config.getBaseUrl() + '/student/getDefenseTopic',
+        // 【F3】分页接口：取第 1 页即可
+        url: config.getBaseUrl() + '/student/getDefenseTopic?pageNum=1&pageSize=50',
         method: 'GET',
         header: {
           'Authorization': 'Bearer ' + token
         },
         success: (res) => {
+          // 【C2】401/403 统一处理
+          if (res.statusCode === 401 || res.statusCode === 403) {
+            handleAuthExpired();
+            return;
+          }
           if (res.statusCode === 200 && res.data.code === 1) {
-            const topics = res.data.data || [];
+            const page = res.data.data || {};
+            const topics = page.list || [];
             if (topics.length > 0) {
               this.setData({
                 currentTopicDescription: topics[0].topicDescription || '暂无题目描述',
@@ -722,14 +699,9 @@ Page({
   },
 
   loadUserInfo() {
-    // 从本地存储获取登录时保存的用户信息
-    const token = wx.getStorageSync('token') || '';
-    const userInfo = wx.getStorageSync('userInfo') || {};
-
-    console.log('=== 用户信息加载 ===');
-    console.log('从storage获取的token:', token);
-    console.log('从storage获取的userInfo:', userInfo);
-    console.log('当前data中的user:', this.data.user);
+    // 【C1】统一从 auth 模块读登录态（不再直接访问 storage key）
+    const token = auth.getToken();
+    const userInfo = auth.getUserInfo();
 
     // 使用后端返回的实际数据
     const name = userInfo.name || this.data.user.name;
@@ -737,13 +709,6 @@ Page({
     const userNumber = userInfo.userNumber || this.data.user.userNumber || '未填写';  // 保留userNumber字段
     const phone = userInfo.phoneNumber || this.data.user.phone || '未绑定';
     const email = userInfo.email || this.data.user.email || '未绑定';
-
-    console.log('解析后的用户信息:');
-    console.log('- 姓名:', name);
-    console.log('- ID:', id);
-    console.log('- 学号:', userNumber);
-    console.log('- 手机:', phone);
-    console.log('- 邮箱:', email);
 
     this.setData({
       token,
@@ -1353,9 +1318,8 @@ Page({
               if (modalRes.confirm) {
                 wx.openSetting({
                   success: function(settingRes) {
-                    console.log('用户已授权:', settingRes.authSetting);
-                    if (settingRes.authSetting['scope.writePhotosAlbum'] || 
-                        settingRes.authSetting['scope.camera']) {
+                    // 【F6】只判断实际使用的相机权限（相册权限声明已删除）
+                    if (settingRes.authSetting['scope.camera']) {
                       that.proceedWithVideoSelection();
                     }
                   }
@@ -1471,33 +1435,43 @@ Page({
         }
       })
       .catch((err) => {
-        // 打印原始错误对象：否则只剩"上传失败"这种无信息量的兜底文案，无法定位
-        console.error('[上传] 原始错误对象:', err);
+        // 【C6】主动取消不算失败：不再弹错误、不再保留 uploadId 供续传
+        if (err && err.cancelled) {
+          that.resetUploadState();
+          return;
+        }
         // 记住 uploadId：用户点"重试"时可续传，不必重传已成功的分片
         that.setData({ currentUploadId: (err && err.uploadId) || '' });
         that.handleUploadError(
-          (err && err.msg) || (err && err.errMsg) || '上传失败，详见 Console 日志'
+          (err && err.msg) || (err && err.errMsg) || '上传失败，请稍后重试'
         );
       });
   },
 
   /** 轮询视频后处理状态（后端异步处理，失败只记日志不影响主流程） */
   watchProcessingStatus(processingId) {
+    // 【C6】旧 timer 未清会导致多个轮询叠加；先清再用 this._processingTimer 持有
+    if (this._processingTimer) {
+      clearInterval(this._processingTimer);
+    }
     let times = 0;
-    const timer = setInterval(() => {
+    this._processingTimer = setInterval(() => {
       times += 1;
       if (times > 20) {
-        clearInterval(timer);
+        clearInterval(this._processingTimer);
+        this._processingTimer = null;
         return;
       }
       uploader.getProcessingStatus(processingId, this.data.token)
         .then((data) => {
           if (!data || data.status === 'COMPLETED' || data.status === 'FAILED') {
-            clearInterval(timer);
+            clearInterval(this._processingTimer);
+            this._processingTimer = null;
           }
         })
         .catch(() => {
-          clearInterval(timer);
+          clearInterval(this._processingTimer);
+          this._processingTimer = null;
         });
     }, 3000);
   },
@@ -1512,24 +1486,17 @@ Page({
     this.startUpload(this.data.currentVideoPath, this.data.currentFileName, this.data.currentFileSize);
   },
 
-  // 取消上传（服务端会删除已落盘的半成品文件并清理会话）
+  // 取消上传【C6】：先 abort 本地在途请求/上传任务（不再有成功回调），再让服务端清理半成品
   cancelUpload() {
-    const uploadId = this.data.currentUploadId;
-
-    if (!uploadId) {
-      this.resetUploadState();
-      return;
-    }
-
-    uploader.abortUpload(uploadId, this.data.token)
+    // 无论有没有 uploadId，都先真取消本地任务
+    uploader.cancelUpload(this.data.token)
       .then(() => {
         this.resetUploadState();
         wx.showToast({ title: '已取消上传', icon: 'none' });
       })
       .catch((err) => {
-        console.error('取消上传失败:', err);
         this.resetUploadState();
-        wx.showToast({ title: (err && err.msg) || '取消上传失败', icon: 'error' });
+        wx.showToast({ title: (err && err.msg) || '取消上传失败', icon: 'none' });
       });
   },
 
@@ -1586,6 +1553,19 @@ Page({
       clearTimeout(this._bannerTimer);
       this._bannerTimer = null;
     }
+    // 【C6】离开页面停止视频处理轮询
+    if (this._processingTimer) {
+      clearInterval(this._processingTimer);
+      this._processingTimer = null;
+    }
+  },
+
+  /** 页面隐藏时同样停止轮询（切 tab 后回来可重新触发上传/查看） */
+  onHide() {
+    if (this._processingTimer) {
+      clearInterval(this._processingTimer);
+      this._processingTimer = null;
+    }
   },
 
   // 处理上传错误
@@ -1610,11 +1590,8 @@ Page({
       content: '确定要退出登录吗？',
       success(res) {
         if (res.confirm) {
-          // 清除本地存储的 token 和用户信息
-          wx.removeStorageSync('token');
-          wx.removeStorageSync('user');
-          wx.removeStorageSync('role');
-          
+          // 【C1】统一退出：清 token/userInfo/userName/userRole 及历史遗留 user/role
+          auth.clearLogin();
           // 跳转到登录页面
           wx.redirectTo({
             url: '/pages/login/login'
@@ -1651,6 +1628,11 @@ Page({
       url: url,
       success: (res) => {
         wx.hideLoading();
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          handleAuthExpired();
+          return;
+        }
         if (res.statusCode !== 200) {
           wx.showToast({ title: '文件下载失败', icon: 'error' });
           return;

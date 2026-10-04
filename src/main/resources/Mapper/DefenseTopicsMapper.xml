@@ -57,4 +57,9 @@
         from defense_topics
         where topic_id = #{topicId}
     </select>
+
+    <!-- 【A3】课题归属教师查询：编辑课题前的归属校验 -->
+    <select id="selectTeacherIdByTopicId" resultType="java.lang.Integer">
+        select teacher_id from defense_topics where topic_id = #{topicId}
+    </select>
 </mapper>

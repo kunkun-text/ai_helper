@@ -4,13 +4,26 @@
 
 <mapper namespace="com.ai_helper.ai_helper.mapper.EditUserInfoMapper">
 
-
+    <!-- 【N56/B2 · 2026-10-05】动态 SET：只更新非空字段，空字符串不再覆盖原值 -->
     <update id="editUserInfo">
         UPDATE users
-        SET name = #{name},
-            phone_number = #{phoneNumber},
-            user_number = #{userNumber},
-            email = #{email}
+        <set>
+            <if test="name != null and name != ''">name = #{name},</if>
+            <if test="phoneNumber != null and phoneNumber != ''">phone_number = #{phoneNumber},</if>
+            <if test="userNumber != null and userNumber != ''">user_number = #{userNumber},</if>
+            <if test="email != null and email != ''">email = #{email},</if>
+        </set>
         WHERE user_id = #{id}
     </update>
+
+    <!-- 【B2】唯一性冲突预检：学号/邮箱是否已被其他账号占用 -->
+    <select id="countByUserNumberExcludingId" resultType="int">
+        SELECT COUNT(*) FROM users
+        WHERE user_number = #{userNumber} AND user_id != #{id}
+    </select>
+
+    <select id="countByEmailExcludingId" resultType="int">
+        SELECT COUNT(*) FROM users
+        WHERE email = #{email} AND user_id != #{id}
+    </select>
 </mapper>

@@ -1,5 +1,6 @@
 // 意见反馈 — 2026-10-01 新增（借鉴 smart-medicine 的反馈模块）
 const config = require('../../utils/config.js');
+const auth = require('../../utils/auth.js');
 
 Page({
 
@@ -37,9 +38,9 @@ Page({
     if (this.data.submitting) {
       return;
     }
-    const token = wx.getStorageSync('token');
+    const token = auth.getToken();
     if (!token) {
-      wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+      auth.handleAuthExpired();
       return;
     }
 
@@ -53,6 +54,11 @@ Page({
       },
       data: { content: content, contact: (this.data.contact || '').trim() },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const body = res && res.data;
         if (body && body.code === 1) {
           wx.showToast({ title: '提交成功', icon: 'success' });
@@ -73,9 +79,9 @@ Page({
 
   // 加载我的反馈列表（失败要有提示，不能静默显示"暂无反馈"——2026-10-01 审计 P1-5 修复）
   loadList() {
-    const token = wx.getStorageSync('token');
+    const token = auth.getToken();
     if (!token) {
-      wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+      auth.handleAuthExpired();
       return;
     }
     wx.request({
@@ -83,6 +89,11 @@ Page({
       method: 'GET',
       header: { 'Authorization': 'Bearer ' + token },
       success: (res) => {
+        // 【C2】401/403 统一处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
         const body = res && res.data;
         if (body && body.code === 1) {
           this.setData({ list: body.data || [] });

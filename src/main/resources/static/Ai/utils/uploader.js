@@ -104,10 +104,46 @@ function parseResult(res) {
   return { error: { code: body.code, msg: body.msg || '操作失败' } };
 }
 
+/**
+ * 【C6 · 2026-10-05】当前上传会话与在途请求跟踪。
+ *
+ * 旧实现「取消上传」只调后端 abort，本地 chunked 上传的 wx.request 仍在跑，
+ * 取消后仍会继续发请求、甚至再出现成功回调。现在：
+ * - activeTasks 记录所有在途 RequestTask / UploadTask，取消时先 abort 再通知后端；
+ * - session.cancelled 标记当前会话已取消，回调里校验，旧任务不得覆盖新状态。
+ */
+let activeTasks = [];
+let currentSession = null;
+
+function registerTask(task) {
+  if (task && typeof task.abort === 'function') {
+    activeTasks.push(task);
+  }
+  return task;
+}
+
+function unregisterTask(task) {
+  const idx = activeTasks.indexOf(task);
+  if (idx >= 0) {
+    activeTasks.splice(idx, 1);
+  }
+}
+
+function abortAllTasks() {
+  activeTasks.forEach(function (task) {
+    try {
+      task.abort();
+    } catch (e) {
+      // 任务可能已自然结束，忽略
+    }
+  });
+  activeTasks = [];
+}
+
 /** 普通 JSON 接口调用 */
 function request(options) {
   return new Promise(function (resolve, reject) {
-    wx.request({
+    const task = registerTask(wx.request({
       url: options.url,
       method: options.method || 'GET',
       data: options.data,
@@ -123,8 +159,11 @@ function request(options) {
       },
       fail: function (err) {
         reject({ code: -1, msg: (err && err.errMsg) || '网络请求失败' });
+      },
+      complete: function () {
+        unregisterTask(task);
       }
-    });
+    }));
   });
 }
 
@@ -254,7 +293,20 @@ function uploadVideo(options) {
   let totalParts = 0;
   const doneParts = {};
 
+  // 【C6】本会话取消标记：取消后所有回调/续传一律停止，旧任务不得覆盖新状态
+  const session = { cancelled: false, uploadId: uploadId };
+  currentSession = session;
+
+  function ensureActive() {
+    if (session.cancelled) {
+      throw { code: -1, msg: '已取消上传', cancelled: true };
+    }
+  }
+
   function notify(percent, stage) {
+    if (session.cancelled) {
+      return;
+    }
     if (onStage) {
       onStage(stage);
     }
@@ -296,6 +348,7 @@ function uploadVideo(options) {
     }).then(function (data) {
       const info = data || {};
       uploadId = info.uploadId;
+      session.uploadId = uploadId;
       chunkSize = info.chunkSize;
       totalParts = info.totalParts || 0;
       (info.receivedParts || []).forEach(function (n) { doneParts[n] = true; });
@@ -305,6 +358,7 @@ function uploadVideo(options) {
   }
 
   function sendPart(partNumber, buffer, attempt) {
+    ensureActive();
     return request({
       url: getBaseUrl() + '/api/video/part?uploadId=' + encodeURIComponent(uploadId)
         + '&partNumber=' + partNumber,
@@ -332,6 +386,7 @@ function uploadVideo(options) {
   }
 
   function uploadFrom(partNumber) {
+    ensureActive();
     if (partNumber > totalParts) {
       return Promise.resolve();
     }
@@ -362,6 +417,7 @@ function uploadVideo(options) {
       return uploadFrom(1);
     })
     .then(function () {
+      ensureActive();
       notify(100, 'merging');
       return request({
         url: getBaseUrl() + '/api/video/complete?uploadId=' + encodeURIComponent(uploadId),
@@ -371,6 +427,7 @@ function uploadVideo(options) {
       });
     })
     .then(function (data) {
+      ensureActive();
       const result = data || {};
       result.uploadId = uploadId;
       return result;
@@ -429,11 +486,17 @@ function uploadWholeFile(options) {
   const onProgress = options.onProgress;
 
   return new Promise(function (resolve, reject) {
-    const task = wx.uploadFile({
+    const task = registerTask(wx.uploadFile({
       url: getBaseUrl() + path,
       filePath: options.filePath,
       name: 'file',
-      formData: { topicId: options.topicId },
+      // 【F7】命名规范化：把原始文件名/大小/类型显式传给后端，用于生成安全可读的存储名
+      formData: {
+        topicId: options.topicId,
+        originalFileName: options.originalFileName || '',
+        fileSize: options.fileSize || '',
+        kind: kind
+      },
       header: { 'Authorization': 'Bearer ' + (token || '') },
       timeout: WHOLE_TIMEOUT,
       success: function (res) {
@@ -446,14 +509,33 @@ function uploadWholeFile(options) {
       },
       fail: function (err) {
         reject({ code: -1, msg: (err && err.errMsg) || '网络请求失败' });
+      },
+      complete: function () {
+        unregisterTask(task);
       }
-    });
+    }));
     if (task && task.onProgressUpdate && onProgress) {
       task.onProgressUpdate(function (e) {
         onProgress(e.progress);
       });
     }
   });
+}
+
+/**
+ * 【C6】取消当前上传：先 abort 本地在途任务（阻止成功回调/继续发分片），
+ * 再通知后端清理半成品文件与会话。旧任务回调里会命中 session.cancelled，不再覆盖页面状态。
+ */
+function cancelUpload(token) {
+  const uploadId = (currentSession && currentSession.uploadId) || '';
+  if (currentSession) {
+    currentSession.cancelled = true;
+  }
+  abortAllTasks();
+  if (!uploadId) {
+    return Promise.resolve();
+  }
+  return abortUpload(uploadId, token);
 }
 
 /** 查询某个题目下已上传的附件地址 */
@@ -517,6 +599,7 @@ module.exports = {
   fetchPolicy: fetchPolicy,
   uploadVideo: uploadVideo,
   uploadWholeFile: uploadWholeFile,
+  cancelUpload: cancelUpload,
   abortUpload: abortUpload,
   queryProgress: queryProgress,
   getMediaUrl: getMediaUrl,

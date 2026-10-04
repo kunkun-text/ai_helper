@@ -1,180 +1,149 @@
-# CLAUDE.md — AI-helper 项目说明
+# AI-helper 项目协作约定（CLAUDE.md）
 
-> 本文件供 Claude Code 每次会话自动阅读。项目所有者：学生开发者，初次上手 Claude Code（此前用 Trae），**请用中文交流**。
+> 本文件是 AI 与开发者之间的协作契约。任何改动前，先读这里。
 
 ---
 
-## 〇、必读文档（开工前先过一遍，**换机器部署尤其重要**）
+## 项目速览
 
-| # | 文档 | 什么时候必须读 |
+| 项目 | AI-helper（AI 答辩辅助系统） |
+|---|---|
+| 技术栈 | Spring Boot 3.5.11 + Java 17 + Spring AI 1.1.2 + MyBatis + Redis + MySQL |
+| AI 模型 | 本地 Ollama `qwen2.5:3b-16k`（`http://localhost:11434`） |
+| 前端 | 微信小程序原生（`src/main/resources/static/Ai/`） |
+| 数据库 | 10 张表（见 `docs/schema.sql`，含 `system_feedback`） |
+| 运行环境 | 荣耀猎人 V700 / i5-10300H / 16GB / RTX 2060 6GB / Win10 22H2 |
+
+---
+
+## 当前进度（2026-10-04）
+
+### 已完成 ✅
+
+| 模块 | 状态 | 关键交付 |
 |---|---|---|
-| 1 | **`docs/从零部署手册-8G低功耗标准.md`** | **换新机器 / 从零部署 / 环境报错 / 推理变慢——第一份要读的文档**（含组件下载源、8G 低功耗参数、逐步命令、FAQ、目标机器硬件画像） |
-| 2 | `CLAUDE.md`（本文件） | 每次会话自动阅读，了解项目结构与操作红线 |
-| 3 | `.claude/skills/ai-defense-dev/SKILL.md` | 动手写 / 改代码前的协作规范（提问方式、review 流程、严重 bug 清单） |
-| 4 | `docs/答辩系统-项目情况说明.md` | 理解答辩业务流程、AI 三段式输出、打分客观性规则 |
-| 5 | `CHANGES.md` | 追溯历史改动、排查「代码为什么写成这样」 |
-| 6 | `需求清单-2026-09-15.md` | 确认功能范围与验收标准 |
-| 7 | `docs/schema.sql` | 需要数据库完整表结构时（9 张表） |
+| 核心答辩流程 | 稳定 | 10轮答辩（5预设+5追问）、中途退出续答、评分落库 |
+| 评分可信度 | 已实现待复验 | N45~N54 八项修复已落地，需多场答辩累积样本验证 |
+| 教师端功能 | 已上线 | 数据总览、成绩导出CSV、反馈管理 |
+| 系统反馈模块 | 已上线 | 学生提交/教师回复（需执行 `docs/ddl_system_feedback.sql`） |
+| 语音答辩 | 已开发待实测 | F10 V2方案（SAPI TTS + whisper.cpp ASR），待真机验证 |
+| 鉴权/越权 | 已加固 | N19 角色校验、只能改自己资料 |
+| 事务/幂等 | ✅ 已闭环 | N4幂等、N21末轮同步；N55 已修复（评分行/答案行/追问题同事务，任一失败整体回滚） |
+| 答辩链路鉴权 | ✅ 已加固 | A1：/api/chat、/api/final-evaluate、/api/voice/** 纳入登录保护，身份取登录态 |
 
-> ⚠️ **部署标准已明确，不要擅自修改**：按 **8GB 内存 + 低功耗** 执行，模型只用 `qwen2.5:3b-16k`，不上调硬件要求、不换更大模型。带独显的新机器（荣耀猎人 V700，RTX 2060 6G）的差异与额外检查点见部署手册 **第十五节**。
+### 待开发 🔧
 
-## 一、项目是什么
-
-**AI-helper（AI 答辩辅助系统）**：微信小程序 + Spring Boot 后端。
-学生选择答辩课题后，与 AI（本地大模型）进行多轮模拟答辩对话；AI 按五个维度
-（表达 / 逻辑 / 专业 / 应变 / 创新）逐轮评分并落库，最后生成总评；教师端管理答辩课题、查看答辩记录。
-
-```
-小程序答辩页 → POST /api/chat → chatController → Spring AI ChatClient → 本地 Ollama
-                                          ↓
-                       Redis 存会话记忆（最多 12 条消息，超出裁剪最早的）
-                                          ↓
-             每轮从回复中解析管道格式评分 → ScorePersistenceService 异步写入 MySQL
-```
-
-## 二、技术栈
-
-| 层 | 技术 |
-|---|---|
-| 后端 | Spring Boot 3.5.11 + Java 17 + Maven（入口类 `AiHelperApplication`） |
-| AI | Spring AI 1.1.2（OpenAI 兼容模式）→ 本地 Ollama `http://localhost:11434`，模型 **qwen2.5:3b-16k** |
-| 数据 | MySQL（库名 `ai_helper`）+ MyBatis + PageHelper；Redis（存 AI 会话记忆） |
-| 安全 | Spring Security + JWT（`AuthInterceptor` 做 token 校验，区分 student / teacher 角色） |
-| 文件 | 阿里云 OSS（答辩报告、视频上传，视频支持分片：init/upload/complete/abort） |
-| 前端 | 微信小程序，位于 `src/main/resources/static/Ai/`（app.js + pages/） |
-
-## 三、目录速查
-
-```
-src/main/java/com/ai_helper/ai_helper/
-  Controller/login/      注册、登录、忘记/重置密码
-  Controller/student/    答辩记录、报告上传、视频上传
-  Controller/teacher/    课题管理（addDefense/editDefense）、记录查询
-  Controller/chatController.java   ★ AI 对话核心（/api/chat 等）
-  Config/                Security / Redis / OSS / MyBatis / ChatConfiguration
-  Service/ + Impl/       业务层（ScorePersistenceService 为评分落库）
-  mapper/ + pojo/        MyBatis 接口与实体
-src/main/resources/
-  Mapper/*.xml           SQL（注意：chatController.xml 是 DefenseStudentQuestionsMapper 的，
-                          chatController_1775616568352.xml 是 DefenseAnswersMapper 的——文件名有误导性，都不是备份）
-  application.yml        ★ 本地配置，已被 .gitignore 排除，绝不能提交
-  static/Ai/             微信小程序前端（文字答辩 pages/defense/ 三件套；
-                         语音答辩 pages/defense-voice/，样式 @import 复用 defense.wxss）
-                         ⚠️ 语音答辩依赖「微信同声传译」插件（已声明于 app.json / project.config.json），
-                         录音 ASR 仅真机可用
-docs/ddl_defense_score_record.sql   评分表 DDL（需手动在 MySQL 执行）
-CHANGES.md               最近一轮改动的详细记录
-diagnose.ps1             Ollama 状态/显存/推理速度诊断脚本
-AI-helper/（根目录同名子文件夹）  只有一个游离的 student.js，是残留文件，勿引用
-```
-
-## 四、本地运行环境
-
-> **当前开发机（2026-09-25 更新）**：荣耀猎人游戏本 V700（型号 FRD-WX9）/ i5-10300H（4 核 8 线程）/ **16 GB 内存** / **RTX 2060 6GB**（驱动 617.14）/ Windows 10 专业版 22H2。
-> ⚠️ 本文档此前写的「RTX 3050 只有 4G 显存」「机器仅 7G 内存」是**上一台机器**的规格，已作废，勿再据此做性能决策。
-> ⚠️ 换机器部署时不要把下表当通用规格照搬——请以 `docs/从零部署手册-8G低功耗标准.md` 为准，且每台机器的 `application.yml` 都要自己配一份（该文件不入库）。
-> 已知差异举例：新机器若 3306 被占用，MySQL 会改用 3307；无独显的机器走纯 CPU 推理，速度约为独显机器的 1/5 ~ 1/10。
-
-| 组件 | 要求 |
-|---|---|
-| 硬件 | 16 GB 内存 + RTX 2060 6GB 显存；`qwen2.5:3b-16k` 加载后约占 2.7 GB 显存，实测 100% 跑在 GPU 上、单轮 2~5 秒 |
-| Ollama | 需先 `ollama pull qwen2.5:3b-16k`；模型目录 `F:\ollama\models`；手动启动（无开机自启）。当前模型已验证稳定，**换更大模型前先按本机显存/内存实测评估**（历史事故：8b 模型打爆显存跑去 CPU，留下 JVM 崩溃日志 `hs_err_pid*.log`） |
-| MySQL | root / 123456 @127.0.0.1:3306/ai_helper，执行过 `docs/ddl_defense_score_record.sql` |
-| Redis | 127.0.0.1:6379，密码 123456；手动启动。⚠️ **必须用 `F:\杂七杂八\Redis2\redis.windows.conf` 启动**（内含 `requirepass 123456`）——同目录的 `redis.windows-service.conf` 没有密码，会与 `application.yml` 里的 `password: 123456` 不匹配，导致连接失败 |
-| 启动后端 | 项目根目录 `mvn spring-boot:run`，端口 8080（PATH 无 mvn，用 `D:\maven\apache-maven-3.8.1\bin\mvn.cmd`；`JAVA_HOME` = JDK 17） |
-| 小程序 | 微信开发者工具打开 `src/main/resources/static/Ai/` 目录；真机调试需改 `utils/config.js` 的 `serverUrl` 为本机 WLAN IPv4 |
-
-## 五、AI 对话协议（改 chatController 前必读）
-
-- AI 回复采用**管道格式**：`总分/50|表达|逻辑|专业|应变|创新|优点|建议|下一题`
-  例：`36/50|8|7|8|6|7|概念清晰|多举例子|下一题`
-- ⚠️ **2026-09-14 起本轮答辩为「5 预设题 + 5 追问 = 10 轮」**，追问阶段模型也统一输出 **`下一题:`**（**不要用"追问:"**，前端 `defense.js parseSegmentFormat` 只匹配 下一题/下一问，不认"追问:"，用错会导致前端解析不到题、变"有分无题"）。
-- 结束条件已加**轮次硬上限兜底**：轮次按 `defense_score_record` 落库行数 +1 权威计数（2026-09-15 修复；旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 截断封顶在 6，兜底永不触发），第 `existingQuestionCount + EXTRA_QUESTION_LIMIT`（=10）次作答即收尾——模型输出"总结:"用总结，没输出则剥残留"下一题:"并补占位总结强制收尾，防止无限"下一题"死循环（这是内存崩溃根因，已修）。
-- 前端 `defense.js` 用 `parsePipeFormat()` 解析；`ScorePersistenceServiceImpl.parseScoresFromResponse()` 负责提取五维分
-- 会话记忆在 Redis，键按用户/答辩区分；`MAX_HISTORY_MESSAGES = 12`，超限裁剪最早消息
-- 进场时前端会调 `POST /api/chat/clear` 清空旧会话；答辩结束调 `POST /api/final-evaluate` 聚合总分
-- 对模型用阻塞式 `.call()`（不是流式 `.stream()`），前端超时 180s，有重试栏
-
-## 六、主要接口
-
-| 接口 | 说明 |
-|---|---|
-| `GET/POST /api/chat` | AI 对话（核心），`/api/chat/clear` 清记忆，`/api/final-evaluate` 总评 |
-| `POST /register/student`、`/register/teacher`、`/login/student`、`/login/teacher` | 注册登录 |
-| `POST /api/forgot-password`、`/api/auth/reset-password` | 邮件验证码找回密码 |
-| `GET /student/DefenseRecords` 等 | 学生查答辩记录 |
-| `POST /teacher/addDefense`、`/teacher/defense/records` | 教师管理课题/查记录 |
-| `POST /api/report/upload`、`GET /api/report/url` | 报告上传（OSS） |
-| `POST /api/video/init|upload|complete|abort`、`GET /api/video/processing-status` | 视频分片上传+处理 |
-
-## 七、操作约定（Claude 必守）
-
-1. **中文交流**；代码注释跟随现有风格（中文为主）。
-2. **绝不提交**：`application.yml`（含本地密码和 QQ 邮箱，已在 .gitignore）、任何 `*.log` / `hs_err_pid*` 崩溃日志、根目录重复的 `project.config.json`。
-3. **Git**：远程是 `github.com/kunkun-text/ai_helper`（**不要改写历史或强推**）。账号 `chew303-cmd` 已验证可直接推送（2026-09-24 实测通过）。提交信息用中文一行标题 + 可选正文，风格参考历史（如「完善答辩」）。
-4. 改 `chatController.java` / `defense.js` 这类大文件时先读再改，改动要克制，遵循现有代码风格。
-5. 后端报错时先看是否 Ollama 未启动 / 显存不足（用 `diagnose.ps1` 诊断），再查代码。
-6. 开发协作流程（提问、计划、工具调用、自检、文档义务）见 `.claude/skills/ai-defense-dev/SKILL.md`；
-   详细命令模板见同目录 `references/toolbox.md`，对抗性审查六维度清单见 `references/review-checklist.md`
-7. **部署与环境问题**（换机器、装组件、端口冲突、Ollama 报错、推理变慢）先读 `docs/从零部署手册-8G低功耗标准.md`，不要凭经验猜参数、也不要照搬旧机器的端口与路径。
-
-## 八、当前进行中的事（2026-10-01 更新）
-
-> **2026-10-01 大规模优化（借鉴开源项目 smart-medicine 的工程规范）**：新增
-> **教师端数据总览**（`/teacher/stats/overview`）、**答辩成绩导出 CSV**（`/teacher/export/records.csv`）、
-> **系统反馈模块**（学生 `/student/feedback/*`、教师 `/teacher/feedback/*`）、**答辩详情逐轮五维增强**；
-> 工程侧新增 `constant/AiProtocolConstants`、`result/ResultCode`、参数校验依赖；前端新增 3 个页面并统一全局样式。
-> 详见 `CHANGES.md` 顶部「2026-10-01 大规模优化」。
-> ⚠️ **反馈模块需先手动执行 `docs/ddl_system_feedback.sql` 建表**，否则反馈接口报表不存在。
-> ⚠️ 同时修复了 `AiHelperApplication.java:11` 的 `}.` 语法错误（该错误会导致整个项目无法编译）。
->
-> **2026-10-01 同日·对抗性审计修复**：审查上述交付后修复 5 项 P1（CSV 公式注入防护、
-> 导出功能补前端入口、学生详情逐轮评分串台、`app.wxss` 剥离 `page` 全局视觉覆写仅留 CSS 变量、
-> feedback 列表静默失败）+ 6 项 P2（开场白常量化、反馈管理防抖、进度条溢出、
-> `(status, created_at)` 组合索引、非法 JSON 请求体提示等）。
-> 编译与前端语法校验均通过，逐项说明与待实测清单见 `CHANGES.md`「2026-10-01 审计修复」。
-> 已建过 `system_feedback` 表的库需手动补索引：`ALTER TABLE system_feedback ADD INDEX idx_status_created (status, created_at);`
-
-
-**✅ 9-28 那轮 P0/P1 改动：待测项已于 9-29 全部实测完毕**（结论见 `CHANGES.md`「2026-09-29 实测」；条目状态见 `需求清单-2026-09-15.md`）。
-原 `docs/P0-待测项-2026-09-28.md` 已完成使命，**已删除**（内容并入上述两份文档）。
-
-| 条目 | 内容 | 状态 |
+| 优先级 | 需求 | 说明 |
 |---|---|---|
-| N1 | 中途退出重进 → **弹窗确认后**才续答（默认从第 1 题开始；仅「未答满 + 30 分钟内」才提示） | ✅ 已实测（301 场） |
-| N4 / N5 | 评分行幂等（+ `docs/migration-20260928-score-record-unique.sql`）· 放弃作答答案行落库兜底 | ✅ 已实测 |
-| N2 | `diagnose.ps1` 扩展为答辩前 7 项自检（默认值自动读本机 `application.yml`） | ✅ 已实机跑通 |
-| 新-2 | 三个 upsert 核实为死代码 → 已删除 | ✅ 无行为影响 |
-| N19 | 越权修复：token 携带角色 + `@RequireRole` 注解 + `/teacher/**`、`/editUserInfo` 纳入保护 + 改资料只能改自己 | ✅ 已实测（403 / 401 / 改他人被拒且库未变） |
-| N21 | 末轮改同步落库 | ✅ 已实测（304 场跑满 10 轮；末轮写库线程是 `http-nio`，总分 30.6 与库一致） |
-| N22 | 会话记忆锁改重试（去掉无锁强写） | ✅ 已实测（并发不重复；人为占锁后按设计"重试后放弃写入"） |
-| N20 | 写流程补事务并上抛异常 | ⚠️ **部分达成**：答案行能回滚，但评分行（异步独立事务、先提交）**不回滚** → 派生 **N55**（未修） |
-| **F10** | 语音答辩：AI 语音播报 + 学生语音作答（**后端本地实现**：Windows SAPI 播报 + whisper.cpp 识别 + ffmpeg 转码） | ✅ **已实测通过**（模拟器 webm 与真机 mp3 链路均通）；⚠️ 提示词/繁简转换的改动**尚未编译验证**（见 `CHANGES.md` 2026-09-29 节） |
-| **F11** | 语音答辩 V2：录音归档与回放（`voice_responses` + 上传接口） | 待开发（P0，用户指定，待 F10 收尾） |
+| **P0** | A2 小程序生产域名 | 需真实 HTTPS 合法域名后切换 `env:'prod'`（改动已列清单，等域名） |
+| **P0** | F11 语音归档回放 | F10跑通后开工 |
+| **P0** | N3 教师页fixed改造 | 4处fixed未改 |
+| **P0** | V0 前端真机验证 | 9-16/9-17改动仅开发者工具验证 |
+| **P1** | N43 上传命名规范化 | 需拍板命名方案 |
+| **P1** | N7 评分稳定性 | temperature=0，判分规则表化 |
+| **P2** | N8/N9 详情页+导出 | 五维雷达图、标准答案对照 |
+| **P2** | N10 题库批量导入 | Excel/CSV模板 |
+| **P3** | N30~N38 工程收尾 | NPE/精度/日志/测试 |
+| **P3** | N56 `/editUserInfo` 动态SQL | 全量UPDATE改`<set>` |
 
-**验收要点**：旧 token 的教师需**重登一次**；答 3 题退出重进会弹窗问「继续作答 / 重新开始」；前端重试同一轮评分表只增 1 行。
-**已核对（2026-09-29）**：301 场（新代码 8 轮）+ 300 场（10 轮）逐轮 —— 五维和 == `defense_answers.score` == 前端展示分，
-评语文本也同源，**分数无差异**；**304 场完整 10 轮**——末轮同步落库、总分 30.60 = 各轮五维和平均、Redis 里的原始评分行与库中逐轮分**逐条一致**；
-题号严格按题库顺序（N52 持续生效）。
+### 待你拍板 🎯
 
-**⚠️ 未修遗留（按优先级）**：
-- **N55**（P1）：评分行与答案行不在同一事务 —— 答案写库失败时，异步线程的评分行仍会落地（"只落一半"），且前端无感。见 `需求清单-2026-09-15.md` N55 条目。
-- **N56**（P3）：`/editUserInfo` 是全量 UPDATE（非动态 SQL），任一字段传空即 500（清空学号保存会提示「服务器处理失败」）。
-- `docs/migration-20260928-score-record-unique.sql` 仍未在本机执行（代码侧幂等已生效，唯一索引是并发兜底）。
-- 测试残留（未清理，待你决定）：测试账号 `99900000001` / `99900000002`（密码 `test123456`）、场次 **303**（N20 失败现场，证据）、**304**（10 轮样例）、Redis `chat:memory:n22_conc_test`。
+1. **N42怎么改？** 建议 A + C（改prompt加门槛 + 长度闸门）
+2. **N43命名方案？** 推荐方案1：`答辩报告_学号_原名_短随机.ext`
+3. **N55是否一次性合并改动？**（省多轮重启实测）
+4. **资源加固（三）是否仍挂账？** 建议至少做JVM `-Xmx512m`
+5. **F10何时真机实测？** 需先在微信公众平台添加「微信同声传译」插件
 
-**📄 相关文档**：
-- `docs/P0-需求-语音答辩-2026-09-28.md` —— **新需求 F10 语音答辩**（AI 语音提问 + 学生语音作答，复用现有题库与评分；
-  ⚠️ 前置：需真实小程序 AppID 才能用微信同声传译插件）
+---
 
-**历史（备忘）**：
-**9-14 十轮答辩改造 + 9-15 轮次计数修复均已完成：编译通过、实测未复现 bug、已提交。**
+## 项目结构
 
-- 9-15 下午新增（编译通过，**待重启实测**）：前端题目序号（第1~5题/追问1~5）+ 顶栏进度 X/10；开场白改三段式修复纯文本 UI 与序号撞号；敷衍判定补网（"我是250"类）、追问题去重、题目文本清洗（？…？？）、总结带总评（总分+五维）。详见 `CHANGES.md`「2026-09-15 改动（题目序号与顶部进度 + 开场白修复 + 答辩体验四项优化）」。
+```
+ai/                                    # 项目根
+├── src/main/java/com/aihelper/
+│   ├── AiHelperApplication.java       # 启动类
+│   ├── Config/
+│   │   ├── WebConfig.java             # 拦截器注册 + 静态资源映射
+│   │   ├── GlobalExceptionHandler.java # 全局异常统一处理（新增）
+│   │   └── ChatConfiguration.java     # Spring AI ChatClient + Redis记忆
+│   ├── Controller/
+│   │   ├── chatController.java        # AI 对话主流程（核心）
+│   │   ├── loginController.java       # 登录/注册/改密/改资料
+│   │   ├── student/                   # 学生端接口
+│   │   └── teacher/                   # 教师端接口
+│   ├── Service/ & Service/Impl/       # 业务层
+│   ├── Mapper/                        # MyBatis Mapper
+│   ├── pojo/                          # 实体/VO/枚举
+│   ├── util/                          # 工具类
+│   ├── constant/                      # 常量（AiProtocolConstants 等）
+│   ├── result/                        # 统一响应（Result/ResultCode）
+│   └── interceptor/                   # 鉴权拦截器
+├── src/main/resources/
+│   ├── application.yml                # 主配置（gitignore，不提交）
+│   ├── application.yml.example        # 配置模板（git跟踪）
+│   ├── mapper/*.xml                   # MyBatis XML
+│   └── static/Ai/                     # 微信小程序前端代码
+│       ├── app.js / app.json / app.wxss
+│       ├── pages/
+│       │   ├── login/                 # 登录
+│       │   ├── register/              # 注册
+│       │   ├── forgetPassword/        # 忘记密码
+│       │   ├── student/               # 学生主页
+│       │   ├── defense/               # 文字答辩
+│       │   ├── defense-voice/         # 语音答辩（新增）
+│       │   ├── teacher/               # 教师主页
+│       │   ├── feedback/              # 学生反馈（新增）
+│       │   ├── feedback-admin/        # 教师反馈管理（新增）
+│       │   └── stats/                 # 数据总览（新增）
+│       └── utils/                     # 前端工具（uploader.js 等）
+├── docs/
+│   ├── schema.sql                     # 数据库表结构（10张表，含 system_feedback + uk_defense_round）
+│   ├── ddl_defense_score_record.sql   # 评分表建表
+│   ├── ddl_system_feedback.sql        # 反馈表建表（需手动执行）
+│   ├── migration-*.sql                # 数据迁移脚本
+│   ├── 从零部署手册-8G低功耗标准.md     # 部署文档
+│   └── 答辩系统-项目情况说明.md         # 业务说明
+├── diagnose.ps1                       # 答辩前自检脚本（10张表/索引/环境/推理抽测，根目录）
+├── scripts/
+│   └── install-whisper.ps1            # whisper.cpp 一键安装
+├── CHANGES.md                         # 改动记录（重构版）
+├── 需求清单-2026-09-15.md              # 需求清单（重构版）
+├── AGENTS.md                          # AI协作入口
+├── Modelfile-qwen25                   # Ollama模型定义
+└── pom.xml                            # Maven依赖
+```
 
-- 9-15 核心修复：轮次/收尾判断改按 `defense_score_record` 落库行数 +1 权威计数（旧实现按 Redis 历史消息数计数，被 `trimChatMemory` 物理截断封顶在 6，导致轮次号落库卡死、防死循环兜底永不触发——9-14 晚两场实测实锤，根因与修复详见 `CHANGES.md`「2026-09-15 改动」）。
-- 实测遗留的小问题（非阻塞）见 `CHANGES.md` 9-15 节「遗留」：前端重试可产生重复评分行、追问阶段放弃作答的答案行可能跳过落库、模型偶发"总分≠五维之和"（落库/展示已按五维和纠正）。
-- 待办（2026-09-15 用户确认暂不做，仅挂账）：① JVM 内存上限——pom.xml 的 spring-boot-maven-plugin 加 `<jvmArguments>-Xmx512m</jvmArguments>` 或启动命令加 `-Dspring-boot.run.jvmArguments=-Xmx512m`；② Ollama 并发限制——管理员命令行 `setx OLLAMA_NUM_PARALLEL 1` 后重启 Ollama 生效。本机 **16 GB 内存**（2026-09-25 更正，原记载的「7G」是上一台机器），答辩现场多开前仍建议完成（历史 JVM 崩溃见根目录 hs_err_pid*.log，源于 8b 模型实验）。
-- 编译注意：本机 PATH 无 mvn，用 `& "D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o compile`（JDK 17，JAVA_HOME 已配好）。**换机器请按实际安装位置替换**（按部署手册装好的机器在 `D:\tools\maven\apache-maven-3.9.9\bin\mvn.cmd`，JDK 在 `D:\tools\jdk17`）。
+---
 
-**历史背景（备忘）**：远程 `github.com/kunkun-text/ai_helper` 是别人的仓库，**不要改写历史或强推**；`application.yml`、`*.log`、`hs_err_pid*` 绝不提交。运行环境要求见上文第四节（Ollama 模型 `qwen2.5:3b-16k`，本机 RTX 2060 6GB 显存 + 16 GB 内存，**换更大模型前先实测评估**；带独显的新机器差异见 `docs/从零部署手册-8G低功耗标准.md` 第十五节）。
+## 操作红线（违反即回滚）
+
+1. **不提交** `application.yml` / `*.log` / `hs_err_pid*` / `~$*.xlsx`
+2. **不强推远程**，**不改写 Git 历史**
+3. **硬件红线**：只用 `qwen2.5:3b-16k`，不换更大模型
+4. **AI协议标签**：统一用 `AiProtocolConstants` 常量，不硬编码
+
+---
+
+## 编码规范
+
+- 中文注释，代码与注释保持同步
+- 新增依赖先确认必要性，优先用现有技术栈
+- 前端改动后 `node --check` 验证 JS 语法
+- 后端改动后 `mvn -o -q compile` 验证编译
+- 数据库改动提供 `docs/migration-*.sql`
+
+---
+
+## 必读文档优先级
+
+| 优先级 | 文档 | 什么时候读 |
+|---|---|---|
+| 1 | `docs/从零部署手册-8G低功耗标准.md` | 换新机器/从零部署/环境报错/推理变慢 |
+| 2 | `CHANGES.md` | 想了解某次改动的上下文 |
+| 3 | `需求清单-2026-09-15.md` | 开工前确认当前需求状态 |
+| 4 | `docs/schema.sql` | 改数据库结构前 |
+| 5 | `docs/答辩系统-项目情况说明.md` | 理解业务流程与AI输出格式 |
+
+---
+
+> 历史版本：本文件由原版 `CLAUDE.md` 更新而来，截至 2026-10-04。
