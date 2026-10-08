@@ -52,6 +52,7 @@
             u.profile_picture AS profilePicture,
             dt.topic_name AS topicName,
             dr.score AS score,
+            dr.status AS status,
             dr.defense_date AS defenseTime
         FROM
             defense_records dr
@@ -83,6 +84,13 @@
         where
             dr.defense_id = #{defenseId}
     </select>
+    <!-- 【N15 · 2026-10-08】审计上下文：答辩场次对应的 user_id / topic_id -->
+    <select id="selectAuditContext" resultType="java.util.HashMap">
+        SELECT user_id AS userId, topic_id AS topicId
+        FROM defense_records
+        WHERE defense_id = #{defenseId}
+    </select>
+
     <select id="getDefenseQuestionsAnswers" resultType="com.ai_helper.ai_helper.pojo.vo.QuestionDetailVo">
         select
             da.answer_id as answerId,
@@ -92,6 +100,7 @@
             da.student_answer as studentAnswer,
             da.score,
             da.feedback,
+            dq.standard_answer as standardAnswer,
             da.created_at as createdAt
         from
             defense_answers as da
@@ -99,6 +108,9 @@
                 left join defense_student_questions as ds on da.sq_id =  ds.sq_id
         where
             da.defense_id = #{defenseId}
+        <!-- 【N8 · 2026-10-08】显式按作答顺序（answer_id 升序）返回：
+             原实现没有 order by，逐轮对照的展示顺序依赖存储引擎返回顺序，不可靠 -->
+        order by da.answer_id asc
     </select>
     <select id="getStudentDefenseRecords" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
         select

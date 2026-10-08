@@ -6,6 +6,7 @@ import com.ai_helper.ai_helper.pojo.dto.UserDto;
 import com.ai_helper.ai_helper.result.Result;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -28,6 +29,21 @@ public class PasswordResetServiceImpl implements PasswordResetService {
     @Resource
     private RedisTemplate<String, String> redisTemplate;
 
+    /**
+     * 重置链接的基础地址（学生点开邮件里的链接时访问的后端地址）。
+     * 【N35 · 2026-10-08】原为硬编码 {@code http://localhost:8080}，换机器/上线必须改代码；
+     * 现走配置：本机调试用默认值，正式部署在 application.yml 里改成对外可访问的地址。
+     */
+    @Value("${app.mail.reset-link-base:http://localhost:8080}")
+    private String resetLinkBase;
+
+    /**
+     * 邮件发件人。【N35】原为硬编码 {@code 1685975918@qq.com}；
+     * 现取自 {@code spring.mail.username}，留空则不显式设置（交给 JavaMailSender 默认值）。
+     */
+    @Value("${spring.mail.username:}")
+    private String mailFrom;
+
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     @Override
@@ -48,10 +64,13 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                 30, TimeUnit.MINUTES
         );
 
-        // 4. 发送重置邮件
-        String resetLink = "http://localhost:8080/reset-password?token=" + token;
+        // 4. 发送重置邮件（【N35】链接前缀与发件人均改为配置项，不再硬编码）
+        String base = resetLinkBase == null ? "" : resetLinkBase.trim().replaceAll("/+$", "");
+        String resetLink = base + "/reset-password?token=" + token;
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("1685975918@qq.com");
+        if (mailFrom != null && !mailFrom.isBlank()) {
+            message.setFrom(mailFrom.trim());
+        }
         message.setTo(email);
         message.setSubject("密码重置");
         message.setText("请点击以下链接重置密码（30 分钟内有效）：\n" + resetLink);

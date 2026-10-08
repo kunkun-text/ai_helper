@@ -32,4 +32,20 @@ public interface StatsMapper {
      * @param days 天数
      */
     List<Map<String, Object>> selectDailyTrend(@Param("days") int days);
+
+    /**
+     * 【N9 · 2026-10-08】按课题统计：题目数 / 答辩场次数 / 已完成场次 / 平均分（含 0 场课题）。
+     *
+     * @param limit 最多返回多少条
+     */
+    List<Map<String, Object>> selectTopicStats(@Param("limit") int limit);
+
+    /**
+     * 【N9 · 2026-10-08】取某个课题下的答辩记录（供「按课题导出成绩」使用，列与教师端列表同口径）。
+     *
+     * @param topicId 课题 ID
+     * @param limit   最多返回条数（导出上限）
+     */
+    List<com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo> selectRecordsByTopic(
+            @Param("topicId") Integer topicId, @Param("limit") int limit);
 }

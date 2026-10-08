@@ -44,6 +44,10 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     @Resource
     private DefenseRecordsMapper defenseRecordsMapper;
 
+    /** 【N15 · 2026-10-08】答辩场次审计日志（开始/续答/结束各落一条，写失败不影响主流程） */
+    @Resource
+    private com.ai_helper.ai_helper.Service.AuditLogService auditLogService;
+
     @Resource
     private DefenseStudentQuestionsMapper defenseStudentQuestionsMapper;
 
@@ -395,6 +399,10 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                     fillResumeDetail(vo, resumableId, topicId, presetQuestionCount);
                     log.info("按用户选择续答既有场次 - defenseId: {}, 已答: {} 轮, 当前第: {} 轮, 当前题: {}",
                             resumableId, answeredCount, vo.getRoundNum(), vo.getCurrentQuestion());
+                    // 【N15】审计：续答
+                    auditLogService.logDefenseEvent(resumableId, parseIdSafely(internalUserId), topicId,
+                            com.ai_helper.ai_helper.Service.AuditLogService.EVENT_RESUME,
+                            answeredCount, "用户确认续答，已答 " + answeredCount + " 轮");
                     return vo;
                 }
                 log.info("请求续答，但当前不存在可续答场次（无记录 / 已答满 / 超出续答窗口），改用新答辩");
@@ -406,6 +414,10 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             vo.setDefenseId(defenseRecordsMapper.getDefenseIdByUserAndTopic(internalUserId, topicId));
             log.info("开始新答辩：清理空壳记录 {} 条，已创建本次答辩记录 - defenseId: {}, topicId: {}, userId: {}",
                     removed, vo.getDefenseId(), topicId, internalUserId);
+            // 【N15】审计：新建并开始（清理空壳 N 条一并记账，便于排查"记录莫名消失"）
+            auditLogService.logDefenseEvent(vo.getDefenseId(), parseIdSafely(internalUserId), topicId,
+                    com.ai_helper.ai_helper.Service.AuditLogService.EVENT_START, 0,
+                    "开始新答辩，清理空壳记录 " + removed + " 条");
             return vo;
 
         } catch (Exception e) {
@@ -638,11 +650,53 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             int result = defenseRecordsMapper.updateFinalResult(defenseId, totalScore, summary);
             if (result > 0) {
                 log.info("✅ 答辩总分落库成功 - defenseId: {}, 总分: {}", defenseId, totalScore);
+                // 【N15】审计：结束并汇总。userId/topicId 从答辩记录反查（本方法只有 defenseId）
+                logFinishAudit(defenseId, totalScore);
             } else {
                 log.warn("⚠️ 答辩总分落库失败，未找到记录 - defenseId: {}", defenseId);
             }
         } catch (Exception e) {
             log.error("❌ 答辩总分落库时发生异常 - defenseId: {}", defenseId, e);
+        }
+    }
+
+    /** 【N15】写「结束」审计：轮次取评分行数，user/topic 从 defense_records 反查 */
+    private void logFinishAudit(Integer defenseId, java.math.BigDecimal totalScore) {
+        Integer userId = null;
+        Integer topicId = null;
+        try {
+            Map<String, Object> context = defenseRecordsMapper.selectAuditContext(defenseId);
+            if (context != null) {
+                userId = toInteger(context.get("userId"));
+                topicId = toInteger(context.get("topicId"));
+            }
+        } catch (Exception e) {
+            log.debug("读取审计上下文失败（不影响审计写入） - defenseId: {}", defenseId, e);
+        }
+        int roundCount;
+        try {
+            roundCount = scoreRecordMapper.countByDefenseId(defenseId);
+        } catch (Exception e) {
+            roundCount = 0;
+        }
+        auditLogService.logDefenseEvent(defenseId, userId, topicId,
+                com.ai_helper.ai_helper.Service.AuditLogService.EVENT_FINISH, roundCount,
+                "答辩结束，总轮次 " + roundCount + "，总分 " + (totalScore == null ? "—" : totalScore));
+    }
+
+    /** user_id 在 Mapper 里是字符串别名，审计日志用 Integer，转换失败按 null 处理 */
+    private Integer parseIdSafely(String value) {
+        return toInteger(value);
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

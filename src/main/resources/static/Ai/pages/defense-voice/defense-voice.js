@@ -51,6 +51,7 @@ Page({
     speakText: '',        // 最近一次可重播的题目文本
     asrReady: true,       // 后端语音识别引擎是否就绪（进页面时查询一次）
     asrTip: '',           // 引擎不可用时的提示（展示在底部，避免"点了没反应"）
+    lastVoiceUrl: '',     // 【F11】本轮录音的归档地址，非空时显示「回放本轮录音」
 
     lastAiMessage: null,
     questionCount: 0,
@@ -369,6 +370,32 @@ Page({
   },
 
   /**
+   * 【F11】ASR 表单字段：识别所需的 format + 归档所需的题目上下文。
+   * 上下文（topicId + 当前题）齐备时，后端识别成功后会**顺手归档这段原录音**（避免二次上传 20MB 录音）；
+   * 缺任一项则只识别、不归档，不影响作答。
+   */
+  _buildAsrFormData() {
+    const formData = { format: this._recordFormat || 'mp3' };
+    const topicId = this.data.topicId;
+    const question = this._currentQuestion || '';
+    if (topicId && question) {
+      formData.topicId = String(topicId);
+      formData.question = question;
+    }
+    return formData;
+  },
+
+  /** 【F11】回放本轮录音（后端已归档的原始录音） */
+  playLastVoice() {
+    const url = this.data.lastVoiceUrl;
+    if (!url) {
+      wx.showToast({ title: '本轮没有可回放的录音', icon: 'none' });
+      return;
+    }
+    this.playAudio(resolveUrl(url));
+  },
+
+  /**
    * 上传录音到后端识别，成功后**回填到可编辑输入框**（学生可先改错字再发送）。
    * 识别失败/引擎未就绪时给出可读提示，不阻塞答辩。
    */
@@ -378,7 +405,7 @@ Page({
       url: config.getBaseUrl() + '/api/voice/asr',
       filePath: tempFilePath,
       name: 'file',
-      formData: { format: this._recordFormat || 'mp3' },
+      formData: this._buildAsrFormData(),
       timeout: 180000,
       header: {
         'Authorization': 'Bearer ' + auth.getToken(),
@@ -422,6 +449,12 @@ Page({
           answerText: text,
           voiceTip: '识别完成，确认无误后点「发送」',
         });
+
+        // 【F11】后端归档成功时给一个回放入口；空串 = 本次未归档（缺题目上下文或归档失败）
+        const voiceUrl = (data.voiceUrl || '').trim();
+        if (voiceUrl) {
+          this._safeSetData({ lastVoiceUrl: voiceUrl });
+        }
       },
       fail: (err) => {
         this._asrUploadTask = null;
@@ -616,6 +649,11 @@ Page({
       showRetry: false,
       lastError: '',
     });
+
+    // 【F11】记住当前这道题：录音归档时要把它一并存进 voice_responses.question
+    if (msg.question) {
+      this._currentQuestion = msg.question;
+    }
 
     // 语音答辩的核心差异：AI 的题自动念出来（有题播题，收尾轮播总结）
     const toSpeak = msg.question || (msg.isSummary ? msg.summary : '');

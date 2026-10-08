@@ -58,6 +58,7 @@ spring:
   mail:
     host: smtp.qq.com
     port: 587
+    # 发件人地址就是这一行（N35：代码里不再硬编码发件人，留空则用 JavaMailSender 默认值）
     username: your-qq-mail@qq.com
     password: your-qq-auth-code
     properties:
@@ -129,12 +130,25 @@ app:
     # 一场答辩可能超过 30 分钟，设太短会把学生答到一半踢出去，故为 120
     token-ttl-minutes: 120
 
+  mail:
+    # 【N35】找回密码邮件里「重置链接」的前缀（学生点开邮件链接时访问的后端地址）。
+    # 本机调试用默认值即可；正式部署改成对外可访问的地址（如 https://你的域名）。
+    # 此前该地址硬编码在 PasswordResetServiceImpl，换机器/上线必须改代码。
+    reset-link-base: http://localhost:8080
+
   defense:
     # 续答时间窗口（分钟）。
     # 答辩中途退出后再进时：只有「最后一次作答在该窗口内」的未完成场次才会弹窗提示
     # 「是否继续上次作答」，且必须由学生主动选择 —— 默认一律从第 1 题开始。
     # 超出窗口的场次按新答辩处理，避免历史遗留的未完成记录影响答辩开端。
     resume-window-minutes: 30
+
+  async:
+    # 低功耗线程池默认值：避免大文件/语音/异步任务与 Ollama 抢 CPU 和内存。
+    # 机器资源充足并经过压测后再上调。
+    core-pool-size: 2
+    max-pool-size: 4
+    queue-capacity: 50
 
   # ==========================================================================
   # 语音答辩（F10）：AI 提问的语音播报 + 学生语音作答的识别

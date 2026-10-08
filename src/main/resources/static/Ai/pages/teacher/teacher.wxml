@@ -209,6 +209,10 @@
           <text class="cell-text">导出答辩成绩</text>
           <text class="cell-arrow">></text>
         </view>
+        <view class="cell" bindtap="exportTopicStats">
+          <text class="cell-text">导出课题统计</text>
+          <text class="cell-arrow">></text>
+        </view>
         <view class="cell" bindtap="goFeedbackAdmin">
           <text class="cell-text">反馈管理</text>
           <text class="cell-arrow">></text>
@@ -361,6 +365,31 @@
           </scroll-view>
         </view>
         
+        <!-- 【N9】按课题导出成绩（只含本课题的答辩记录） -->
+        <view class="form-item">
+          <text class="label">成绩导出</text>
+          <button class="outline-btn" data-topic-id="{{selectedTopic.id}}" bindtap="exportRecords">导出本课题成绩 CSV</button>
+        </view>
+
+        <!-- 【N10】题库批量导入（CSV） -->
+        <view class="form-item">
+          <text class="label">题库批量导入</text>
+          <text class="muted">CSV 模板：第一列＝题目，第二列＝标准答案；以 # 开头的行会被忽略；单次最多 500 条</text>
+          <view class="import-mode-row">
+            <text class="import-mode {{importMode === 'append' ? 'active' : ''}}"
+              data-mode="append" bindtap="onImportModeChange">追加导入</text>
+            <text class="import-mode {{importMode === 'replace' ? 'active' : ''}}"
+              data-mode="replace" bindtap="onImportModeChange">覆盖导入</text>
+          </view>
+          <view class="import-btn-row">
+            <button class="outline-btn" bindtap="downloadImportTemplate">下载模板</button>
+            <button class="primary-btn" bindtap="importQuestionsFromCsv" disabled="{{importing}}">
+              {{importing ? '导入中…' : '从聊天选择 CSV 导入'}}
+            </button>
+          </view>
+          <text class="muted">在电脑上按模板填好后，用微信「文件传输助手」发到手机，再点上面的按钮从聊天记录选择该文件。</text>
+        </view>
+
         <view class="modal-actions" style="margin-top: 20px;">
           <button class="outline-btn red" bindtap="deleteTopic">删除题目</button>
           <button class="primary-btn" bindtap="editTopic">编辑题目</button>
@@ -449,6 +478,25 @@
         <text class="modal-close" bindtap="closeAnswers">×</text>
       </view>
       <scroll-view class="modal-body" scroll-y="true">
+        <!-- 【N8】逐轮五维明细 + 五维雷达图（逐轮平均） -->
+        <view wx:if="{{scoreDetailLines.length > 0}}" class="form-item">
+          <text class="label">逐轮五维评分</text>
+          <view wx:for="{{scoreDetailLines}}" wx:key="*this" class="muted">{{item}}</view>
+        </view>
+        <view wx:if="{{radarDims.length === 5}}" class="form-item">
+          <text class="label">五维能力雷达图（逐轮平均）</text>
+          <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+          <text class="muted">{{radarText}}</text>
+        </view>
+
+        <!-- 【F11】语音答辩逐轮录音回放（仅语音答辩场次有归档） -->
+        <view wx:if="{{voiceRecords.length > 0}}" class="form-item">
+          <text class="label">语音录音回放</text>
+          <view wx:for="{{voiceRecords}}" wx:key="key" class="voice-record-row">
+            <text class="muted">{{item.label}}</text>
+            <text class="voice-play-btn" data-url="{{item.url}}" catchtap="playVoiceRecord">▶ 播放</text>
+          </view>
+        </view>
         <block wx:for="{{selectedAnswers}}" wx:key="answerId">
           <view class="answer-item">
             <view class="answer-header">
@@ -466,6 +514,13 @@
               <text class="label">学生回答</text>
               <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
                 <text class="value">{{item.studentAnswer}}</text>
+              </scroll-view>
+            </view>
+            <!-- 【N8】标准答案对照：预设题有标准答案；追问没有，无值时不显示 -->
+            <view class="form-item" wx:if="{{item.standardAnswer}}">
+              <text class="label">标准答案</text>
+              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 200rpx;">
+                <text class="value standard-answer">{{item.standardAnswer}}</text>
               </scroll-view>
             </view>
             <view class="form-item">

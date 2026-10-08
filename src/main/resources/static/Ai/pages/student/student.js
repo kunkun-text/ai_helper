@@ -2,6 +2,7 @@
 const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
 const auth = require('../../utils/auth.js');
+const radar = require('../../utils/radar.js');
 
 /**
  * 登录态失效统一处理（【C1】转交 auth 模块，行为与全站一致）。
@@ -97,6 +98,11 @@ Page({
 
     // 逐轮五维评分明细（2026-10-01 详情增强；打开/关闭详情与加载失败时都会重置，防止上一条记录的分数串台显示）
     scoreDetailLines: [],
+    // 【F11】语音答辩逐轮录音回放（归档在 voice_responses，URL 走 /files/**）
+    voiceRecords: [],
+    // 【N8】五维雷达图（逐轮五维平均分）与是否可绘制
+    radarDims: [],
+    radarText: '',
 
     // 添加视频上传状态
     hasUploadedVideo: false,
@@ -1099,7 +1105,8 @@ Page({
     
     const that = this;
     // 打开即重置：上一条记录的逐轮评分若不清理，换记录后仍会显示（2026-10-01 审计 P1-3 修复）
-    this.setData({ scoreDetailLines: [] });
+    // 【F11】录音回放列表同样在打开时置空，避免串场；【N8】雷达图同理
+    this.setData({ scoreDetailLines: [], voiceRecords: [], radarDims: [], radarText: '' });
     wx.showLoading({
       title: '加载回答详情...'
     });
@@ -1158,14 +1165,49 @@ Page({
                 const lines = body.data.map((s) => '第' + s.roundNum + '轮：表达 ' + s.expressionScore +
                   '、逻辑 ' + s.logicScore + '、专业 ' + s.professionalScore +
                   '、应变 ' + s.adaptabilityScore + '、创新 ' + s.innovationScore);
-                that.setData({ scoreDetailLines: lines });
+                // 【N8】五维雷达图：取逐轮平均值，画在弹层的 canvas 上
+                const dims = radar.averageDims(body.data);
+                that.setData({
+                  scoreDetailLines: lines,
+                  radarDims: dims,
+                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
+                });
+                // canvas 在 wx:if 弹层里，setData 之后才能取到节点
+                wx.nextTick(() => radar.drawRadar(that, 'radarCanvas', dims));
               } else {
                 // 失败 / 空数据显式置空，避免残留上一条记录的分数（2026-10-01 审计 P1-3 修复）
-                that.setData({ scoreDetailLines: [] });
+                that.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
               }
             },
             fail: () => {
-              that.setData({ scoreDetailLines: [] });
+              that.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+            }
+          });
+
+          // 【F11】并行拉取该场答辩的逐轮录音（voice_responses），失败/无归档时列表为空，不影响其它内容
+          wx.request({
+            url: config.getBaseUrl() + '/api/voice/records?defenseId=' + defenseId,
+            method: 'GET',
+            header: {
+              'Authorization': 'Bearer ' + that.data.token
+            },
+            success: (voiceRes) => {
+              const body = voiceRes && voiceRes.data;
+              if (body && body.code === 1 && Array.isArray(body.data) && body.data.length > 0) {
+                const records = body.data.map((v, i) => ({
+                  key: v.responseId || i,
+                  label: '第 ' + (i + 1) + ' 轮录音',
+                  question: v.question || '',
+                  responseText: v.responseText || '',
+                  url: v.responseAudioUrl || ''
+                })).filter((v) => v.url);
+                that.setData({ voiceRecords: records });
+              } else {
+                that.setData({ voiceRecords: [] });
+              }
+            },
+            fail: () => {
+              that.setData({ voiceRecords: [] });
             }
           });
         } else {
@@ -1190,7 +1232,33 @@ Page({
 
   // 关闭回答详情
   closeAnswers() {
-    this.setData({ selectedAnswers: null, scoreDetailLines: [] });
+    this.setData({
+      selectedAnswers: null,
+      scoreDetailLines: [],
+      voiceRecords: [],
+      radarDims: [],
+      radarText: ''
+    });
+  },
+
+  /** 【F11】回放某一轮的录音（后端 /files/** 原生支持 Range，可直接播放） */
+  playVoiceRecord(e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url) {
+      wx.showToast({ title: '该轮没有可回放的录音', icon: 'none' });
+      return;
+    }
+    if (this._voiceCtx) {
+      this._voiceCtx.destroy();
+      this._voiceCtx = null;
+    }
+    const ctx = wx.createInnerAudioContext();
+    ctx.src = uploader.resolveFileUrl(url);
+    ctx.onError(() => {
+      wx.showToast({ title: '录音播放失败', icon: 'none' });
+    });
+    ctx.play();
+    this._voiceCtx = ctx;
   },
 
   // 视频上传相关方法

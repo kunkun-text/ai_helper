@@ -2,6 +2,7 @@
 const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
 const auth = require('../../utils/auth.js');
+const radar = require('../../utils/radar.js');
 
 /**
  * 【C2 · 2026-10-05】统一处理 401/403：token 过期 / 角色不符时，
@@ -71,7 +72,13 @@ Page({
     isEditingTopic: false, // 标识是否正在编辑题目
     savingProfile: false, // 【C4】资料保存防重复提交
     savingTopic: false, // 【C4】课题保存防重复提交
-    selectedAnswers: null // 添加选中的回答详情
+    selectedAnswers: null, // 添加选中的回答详情
+    voiceRecords: [], // 【F11】语音答辩逐轮录音回放（来自 voice_responses）
+    scoreDetailLines: [], // 【N8】逐轮五维明细文本
+    radarDims: [], // 【N8】五维雷达图数据（逐轮平均）
+    radarText: '', // 【N8】雷达图下方的文字汇总
+    importMode: 'append', // 【N10】题库导入方式：append=追加 / replace=覆盖
+    importing: false // 【N10】导入进行中，防重复提交
   },
 
   onLoad() {
@@ -609,7 +616,26 @@ loadMoreTopics() {
   },
 
   // 导出答辩成绩 CSV（后端 /teacher/export/records.csv，UTF-8 BOM，教师 token 鉴权）
-  exportRecords() {
+  // 【N9 · 2026-10-08】带 data-topic-id 时只导出该课题的成绩（课题详情弹层里的「导出本课题成绩」）
+  exportRecords(e) {
+    const dataset = (e && e.currentTarget && e.currentTarget.dataset) || {};
+    const topicId = dataset.topicId;
+    const path = topicId
+      ? '/teacher/export/records.csv?topicId=' + topicId
+      : '/teacher/export/records.csv';
+    this._downloadCsv(path);
+  },
+
+  /** 【N9】按课题统计导出（题目数 / 答辩场次 / 已完成场次 / 平均分） */
+  exportTopicStats() {
+    this._downloadCsv('/teacher/export/topic-stats.csv');
+  },
+
+  /**
+   * 【N9】通用 CSV 下载：非 200 拒绝交付（401/403 时 tempFilePath 里是错误 JSON）；
+   * openDocument 官方不支持 csv，部分设备必然失败——降级为「已下载」提示。
+   */
+  _downloadCsv(path) {
     const token = wx.getStorageSync('token');
     if (!token) {
       wx.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
@@ -617,11 +643,10 @@ loadMoreTopics() {
     }
     wx.showLoading({ title: '导出中...' });
     wx.downloadFile({
-      url: config.getBaseUrl() + '/teacher/export/records.csv',
+      url: config.getBaseUrl() + path,
       header: { 'Authorization': 'Bearer ' + token },
       success: (res) => {
         wx.hideLoading();
-        // 401/403 等非 200 时 tempFilePath 里是错误 JSON，不能当文件交付
         if (res.statusCode !== 200) {
           wx.showToast({ title: '导出失败，请重新登录后重试', icon: 'none' });
           return;
@@ -630,7 +655,6 @@ loadMoreTopics() {
           filePath: res.tempFilePath,
           showMenu: true,
           fail: () => {
-            // openDocument 官方不支持 csv 类型，部分设备必然失败——降级为提示已下载
             wx.showModal({
               title: '导出成功',
               content: '文件已下载到临时目录。当前设备暂不支持直接打开 CSV，可通过右上角菜单转发到电脑查看。',
@@ -729,7 +753,155 @@ loadMoreTopics() {
 
   // 关闭题目详情
   closeTopicDetail() {
-    this.setData({ selectedTopic: null });
+    this.setData({ selectedTopic: null, importMode: 'append', importing: false });
+  },
+
+  // ======== 【N10】题库批量导入（CSV） ========
+
+  /** 切换导入方式；覆盖模式先弹确认（会清空该课题原有题目） */
+  onImportModeChange(e) {
+    const mode = e.currentTarget.dataset.mode;
+    if (mode !== 'replace') {
+      this.setData({ importMode: 'append' });
+      return;
+    }
+    wx.showModal({
+      title: '使用覆盖导入？',
+      content: '覆盖导入会先删除该课题下所有已有题目，再用文件内容替换。已产生的学生历史答案不受影响，但题库会被重建。',
+      success: (r) => {
+        if (r.confirm) {
+          this.setData({ importMode: 'replace' });
+        }
+      }
+    });
+  },
+
+  /** 下载 CSV 导入模板（小程序内尽量用 openDocument 打开；部分机型不支持 csv 预览则提示已下载） */
+  downloadImportTemplate() {
+    const token = wx.getStorageSync('token');
+    wx.showLoading({ title: '下载模板中…' });
+    wx.downloadFile({
+      url: config.getBaseUrl() + '/teacher/questions/import-template',
+      header: { 'Authorization': token ? 'Bearer ' + token : '' },
+      success: (res) => {
+        if (handleUnauthorized(res)) { return; }
+        if (res.statusCode !== 200) {
+          wx.showToast({ title: '模板下载失败', icon: 'none' });
+          return;
+        }
+        wx.openDocument({
+          filePath: res.tempFilePath,
+          fileType: 'csv',
+          fail: () => {
+            wx.showToast({ title: '文件已下载，可在「文件」中查看', icon: 'none', duration: 2500 });
+          }
+        });
+      },
+      fail: () => {
+        wx.showToast({ title: '模板下载失败，请检查网络', icon: 'none' });
+      },
+      complete: () => {
+        wx.hideLoading();
+      }
+    });
+  },
+
+  /** 从聊天记录选择一个 CSV 并导入到当前课题 */
+  importQuestionsFromCsv() {
+    if (this.data.importing) {
+      return;
+    }
+    const topic = this.data.selectedTopic;
+    if (!topic || !topic.id) {
+      wx.showToast({ title: '请先打开一个课题', icon: 'none' });
+      return;
+    }
+    const topicId = topic.id;
+    wx.chooseMessageFile({
+      count: 1,
+      type: 'file',
+      extension: ['csv'],
+      success: (res) => {
+        const picked = res && res.tempFiles && res.tempFiles[0];
+        if (!picked || !picked.path) {
+          return;
+        }
+        this._doImportCsv(picked.path, topicId);
+      }
+    });
+  },
+
+  _doImportCsv(filePath, topicId) {
+    const token = wx.getStorageSync('token');
+    this.setData({ importing: true });
+    wx.showLoading({ title: '导入中…' });
+    wx.uploadFile({
+      url: config.getBaseUrl() + '/teacher/questions/import',
+      filePath: filePath,
+      name: 'file',
+      formData: { topicId: String(topicId), mode: this.data.importMode },
+      header: { 'Authorization': token ? 'Bearer ' + token : '' },
+      success: (res) => {
+        if (handleUnauthorized(res)) { return; }
+        let payload = {};
+        try {
+          payload = JSON.parse(res.data || '{}');
+        } catch (e) {
+          payload = {};
+        }
+        if (payload.code !== 1) {
+          wx.showModal({
+            title: '导入失败',
+            content: payload.msg || '请检查文件格式（第一列题目、第二列标准答案，CSV UTF-8）',
+            showCancel: false
+          });
+          return;
+        }
+        const data = payload.data || {};
+        const lines = ['成功导入：' + (data.imported || 0) + ' 条'];
+        if (data.skipped) {
+          lines.push('跳过：' + data.skipped + ' 条');
+        }
+        if (data.replaced) {
+          lines.push('（覆盖模式：原有题目已被替换）');
+        }
+        const reasons = data.skippedReasons || [];
+        if (reasons.length > 0) {
+          lines.push('');
+          lines.push('跳过原因：');
+          lines.push(reasons.join('\n'));
+        }
+        wx.showModal({ title: '导入完成', content: lines.join('\n'), showCancel: false });
+        this.refreshTopicQuestions(topicId);
+      },
+      fail: () => {
+        wx.showToast({ title: '导入失败，请检查网络', icon: 'none' });
+      },
+      complete: () => {
+        wx.hideLoading();
+        this.setData({ importing: false });
+      }
+    });
+  },
+
+  /** 导入后重新拉一次题库，刷新详情弹层里的题目列表 */
+  refreshTopicQuestions(topicId) {
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: config.getBaseUrl() + '/teacher/getDefenseQuestionById?topicId=' + topicId,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (handleUnauthorized(res)) { return; }
+        const topic = this.data.selectedTopic;
+        if (res.data && res.data.code === 1 && topic && String(topic.id) === String(topicId)) {
+          this.setData({ selectedTopic: { ...topic, questions: res.data.data || [] } });
+        }
+      }
+    });
   },
 
   // 查看反馈详情
@@ -1393,7 +1565,68 @@ loadMoreTopics() {
 
           }));
           this.setData({ 
-            selectedAnswers: processedAnswers 
+            selectedAnswers: processedAnswers,
+            voiceRecords: [],
+            scoreDetailLines: [],
+            radarDims: [],
+            radarText: ''
+          });
+
+          // 【F11】并行拉取该场答辩的逐轮录音（voice_responses）；无归档/请求失败时列表为空，不影响其它内容
+          wx.request({
+            url: `${serverUrl}/teacher/defense/voiceRecords/${defenseId}`,
+            method: 'GET',
+            header: {
+              'Content-Type': 'application/json',
+              'Authorization': token ? 'Bearer ' + token : ''
+            },
+            success: (voiceRes) => {
+              const body = voiceRes && voiceRes.data;
+              if (body && body.code === 1 && Array.isArray(body.data) && body.data.length > 0) {
+                const records = body.data.map((v, i) => ({
+                  key: v.responseId || i,
+                  label: '第 ' + (i + 1) + ' 轮录音',
+                  question: v.question || '',
+                  url: v.responseAudioUrl || ''
+                })).filter((v) => v.url);
+                this.setData({ voiceRecords: records });
+              } else {
+                this.setData({ voiceRecords: [] });
+              }
+            },
+            fail: () => {
+              this.setData({ voiceRecords: [] });
+            }
+          });
+
+          // 【N8 · 2026-10-08】逐轮五维明细 → 雷达图（教师端此前没有这块数据）
+          wx.request({
+            url: `${serverUrl}/teacher/defense/scoreDetail/${defenseId}`,
+            method: 'GET',
+            header: {
+              'Content-Type': 'application/json',
+              'Authorization': token ? 'Bearer ' + token : ''
+            },
+            success: (scoreRes) => {
+              const scoreBody = scoreRes && scoreRes.data;
+              if (scoreBody && scoreBody.code === 1 && Array.isArray(scoreBody.data) && scoreBody.data.length > 0) {
+                const lines = scoreBody.data.map((s) => '第' + s.roundNum + '轮：表达 ' + s.expressionScore +
+                  '、逻辑 ' + s.logicScore + '、专业 ' + s.professionalScore +
+                  '、应变 ' + s.adaptabilityScore + '、创新 ' + s.innovationScore);
+                const dims = radar.averageDims(scoreBody.data);
+                this.setData({
+                  scoreDetailLines: lines,
+                  radarDims: dims,
+                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
+                });
+                wx.nextTick(() => radar.drawRadar(this, 'radarCanvas', dims));
+              } else {
+                this.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+              }
+            },
+            fail: () => {
+              this.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+            }
           });
         } else {
           wx.showToast({
@@ -1416,6 +1649,32 @@ loadMoreTopics() {
   },
 
   closeAnswers() {
-    this.setData({ selectedAnswers: null });
+    this.setData({
+      selectedAnswers: null,
+      voiceRecords: [],
+      scoreDetailLines: [],
+      radarDims: [],
+      radarText: ''
+    });
+  },
+
+  /** 【F11】回放某一轮的录音（教师端；/files/** 原生支持 Range） */
+  playVoiceRecord(e) {
+    const url = e.currentTarget.dataset.url;
+    if (!url) {
+      wx.showToast({ title: '该轮没有可回放的录音', icon: 'none' });
+      return;
+    }
+    if (this._voiceCtx) {
+      this._voiceCtx.destroy();
+      this._voiceCtx = null;
+    }
+    const ctx = wx.createInnerAudioContext();
+    ctx.src = uploader.resolveFileUrl(url);
+    ctx.onError(() => {
+      wx.showToast({ title: '录音播放失败', icon: 'none' });
+    });
+    ctx.play();
+    this._voiceCtx = ctx;
   }
 });

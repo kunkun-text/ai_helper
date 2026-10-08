@@ -4,6 +4,7 @@ import com.ai_helper.ai_helper.Service.FileStorageService;
 import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.AsyncTaskExecutor;
@@ -51,12 +52,22 @@ public class WebConfig implements WebMvcConfigurer {
     private final AppProperties appProperties;
     private final FileStorageService fileStorageService;
 
+    @Value("${app.async.core-pool-size:2}")
+    private int asyncCorePoolSize;
+
+    @Value("${app.async.max-pool-size:4}")
+    private int asyncMaxPoolSize;
+
+    @Value("${app.async.queue-capacity:50}")
+    private int asyncQueueCapacity;
+
     @Bean("taskExecutor")
     public AsyncTaskExecutor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(10);
-        executor.setMaxPoolSize(20);
-        executor.setQueueCapacity(200);
+        // 低功耗默认值：8G 答辩机避免 10/20 大线程池与 Ollama 抢内存和 CPU；需要压测时可在 application.yml 覆盖
+        executor.setCorePoolSize(asyncCorePoolSize);
+        executor.setMaxPoolSize(Math.max(asyncMaxPoolSize, asyncCorePoolSize));
+        executor.setQueueCapacity(asyncQueueCapacity);
         executor.setThreadNamePrefix("mvc-task-");
         executor.initialize();
         return executor;

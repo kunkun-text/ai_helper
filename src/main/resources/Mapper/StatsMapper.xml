@@ -44,4 +44,45 @@
         ORDER BY day ASC
     </select>
 
+    <!--
+        【N9 · 2026-10-08】按课题统计（含 0 场课题）。
+        注意：COUNT(DISTINCT r.defense_id) 必须去重 —— defense_topics 与 defense_records 一对多，
+        再 JOIN defense_questions 会放大行数，故题目数用子查询而不是 JOIN。
+    -->
+    <select id="selectTopicStats" resultType="java.util.HashMap">
+        SELECT
+            t.topic_id   AS topicId,
+            t.topic_name AS topicName,
+            t.defense_time AS defenseTime,
+            COALESCE(u.name, '') AS teacherName,
+            (SELECT COUNT(*) FROM defense_questions q WHERE q.topic_id = t.topic_id) AS questionCount,
+            COUNT(DISTINCT r.defense_id) AS defenseCount,
+            COUNT(DISTINCT CASE WHEN r.status = 'completed' THEN r.defense_id END) AS completedCount,
+            ROUND(AVG(r.score), 1) AS avgScore
+        FROM defense_topics t
+            LEFT JOIN users u ON u.user_id = t.teacher_id
+            LEFT JOIN defense_records r ON r.topic_id = t.topic_id
+        GROUP BY t.topic_id, t.topic_name, t.defense_time, u.name
+        ORDER BY defenseCount DESC, t.topic_id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 【N9】某课题的答辩记录（导出用；与教师端列表口径一致，含 status 以便导出中文状态） -->
+    <select id="selectRecordsByTopic" resultType="com.ai_helper.ai_helper.pojo.vo.DefenseRecordsVo">
+        SELECT
+            dr.defense_id AS defenseRecordId,
+            u.name AS userName,
+            u.user_number AS userNumber,
+            dt.topic_name AS topicName,
+            dr.score AS score,
+            dr.status AS status,
+            dr.defense_date AS defenseTime
+        FROM defense_records dr
+            JOIN users u ON dr.user_id = u.user_id
+            JOIN defense_topics dt ON dr.topic_id = dt.topic_id
+        WHERE dr.topic_id = #{topicId}
+        ORDER BY dr.defense_date DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

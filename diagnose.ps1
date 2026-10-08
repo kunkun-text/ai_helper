@@ -10,7 +10,7 @@
 
   检查项（逐条 ✅ / ❌ + 修复提示）：
       1. 可用物理内存
-      2. MySQL 连通 + ai_helper 10 张表齐全 + 关键索引（uk_defense_round / idx_status_created）
+      2. MySQL 连通 + ai_helper 11 张表齐全 + 关键索引（uk_defense_round / idx_status_created）
       3. Redis 连通（带密码）
       4. Ollama 服务 + 目标模型已 pull + 是否已加载进显存
       5. 后端端口占用
@@ -188,8 +188,9 @@ Write-Check -Name "端口 $MysqlPort 监听" -Ok $mysqlOk `
 $mysqlExePath = Find-Exe -Explicit $MysqlExe -ExeName "mysql.exe" -ListeningPort $MysqlPort `
     -SearchRoots @("D:\mysql", "D:\tools\mysql8", "C:\tools\mysql8", "C:\Program Files\MySQL")
 if ($mysqlOk -and $mysqlExePath) {
-    # 【E2 · 2026-10-05】必需 10 张表：补入 system_feedback（反馈模块，2026-10-01 上线）
-    $expected = @("defense_answers","defense_questions","defense_records","defense_score_record",
+    # 【E2 · 2026-10-05】必需表清单：补入 system_feedback（反馈模块）
+    # 【N15 · 2026-10-08】补入 defense_audit_log（答辩场次审计日志），共 11 张
+    $expected = @("defense_answers","defense_audit_log","defense_questions","defense_records","defense_score_record",
                   "defense_student_questions","defense_topics","system_feedback","system_settings","users","voice_responses")
     # 用数组展开传参：PowerShell 5.1 对「-p$变量」这类拼接 token 传给原生命令时处理不一致，
     # 实测会把密码传错（Access denied），@args 展开可稳定传递。
@@ -199,13 +200,17 @@ if ($mysqlOk -and $mysqlExePath) {
     $tables = @($raw | Where-Object { $_ -and $_ -notmatch "Warning|ERROR" })
     if ($LASTEXITCODE -eq 0 -and $tables.Count -gt 0) {
         $missing = @($expected | Where-Object { $tables -notcontains $_ })
-        $tableDetail = $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "10 张必需表齐全" })
-        Write-Check -Name "表结构检查（必需 10 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
+        $tableDetail = $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "11 张必需表齐全" })
+        Write-Check -Name "表结构检查（必需 11 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
             -Detail $tableDetail `
             -Fix $(if ($tables.Count -lt 3) {
                     "空库：导入最新表结构 mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
                   } elseif ($missing -contains "system_feedback") {
                     "存量库补反馈表：mysql -uroot -p $MysqlDatabase < docs/ddl_system_feedback.sql"
+                  } elseif ($missing -contains "voice_responses") {
+                    "存量库补语音归档表：mysql -uroot -p $MysqlDatabase < docs/ddl_voice_responses.sql"
+                  } elseif ($missing -contains "defense_audit_log") {
+                    "存量库补审计日志表：mysql -uroot -p $MysqlDatabase < docs/ddl_defense_audit_log.sql"
                   } else {
                     "导入表结构：mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
                   })
@@ -337,13 +342,13 @@ if ($backend) {
 }
 
 # ------------------------------------------------------------ 6. 环境变量
-Write-Host "`n[6] Ollama 环境变量（用户级；缺失只提示、不阻塞，按机型对照）" -ForegroundColor Yellow
+Write-Host "`n[6] Ollama 环境变量（用户级；缺失只提示；-StrictLowPower 校验低功耗取值）" -ForegroundColor Yellow
 $lowPowerVars = [ordered]@{
-    "OLLAMA_KV_CACHE_TYPE"     = "KV 缓存量化，内存需求减半（8G 机型必需，部署手册 7.2）"
-    "OLLAMA_NUM_PARALLEL"      = "并发压到 1，避免多份 KV 缓存（8G 机型必需）"
-    "OLLAMA_MAX_LOADED_MODELS" = "同时只保留 1 个模型（8G 机型必需）"
-    "OLLAMA_NUM_THREADS"       = "CPU 线程数（8G 机型建议 4）"
-    "OLLAMA_MODELS"            = "模型存放目录（决定模型放哪个盘）"
+    "OLLAMA_KV_CACHE_TYPE"     = @{ Desc = "KV 缓存量化，内存需求减半（8G 机型必需，部署手册 7.2）"; Expected = "q4_0" }
+    "OLLAMA_NUM_PARALLEL"      = @{ Desc = "并发压到 1，避免多份 KV 缓存（8G 机型必需）"; Expected = "1" }
+    "OLLAMA_MAX_LOADED_MODELS" = @{ Desc = "同时只保留 1 个模型（8G 机型必需）"; Expected = "1" }
+    "OLLAMA_NUM_THREADS"       = @{ Desc = "CPU 线程数（8G 机型建议不超过 4）"; Max = 4 }
+    "OLLAMA_MODELS"            = @{ Desc = "模型存放目录（决定模型放哪个盘）"; RequiredOnly = $true }
 }
 $devVars = [ordered]@{
     "OLLAMA_KEEP_ALIVE"      = "模型常驻，避免重复冷启动（独显机器常用）"
@@ -352,21 +357,36 @@ $devVars = [ordered]@{
     "OLLAMA_FLASH_ATTENTION" = "FlashAttention 加速（独显机器常用）"
 }
 foreach ($group in @(
-        @{ Title = "8G 低功耗标准";   Items = $lowPowerVars },
-        @{ Title = "本机（独显）常用"; Items = $devVars })) {
+        @{ Title = "8G 低功耗标准";   Items = $lowPowerVars; Strict = $true },
+        @{ Title = "本机（独显）常用"; Items = $devVars; Strict = $false })) {
     Write-Host "  -- $($group.Title) --" -ForegroundColor Gray
     foreach ($name in $group.Items.Keys) {
         $val = Get-EnvValue -Name $name
         $ok = [bool]$val
+        $detail = $group.Items[$name]
         Write-Host $(if ($ok) { "  [OK] " } else { "  [!!] " }) -NoNewline
         Write-Host "$name = $(if ($val) { $val } else { '(未设置)' })" `
             -ForegroundColor $(if ($ok) { "Green" } else { "Yellow" })
         if (-not $ok) {
-            Write-Host "       作用: $($group.Items[$name])" -ForegroundColor Gray
-            # 【E2】-StrictLowPower：答辩机为 8G 低功耗标准时，低功耗变量缺失必须红灯
-            if ($StrictLowPower -and $group.Title -eq "8G 低功耗标准") {
+            $desc = if ($detail -is [hashtable]) { $detail.Desc } else { $detail }
+            Write-Host "       作用: $desc" -ForegroundColor Gray
+            if ($StrictLowPower -and $group.Strict) {
                 Write-Check -Name "低功耗环境变量 $name 未设置（-StrictLowPower 模式判失败）" -Ok $false `
                     -Fix "按部署手册 7.2 节设置 $name（用户级），并重启 Ollama"
+            }
+            continue
+        }
+        if ($StrictLowPower -and $group.Strict -and ($detail -is [hashtable])) {
+            if ($detail.ContainsKey("Expected") -and $val -ne $detail.Expected) {
+                Write-Check -Name "低功耗环境变量 $name 取值应为 $($detail.Expected)" -Ok $false `
+                    -Detail "当前值: $val" -Fix "重新设置 $name=$($detail.Expected)，并重启 Ollama"
+            }
+            if ($detail.ContainsKey("Max")) {
+                $num = 0
+                if ([int]::TryParse($val, [ref]$num) -and $num -gt [int]$detail.Max) {
+                    Write-Check -Name "低功耗环境变量 $name 建议不超过 $($detail.Max)" -Ok $false `
+                        -Detail "当前值: $val" -Fix "8G 低功耗机器建议设置 $name=$($detail.Max)，并重启 Ollama"
+                }
             }
         }
     }

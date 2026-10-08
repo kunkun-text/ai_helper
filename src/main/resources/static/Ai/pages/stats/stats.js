@@ -7,11 +7,14 @@ Page({
   data: {
     overview: {},
     topicDistribution: [],
-    dailyTrend: []
+    dailyTrend: [],
+    // 【N9 · 2026-10-08】按课题统计（题目数/场次/已完成/平均分），来自 /teacher/stats/topics
+    topicStats: []
   },
 
   onLoad() {
     this.loadStats();
+    this.loadTopicStats();
   },
 
   goBack() {
@@ -48,6 +51,38 @@ Page({
       },
       fail: () => {
         wx.showToast({ title: '网络请求失败', icon: 'none' });
+      }
+    });
+  },
+
+  /**
+   * 【N9 · 2026-10-08】按课题统计：与总览分开请求，任一失败不影响另一块展示。
+   */
+  loadTopicStats() {
+    const token = auth.getToken();
+    if (!token) {
+      return;
+    }
+    wx.request({
+      url: config.getBaseUrl() + '/teacher/stats/topics',
+      method: 'GET',
+      header: { 'Authorization': 'Bearer ' + token },
+      success: (res) => {
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          auth.handleAuthExpired();
+          return;
+        }
+        const body = res && res.data;
+        if (body && body.code === 1 && Array.isArray(body.data)) {
+          this.setData({
+            topicStats: body.data.map((it) => Object.assign({}, it, {
+              avgScoreText: (it.avgScore === null || it.avgScore === undefined) ? '—' : it.avgScore
+            }))
+          });
+        }
+      },
+      fail: () => {
+        this.setData({ topicStats: [] });
       }
     });
   },

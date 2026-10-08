@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+    答辩场次审计日志（N15 · 2026-10-08）
+    表 defense_audit_log，建表语句见 docs/ddl_defense_audit_log.sql（以及最新 docs/schema.sql）。
+-->
+<mapper namespace="com.ai_helper.ai_helper.mapper.DefenseAuditLogMapper">
+
+    <insert id="insertAuditLog" parameterType="com.ai_helper.ai_helper.pojo.entity.DefenseAuditLog"
+            useGeneratedKeys="true" keyProperty="logId">
+        INSERT INTO defense_audit_log (defense_id, user_id, topic_id, event, round_num, detail, created_at)
+        VALUES (#{defenseId}, #{userId}, #{topicId}, #{event}, #{roundNum}, #{detail}, COALESCE(#{createdAt}, NOW()))
+    </insert>
+
+    <select id="selectByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseAuditLog">
+        SELECT log_id, defense_id, user_id, topic_id, event, round_num, detail, created_at
+        FROM defense_audit_log
+        WHERE defense_id = #{defenseId}
+        ORDER BY log_id ASC
+    </select>
+
+</mapper>

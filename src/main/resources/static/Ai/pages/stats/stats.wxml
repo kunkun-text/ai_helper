@@ -50,6 +50,22 @@
       </view>
     </view>
 
+    <!-- 【N9 · 2026-10-08】按课题统计：题目数 / 场次 / 已完成 / 平均分 -->
+    <view class="g-card">
+      <view class="g-card-title">按课题统计</view>
+      <view wx:if="{{topicStats.length === 0}}" class="g-empty">暂无数据</view>
+      <view wx:for="{{topicStats}}" wx:key="topicId" class="topic-stat-row">
+        <view class="topic-stat-main">
+          <text class="dist-name">{{item.topicName}}</text>
+          <text class="muted-text">{{item.teacherName || '未指定教师'}} · 题目 {{item.questionCount}} 道</text>
+        </view>
+        <view class="topic-stat-side">
+          <text class="topic-stat-num">{{item.defenseCount}} 场</text>
+          <text class="muted-text">已完成 {{item.completedCount}} · 均分 {{item.avgScoreText}}</text>
+        </view>
+      </view>
+    </view>
+
     <view class="g-card">
       <view class="g-card-title">近 14 天答辩趋势</view>
       <view wx:if="{{dailyTrend.length === 0}}" class="g-empty">暂无数据</view>

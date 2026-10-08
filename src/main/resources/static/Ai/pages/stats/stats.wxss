@@ -95,3 +95,41 @@
   font-size: 24rpx;
   color: #333333;
 }
+
+/* 【N9】按课题统计 */
+.topic-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f0f2f5;
+}
+
+.topic-stat-row:last-child {
+  border-bottom: none;
+}
+
+.topic-stat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topic-stat-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.topic-stat-num {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #2b6cff;
+}
+
+.muted-text {
+  font-size: 22rpx;
+  color: #8a8f99;
+}

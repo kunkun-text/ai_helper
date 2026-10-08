@@ -48,6 +48,9 @@ public interface DefenseRecordsMapper {
 
     String getUserIdByUserNumber(String userNumber);
 
+    /** 【N15 · 2026-10-08】取某场答辩的审计上下文（user_id / topic_id），用于写审计日志 */
+    java.util.Map<String, Object> selectAuditContext(@Param("defenseId") Integer defenseId);
+
     String getVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
 
     /**

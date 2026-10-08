@@ -74,6 +74,22 @@
   margin-top: 16rpx;
 }
 
+/* 【F11】本轮录音回放入口 */
+.voice-replay-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12rpx;
+}
+
+.voice-replay-btn {
+  padding: 8rpx 24rpx;
+  border-radius: 999rpx;
+  background: #eef4ff;
+  color: #2b6cff;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
 /* 按住说话：主按钮，录音中变红 */
 .voice-hold-btn {
   flex: 1;

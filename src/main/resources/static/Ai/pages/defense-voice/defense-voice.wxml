@@ -128,6 +128,11 @@
       disabled="{{isAiThinking || isFinished || isRecording || isRecognizing}}"
       maxlength="2000" auto-height="{{true}}" show-confirm-bar="{{false}}" />
 
+    <!-- 【F11】本轮录音已归档时提供回放入口（归档失败/无上下文时该行不出现） -->
+    <view wx:if="{{lastVoiceUrl && !isFinished}}" class="voice-replay-row">
+      <text class="voice-replay-btn" bindtap="playLastVoice">▶ 回放本轮录音</text>
+    </view>
+
     <view class="voice-actions">
       <!-- 【D2】识别中/录音中/引擎未就绪一律禁用，避免重复触发录音或识别期间再次上传 -->
       <button class="voice-hold-btn {{isRecording ? 'recording' : ''}}"

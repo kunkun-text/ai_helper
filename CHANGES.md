@@ -1,6 +1,6 @@
 # AI 答辩辅助系统 — 改动记录
 
-> 基于 git commit `508d803`（母版），截至 2026-10-05
+> 基于 git commit `508d803`（母版），截至 2026-10-08
 > 本文档按「时间倒序 + 功能模块」组织，方便快速定位某次改动的上下文。
 
 ---
@@ -9,13 +9,176 @@
 
 | 想看什么 | 跳到 |
 |---|---|
-| 最新改动（2026-10-05 上线缺漏整改） | [上线缺漏整改](#2026-10-05) |
+| 最新改动（2026-10-08 追问质量与低功耗加固） | [追问质量与低功耗加固](#2026-10-08) |
+| 上线缺漏整改（2026-10-05） | [上线缺漏整改](#2026-10-05) |
 | 判分可信度收口（2026-10-02） | [判分可信度收口](#2026-10-02) |
 | 功能扩展（数据总览/导出/反馈） | [2026-10-01 大规模优化](#2026-10-01) |
 | 评分逻辑演进（N42~N54） | [评分可信度](#评分可信度演进) |
 | 事务/鉴权/续答加固 | [2026-09-28 核心加固](#2026-09-28) |
 | 语音答辩 | [F10 语音答辩](#f10-语音答辩) |
 | 历史改动（9月） | [2026-09 改动归档](#2026-09-改动归档) |
+
+---
+
+# 2026-10-08
+
+## 追问质量与低功耗配置加固（N44 / N48 / N35 / N7 + 三 + A2 配置侧）
+
+> 改动日期：10.8，涉及 5 个代码/脚本文件 + 4 份文档（同日补充 N35/N40/N34：另涉 4 个文件 + 1 个新模板）。**状态：`mvn -o -q compile` BUILD SUCCESS；改动过的 JS `node --check` 通过；未做真机与多场答辩实测。**
+
+### 一、追问质量（`chatController`）
+
+| 项 | 问题（实锤） | 修复 |
+|---|---|---|
+| **N44** | 追问只把课题名塞进 prompt，模型出的题与课题、与学生刚答的内容无关 | `generateFollowUpQuestion` 增加 `currentQuestion`/`studentAnswer` 两个入参；prompt 注入「课题简介(120字) + 刚才题目(80字) + 学生刚才回答(180字) + 题库范围摘要(5条含要点)」，并要求「基于学生回答中最薄弱/最含糊的一点追问，优先实现细节、方案取舍、边界条件、性能瓶颈、异常处理，禁止泛泛提问'不足与改进方向'」 |
+| **N48** | 追问去重只拦字面重复（Dice>0.5），"同主题不同措辞"照样问第二遍 | 新增 `extractQuestionKeywords`（Hadoop/HDFS/MapReduce… 领域词表 + `[A-Za-z][A-Za-z0-9+#._-]+` 正则兜底）与 `isSameTopicByKeywords`（共享关键词 ≥ 2 或 Jaccard ≥ 0.34 判同主题）；`isSimilarToAnyQuestion` 在「相等/包含/Dice>0.5」之后追加同主题判定；命中则重试一次并追加「上一候选因重复被拒，请换一个不同考点」 |
+| — | 兜底题用 `ThreadLocalRandom` 随机取，同一回答无法复现（与 N7 相悖） | 删除随机：改为固定顺序返回第一个不与已问题目相似的兜底题；新增 `buildFollowUpFallbacks`，用「焦点词」（取自学生回答，取不到再取当前题）拼 4 条定制兜底题 |
+
+### 二、判分稳定性与硬编码（`chatController`）
+
+- **N35**：删除 2 处硬编码 `"qwen2.5:3b-16k"`，与其余 2 处统一走 `.model(ollamaModelName)`（`@Value("${spring.ai.openai.chat.options.model:unknown}")`）。全局搜 `qwen2.5:3b-16k` 仅剩 `application.yml.example` 的配置值，无代码硬编码。
+- **N7**：追问生成调用补 `.temperature(0.0)`，4 处模型调用现已全部为 `temperature=0`。
+- 新增 `truncateForPrompt(text, maxLength)`：所有注入 prompt 的外部文本统一截断（课题简介 120 / 题目与要点 80 / 学生回答 180），防止长回答挤爆 16k 上下文。
+
+### 三、8G 低功耗资源口径（三）
+
+| 项 | 改动 |
+|---|---|
+| 线程池 | `WebConfig.taskExecutor`：`10/20/200` → 可配置 `app.async.core-pool-size:2`、`max-pool-size:4`、`queue-capacity:50`（`@Value` 带同值默认，缺配置不报错）；`max-pool-size` 取 `Math.max(max, core)` 防配错 |
+| 配置 | `application.yml`、`application.yml.example` 补 `app.async` 块 + 低功耗注释 |
+| 自检 | `diagnose.ps1` 的 `-StrictLowPower` 从「只查变量是否设置」升级为**校验取值**：`OLLAMA_KV_CACHE_TYPE=q4_0`、`OLLAMA_NUM_PARALLEL=1`、`OLLAMA_MAX_LOADED_MODELS=1`、`OLLAMA_NUM_THREADS ≤ 4`；取错值与未设置一样红灯 |
+| 文档 | 部署手册第九节新增线程池说明表、7.2 节新增 `-StrictLowPower` 取值校验说明 |
+
+### 四、小程序环境配置（A2 · 配置侧先行）
+
+- `utils/config.js` 新增 `env: 'dev' | 'lan' | 'prod'` 与 `devBaseUrl / lanBaseUrl / prodBaseUrl`；`getBaseUrl()` 按 env 分支：prod 时 `prodBaseUrl` 必须为 `https://` 开头，否则**直接抛错**（防止误发局域网/明文地址上线）；保留 `serverUrl / localServerUrl / useRemoteServer` 兼容旧引用。
+- 部署手册第十节、Q4 的真机地址说明同步改为 `env` 口径（原 `useRemoteServer`/`serverUrl` 写法已过时）。
+- **仍缺（等真实域名）**：`prodBaseUrl` 填值 + `project.private.config.json` 关闭 `urlCheck:false`；体验版验收见 `上线缺漏整改清单` A2。
+
+### 五、验证
+
+- `mvn -o -q compile` → BUILD SUCCESS。
+- `node --check src/main/resources/static/Ai/utils/config.js` → 通过。
+- `diagnose.ps1` 未在 8G 机型实跑（仅逻辑校对）；`-StrictLowPower` 需在答辩机上验证一次。
+
+### 六、遗留与待实测
+
+1. **N48 阈值为初值**（overlap ≥ 2、Jaccard ≥ 0.34）且词表偏通用（含"性能/异常/部署/权限/索引/事务"等），需多场答辩观察是否**过触发**——过触发的表现是追问频繁退化成兜底题（日志可见「与已问题目重复/高度相似，重新生成」）。
+2. `appendNextQuestionFallback`、放弃作答两条路径仍调用 2 参重载（不注入当前题/学生回答）：放弃作答的回答本身就是"不知道"，注入无价值；前者若需上下文需再补传 `userInput`。
+3. 单参重载 `generateFollowUpQuestion(topicId)` 已无调用方（历史遗留死代码），本次未清理以控制 diff。
+4. N44 效果（追问是否真的贴住学生回答）需真机跑一场完整 10 轮观察。
+
+### 七、同日补充：工程收尾（N35 / N40 / N34）
+
+| 编号 | 改动 | 文件 |
+|---|---|---|
+| **N35** | 重置链接前缀 `http://localhost:8080` 硬编码 → 配置项 `app.mail.reset-link-base`（默认同旧值，换机器/上线只改 yml）；发件人写死 `1685975918@qq.com` → 取 `spring.mail.username`（留空则交给 JavaMailSender 默认值） | `PasswordResetServiceImpl`、`application.yml(.example)` |
+| **N35** | 重置密码页 HTML 从 Java 字符串拼接抽成 classpath 模板 `templates/reset-password.html`（占位符 `{{token}}`，`@PostConstruct` 加载一次）；顺带补 `<meta charset="utf-8">`（原页面无 charset，中文可能乱码） | `ResetController`、新增 `resources/templates/reset-password.html` |
+| **安全（顺带）** | **反射型 XSS 修复**：`/reset-password?token=` 的 token 原样拼进 `value='...'`，构造 `token='><script>…` 即执行。现只接受 UUID 形式（正则白名单），非法 token 返回固定提示页、不回显任何输入 | `ResetController` |
+| **N40** | 复核确认：git 中只有一份 `project.config.json`（`static/Ai/` 下），根目录重复件已不存在；另外发现并删除根目录 `AI-helper/` 这个 2026-07-30 的陈旧副本（仅含一个 2.7KB 的旧 `student.js`，真实文件 54KB） | 删除 `AI-helper/src/.../student/student.js` |
+| **N34** | `LocalFileStorageServiceImpl.save()` 落盘失败（磁盘满/客户端断流）会留下**半截孤儿文件**且上层不会回收 → 改为失败即 `deleteIfExists(target)` 就地清理并记日志；入参流仍由调用方关闭（现有调用方均为 try-with-resources，已核实）。`MediaFileServiceImpl.saveWholeFile` 的「先校验→再落盘→写库失败回滚磁盘」链路复核**已正确** | `LocalFileStorageServiceImpl` |
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS；`read_lints` 两个改动文件 0 告警。
+
+**未做（登记待办）**：**N30（NPE/越界/逻辑优先级）** 需专批审计，本次只做了 N34 范围内的资源与文件边界；N35 的「HTML」只处理了重置密码页，其它内联 HTML 未动。
+
+### 八、判分收口与语音归档（N42 / N11 / F11）
+
+**N42（`[跑题]` 误判，判分过严）**
+
+- 审计结论：prompt 侧门槛（595 行「三条严禁判跑题」、607-617 行「拿不准就判切题」、623 行「超过50字且含实质内容必须正常评分」）与
+  服务端「跑题 0 分且归一化回答 ≥20 字 → 追加复核」（842 行）**都已存在**；N53 的覆盖率门槛（`RESCUE_MIN_COVERAGE=0.05`）、
+  N54、N11 复制题、抱怨/要分等排除闸门都是**有意加的**，动它就会回归 N53/N54 —— 因此不做"长回答一律禁止 0 分"的硬闸门。
+- **唯一可安全收口的缺口**：复核段原先要求「点评/回复以 `[跑题]` 开头」才进入。模型若**直接给 0 分却不写 `[跑题]`**（实测存在），
+  这一轮既不会被服务端归零盖章，也没有任何救回通道。
+- 修复：触发条件放宽为「带 `[跑题]` 标记」**或**「模型自评分 ≤ 0 且非敷衍/放弃作答」；是否强制归零仍由 `offTopicMarked` 决定
+  （未带标记时**只尝试救回、不改写点评文案**）；其余排除闸门一律不变。
+- 代价：模型自评 0 分的轮次会多一次复核调用（多一次推理延迟），属预期成本。
+
+**N11（防作弊：粘贴题目/讨分）**：审计确认**早已实现**（2026-09-25 新增、09-26 扩展比对范围）——
+`isCopiedQuestion`（比对本场**全部已问题目**：归一化相等 / 包含且≤+10字 / 二元组 Dice ≥ 0.85）与
+`isPleadForScore` + `isComplainOrPlead`，命中即**固定 0 分且不调用评分模型**（719-746 行）。需求清单里标注「待开发」已过期，本次改标。
+
+**F11（语音录音归档与回放）**
+
+| 层 | 改动 |
+|---|---|
+| 数据 | 启用**既有** `voice_responses` 表（它本就是最新 schema.sql 的 10 张必需表之一，**零 DDL**）；另补 `docs/ddl_voice_responses.sql` 供确实缺表的存量库 |
+| 实体/Mapper | 新增 `pojo/entity/VoiceResponse.java`、`mapper/VoiceResponseMapper.java`、`resources/Mapper/VoiceResponseMapper.xml` |
+| Service | 新增 `Service/VoiceArchiveService.java` + `Impl/VoiceArchiveServiceImpl.java`：定位当前场次 → 归属校验 → 落盘 → 写库 → 失败回收文件；**归档尽力而为，不抛异常** |
+| 接口 | `POST /api/voice/asr` 增加可选表单 `topicId` / `questionId` / `question`：识别成功后**复用内存里同一份音频**归档（前端不再二次上传 20MB 录音），响应多返回 `voiceUrl`；新增 `GET /api/voice/records?defenseId=`（学生端，归属校验，非本人返回空列表）；新增 `GET /teacher/defense/voiceRecords/{defenseId}`（教师端，整类已有 `@RequireRole(TEACHER)`） |
+| 前端 | `defense-voice.js/.wxml/.wxss`：ASR 带上题目上下文 + 识别成功出现「▶ 回放本轮录音」；`student.js/.wxml/.wxss` 与 `teacher.js/.wxml/.wxss`：回答详情弹层新增「语音录音回放」区块（`wx.createInnerAudioContext` + `uploader.resolveFileUrl`） |
+| 口径 | `voice_responses.response_text` 存 **ASR 原始输出**；送去评分（可能被学生编辑过）的文字仍存 `defense_answers.student_answer`（遵循需求文档第七节） |
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS；改动过的 `defense-voice.js` / `student.js` / `teacher.js` 全部 `node --check` 通过；`read_lints` 0 告警。**未做真机实测**（录音只有真机可用）。
+
+**F11 遗留**：`question_id` 未写入（前端按轮次映射题库题号不可靠，错填会撞外键，故留 NULL）；如需精确关联，后续可按 `defense_questions` 顺序在后端补齐。
+
+### 九、教师端题库批量导入（N10）
+
+**为什么用 CSV 而不是 Excel**：`pom.xml` 里没有任何 POI/Excel 依赖，为一个导入功能引入 POI 不划算；CSV 用 Excel/WPS「另存为 CSV UTF-8」即可产出。解析复用**已有依赖** hutool 的 `cn.hutool.core.text.csv.CsvReader`（能正确处理引号包裹与字段内逗号/换行），**零新增依赖**。
+
+| 层 | 改动 |
+|---|---|
+| 工具 | 新增 `util/CsvUtils.java`：把 `ExportController` 里的 CSV 单元格转义 + **公式注入中和（CWE-1236）** 抽出共用（避免导入模板另写一份导致两处漂移）；`ExportController.csv()` 改为委托，行为不变 |
+| 接口 | 新增 `Controller/teacher/QuestionImportController`（`/teacher/questions`，整类 `@RequireRole(TEACHER)`）：`GET /import-template` 下载 CSV 模板；`POST /import` 上传导入（表单 `file` / `topicId` / `mode=append|replace`） |
+| Service | 新增 `Service/QuestionImportService(.Impl)`：登录态解析教师 → **课题归属校验**（别人的课题拒绝）→ 限文件 2MB / 限 500 条 → 逐行校验 → 覆盖模式先清空原题目 → 逐条入库（`@Transactional`，写库阶段本身不会留半截） |
+| VO | 新增 `pojo/vo/QuestionImportResultVo`：导入数 / 跳过数 / 是否覆盖 / 跳过原因（最多回传 20 条） |
+| 前端 | `teacher.js/.wxml/.wxss`：课题详情弹层新增「题库批量导入」区（追加/覆盖切换 + 覆盖二次确认、下载模板、从聊天选 CSV 导入、导入结果弹窗列出跳过原因、导入后自动刷新题目列表） |
+
+**CSV 约定**：第一列＝题目（必填）、第二列＝标准答案（可留空）；`#` 开头为注释行（模板里的说明即用此形式）；首行若是「题目,标准答案」表头自动忽略；同一课题内题目重复自动跳过并记原因。
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS；`teacher.js` `node --check` 通过。**未做真机实测**（`wx.chooseMessageFile` 需真机/工具实测）。
+
+### 十、教师端按课题导出与统计（N9）
+
+| 层 | 改动 |
+|---|---|
+| Mapper | `StatsMapper` 新增 `selectTopicStats`（题目数 / 答辩场次 / 已完成 / 平均分，**含 0 场课题**；题目数用子查询避免 JOIN 放大行数）、`selectRecordsByTopic`（某课题的答辩记录，列与教师端列表同口径） |
+| 接口 | 新增 `GET /teacher/stats/topics`（按课题统计）；`GET /teacher/export/records.csv` 支持可选 `topicId`（只导该课题）；新增 `GET /teacher/export/topic-stats.csv`（课题统计导出） |
+| 修复（顺带） | `DefenseRecordsMapper.getDefenseRecords` 未 `SELECT dr.status`，导致**成绩导出的「状态」列恒为空**（`statusText(null)`）→ 补上该列（教师端列表状态也一并恢复正常） |
+| 前端 | `teacher.js/.wxml`：导出逻辑抽成通用 `_downloadCsv()`；新增「导出课题统计」入口；课题详情弹层新增「导出本课题成绩 CSV」；`stats` 页新增「按课题统计」卡片（题目数/场次/已完成/均分） |
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS；`teacher.js` / `stats.js` `node --check` 通过。**未做真机实测**。
+
+### 十一、答辩记录详情增强（N8）
+
+| 层 | 改动 |
+|---|---|
+| 后端 | `QuestionDetailVo` 增 `standardAnswer`；`getDefenseQuestionsAnswers` 的 SQL 补 `dq.standard_answer`，并显式 `ORDER BY da.answer_id ASC`（原实现无排序，逐轮对照顺序依赖存储引擎返回顺序） |
+| 前端 | 新增 `utils/radar.js`：五维雷达图用**原生 canvas 2d 手绘**（零图表库依赖），含 `averageDims()`（逐轮五维平均）与 `drawRadar()`（网格/轴线/数据多边形/顶点/维度名+分值，含 dpr 高清适配）；学生端与教师端共用 |
+| 前端 | 学生端、教师端「回答详情」弹层新增：五维雷达图（逐轮平均）+ 雷达下方文字汇总 + 每条回答下的「标准答案」对照区块（追问无标准答案时不显示）。教师端此前没有逐轮五维数据，本次一并接上 `/teacher/defense/scoreDetail/{defenseId}` |
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS；`radar.js` / `student.js` / `teacher.js` `node --check` 通过。**未真机实测**（canvas 渲染需真机/工具看图）。
+
+### 十二、核心纯函数回归测试（N14）
+
+新增 3 个纯单元测试类（**不启动 Spring 容器、不连库**），共 **18 条用例，全部通过**（`mvn -o test -Dtest=...`：Tests run 18, Failures 0, Errors 0）：
+
+| 测试类 | 覆盖 | 守住的回归点 |
+|---|---|---|
+| `util/CsvUtilsTest` | CSV 转义 | **公式注入中和**（= + - @ Tab CR 前置单引号）、逗号/引号/换行包裹、null 与数值 |
+| `util/AiTextUtilsTest` | AI 协议文本解析 | 三段式「下一题:」、无问号追问、多标签取最后一个、旧格式 `【问题】`、问号兜底、null 安全、`cleanQuestionText` 拒绝纯点评 |
+| `Service/Impl/ScorePersistenceServiceImplTest` | 评分解析 | **总分必须等于五维之和**（N6，无视模型自报 48）、单维越界夹到 0~10、旧格式五维解析、空输入不抛异常 |
+
+**说明**：`src/test` 里原有的 `AiHelperApplicationTests`（`@SpringBootTest contextLoads`）需要 MySQL/Redis 才能过，本次未改动；上面 18 条用 `-Dtest=` 精确执行，不需要基础设施。
+
+### 十三、答辩场次审计日志（N15）
+
+| 层 | 改动 |
+|---|---|
+| 数据 | 新增表 `defense_audit_log`（defense_id / user_id / topic_id / event / round_num / detail / created_at）。**故意不建外键、不级联删除** —— 审计要在答辩记录被删后仍可追溯。同步：`docs/ddl_defense_audit_log.sql`（存量库）、`docs/schema.sql`（新库直接含，共 **11 张表**） |
+| 后端 | 新增 `DefenseAuditLog` 实体、`DefenseAuditLogMapper(.xml)`、`AuditLogService(.Impl)`。写入**尽力而为且不参与答辩事务**（审计"已发生的就该留下"，不能因主流程回滚而消失） |
+| 埋点 | `DefenseRecordsServiceImpl`：新建答辩 → `START`（detail 记「清理空壳 N 条」）；用户确认续答 → `RESUME`（记已答轮次）；`finishDefenseRecord` 落库成功 → `FINISH`（记总轮次与总分，user/topic 由新增的 `selectAuditContext` 反查） |
+| 接口 | `GET /teacher/defense/auditLog/{defenseId}`（教师端查轨迹，整类已有 `@RequireRole(TEACHER)`） |
+| 自检/文档 | `diagnose.ps1` 必需表清单补 `defense_audit_log`（10→11）并加补表提示；CLAUDE / AGENTS / 部署手册「10 张表」→「11 张表」 |
+
+**验证**：`mvn -o -q compile` BUILD SUCCESS。
+
+### 十四、N30 / N33 审计结论（无代码改动）
+
+- **N33（视频处理状态存进程内 Map）**：**已实现**。`VideoProcessingServiceImpl` 已改走 Redis（`upload:video:processing:{id}` + 24h TTL），`getProcessingStatus` 未命中返回 `not_found`；`processingId` 由 `complete` 阶段生成并回传前端（类注释即记录了这次改造）。需求清单标注过期，本次改标。
+- **N30（NPE/越界/逻辑优先级）**：抽查了全部历史高风险点——`qr.getData().get(0)`（有 `!isEmpty()` 守卫）、`rounds.get(0)`（有 `!isEmpty()` 守卫）、`UploadUtils.extensionOf`（`dot <= 0 || dot >= len-1` 守卫）、`toRelativePath`（先判 `startsWith(prefix + "/")`）、`LoginTokenValue.decode`（`idx < 0` 分流）、`ScorePersistenceServiceImpl` 评语截断（先判 length）、`DefenseController.resolveCurrentTeacherId`（try/catch）——**均已修复**，本次无新增改动。107 个 Java 文件未做逐行全量审计，如需要可另开专批。
 
 ---
 

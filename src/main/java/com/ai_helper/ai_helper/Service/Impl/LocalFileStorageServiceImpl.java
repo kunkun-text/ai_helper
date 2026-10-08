@@ -139,7 +139,20 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
         String relativePath = subDir + "/" + fileName;
         Path target = resolveSafe(relativePath);
         Files.createDirectories(target.getParent());
-        Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+        // 【N34 · 2026-10-08】复制中途失败（磁盘满 / 客户端断流）会留下半截文件，
+        // 上层只看到异常、不会去删它，于是存储目录越堆越多孤儿文件 —— 失败即就地回收。
+        // 注意：入参流由调用方负责关闭（现有调用方均为 try-with-resources），这里不 close。
+        try {
+            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            try {
+                boolean removed = Files.deleteIfExists(target);
+                log.warn("落盘失败，已清理半截文件 - 路径: {}, 是否已删除: {}", target, removed);
+            } catch (IOException cleanupError) {
+                log.warn("落盘失败且半截文件清理失败（可能是残留孤儿文件）- 路径: {}", target, cleanupError);
+            }
+            throw e;
+        }
         log.info("文件已保存 - 路径: {}, 大小: {} 字节", target, Files.size(target));
         return relativePath;
     }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+    语音答辩归档（VoiceResponseMapper）— F11 · 2026-10-08
+    表 voice_responses 早已存在于 docs/schema.sql（此前零引用），本次启用，无需 DDL。
+    风格沿用现有 XML：resultType 全限定名 + 下划线转驼峰（mybatis.configuration.map-underscore-to-camel-case=true）
+-->
+<mapper namespace="com.ai_helper.ai_helper.mapper.VoiceResponseMapper">
+
+    <sql id="baseColumns">
+        response_id, defense_id, question_id, question,
+        response_text, response_audio_url, response_time
+    </sql>
+
+    <insert id="insertVoiceResponse" parameterType="com.ai_helper.ai_helper.pojo.entity.VoiceResponse"
+            useGeneratedKeys="true" keyProperty="responseId">
+        INSERT INTO voice_responses (defense_id, question_id, question, response_text, response_audio_url, response_time)
+        VALUES (#{defenseId}, #{questionId}, #{question}, #{responseText}, #{responseAudioUrl},
+                COALESCE(#{responseTime}, NOW()))
+    </insert>
+
+    <select id="selectByDefenseId" resultType="com.ai_helper.ai_helper.pojo.entity.VoiceResponse">
+        SELECT <include refid="baseColumns"/>
+        FROM voice_responses
+        WHERE defense_id = #{defenseId}
+        ORDER BY response_id ASC
+    </select>
+
+</mapper>

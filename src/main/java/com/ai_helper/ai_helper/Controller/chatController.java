@@ -5,9 +5,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -167,6 +170,18 @@ public class chatController {
      * 即有 3+ 命中，故取 3 为经验阈值。
      */
     private static final int GROUNDED_MIN_HITS = 3;
+
+    /** 追问主题级去重：两道题共享的有效关键词达到该数，视为同主题（N48）。 */
+    private static final int FOLLOW_UP_TOPIC_OVERLAP_MIN = 2;
+
+    /** 追问主题级去重：关键词 Jaccard 相似度达到该值，视为同主题（N48）。 */
+    private static final double FOLLOW_UP_TOPIC_JACCARD = 0.34;
+
+    /** 追问生成时注入的学生回答截断长度，避免长回答撑爆 prompt。 */
+    private static final int FOLLOW_UP_ANSWER_CONTEXT_LENGTH = 180;
+
+    /** 追问生成时注入的题库参考要点截断长度。 */
+    private static final int FOLLOW_UP_REFERENCE_LENGTH = 80;
 
     // ==================== 登录态身份裁决（A1 · 2026-10-05） ====================
 
@@ -783,7 +798,7 @@ public class chatController {
         String aiResponse = chatClient.prompt()
                 .user(completePrompt.toString())
                 .options(OpenAiChatOptions.builder()
-                        .model("qwen2.5:3b-16k")
+                        .model(ollamaModelName)
                         .temperature(0.0)
                         .maxTokens(320)
                         .build())
@@ -815,12 +830,22 @@ public class chatController {
                     // 为什么不依赖模型自觉：提示词里早就写了"答非所问必须给低分"，但实测 3B 模型对一段
                     // 与题目无关的 513 字文字仍连续给出 28~36 分。于是改为——让模型只回答"切题/跑题"这个
                     // 二选一（它做得到），最终分值由服务端按判定结果决定（确定性，不留给模型发挥）。
-                    if (isOffTopicMarked(comment) || isOffTopicMarkedInResponse(aiResponse)) {
+                    // 【N42 收口 · 2026-10-08】本段触发条件由「点评/回复带 [跑题] 标记」放宽为
+                    // 「带 [跑题] 标记」或「模型自评分 ≤ 0」。实测存在模型直接给 0 分却不写 [跑题] 的情况：
+                    // 旧实现整段跳过，这类 0 分既不会被服务端归零盖章，也没有任何救回通道（N42 残留缺口）。
+                    // 是否真的强制归零仍由 offTopicMarked 决定（未带标记时只尝试救回、不改写点评文案）；
+                    // N53（覆盖率门槛）、N54、N11（复制题）、抱怨/要分 等排除闸门一律保持不变。
+                    boolean offTopicMarked = isOffTopicMarked(comment) || isOffTopicMarkedInResponse(aiResponse);
+                    Object gateTotalObj = scores.get("totalScore");
+                    double gateTotal = (gateTotalObj instanceof Number nGate) ? nGate.doubleValue() : 0.0;
+                    boolean zeroScoreNeedsRescue = gateTotal <= 0
+                            && !isJunkAnswer(userInput) && !isGiveUpAnswer(userInput);
+                    if (offTopicMarked || zeroScoreNeedsRescue) {
                         // 【跑题误判复核 · 2026-09-25】实测（defenseId=288 第5轮）实质切题的长回答因夹带口头语被
                         // 误判[跑题]0分（284 场第8轮同款）。模型自己给的 0 分，服务端强制归零只是盖章——
                         // 长回答（归一化后≥20字）被判 0 时，追加纠正指令重评一次，重评仍未切题才维持 0 分。
                         // 防作弊闸门（N11 同源）：回答与本场任意已问题目原文高度重复 → 属复制粘贴，不复核，维持 0 分。
-                        boolean confirmedOff = true;
+                        boolean confirmedOff = offTopicMarked;
                         Object tObj = scores.get("totalScore");
                         double modelTotal = (tObj instanceof Number n) ? n.doubleValue() : 0.0;
                         String normAnswer = normalizeAnswerForJudge(userInput);
@@ -1074,7 +1099,8 @@ public class chatController {
                             List<String> askedQuestions = collectAskedQuestions(topicId, assistantCountInHistory - 1, defenseId);
                             if (isSimilarToAnyQuestion(nextQuestion, askedQuestions)) {
                                 log.warn("模型下一题与已问题目重复/高度相似，重新生成: {}", nextQuestion);
-                                String regenerated = generateFollowUpQuestion(topicId, askedQuestions);
+                                String regenerated = generateFollowUpQuestion(topicId, askedQuestions,
+                                        extractCurrentQuestionFromPrompt(fullPrompt), userInput);
                                 if (regenerated != null && !regenerated.isEmpty()) {
                                     nextQuestion = regenerated;
                                 }
@@ -1721,41 +1747,81 @@ public class chatController {
         return null;
     }
 
-    /** 追问阶段：让模型围绕课题出一个新的追问问题（仅输出问题本身） */
+    /** 追问阶段：让模型围绕课题与学生薄弱点出一个新的追问问题（仅输出问题本身） */
     private String generateFollowUpQuestion(Integer topicId) {
-        return generateFollowUpQuestion(topicId, new ArrayList<>());
+        return generateFollowUpQuestion(topicId, new ArrayList<>(), null, null);
+    }
+
+    private String generateFollowUpQuestion(Integer topicId, List<String> excludeQuestions) {
+        return generateFollowUpQuestion(topicId, excludeQuestions, null, null);
     }
 
     /**
-     * 追问阶段：让模型围绕课题出一个新的追问问题（仅输出问题本身）。
-     * excludeQuestions 为已问过的题目（2026.9.15 追问去重）：prompt 中声明排除，生成结果仍相似时最多重试一次，
-     * 两次都相似则改用兜底题（优先取与已问题目不相似的兜底题）。
+     * 追问阶段：让模型围绕课题、当前题和学生刚才回答出一个新的追问问题（仅输出问题本身）。
+     * excludeQuestions 为已问过的题目；生成后同时做字面相似与主题关键词相似判断，避免 N48 的同主题换皮追问。
      */
-    private String generateFollowUpQuestion(Integer topicId, List<String> excludeQuestions) {
+    private String generateFollowUpQuestion(Integer topicId, List<String> excludeQuestions,
+                                            String currentQuestion, String studentAnswer) {
         String topicName = "";
+        String topicDescription = "";
+        List<DefenseQuestions> presetQuestions = new ArrayList<>();
         try {
             Result<Object> topicResult = defenseTopicsService.getTopicById(topicId);
-            if (topicResult.getCode() == 1 && topicResult.getData() instanceof TopicDto) {
-                topicName = ((TopicDto) topicResult.getData()).getTopicName();
+            if (topicResult.getCode() == 1 && topicResult.getData() instanceof TopicDto topicDto) {
+                topicName = topicDto.getTopicName();
+                topicDescription = topicDto.getTopicDescription();
             }
         } catch (Exception e) {
-            log.warn("获取课题名称失败: {}", e.getMessage());
+            log.warn("获取课题信息失败: {}", e.getMessage());
+        }
+        try {
+            Result<List<DefenseQuestions>> questionResult = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (questionResult.getCode() == 1 && questionResult.getData() != null) {
+                presetQuestions = questionResult.getData();
+            }
+        } catch (Exception e) {
+            log.warn("获取题库摘要失败: {}", e.getMessage());
         }
 
-        StringBuilder pb = new StringBuilder("你是一名答辩考官，正在考核学生的课题《" + topicName + "》。"
-                + "请提出一个新的追问问题，只输出问题本身（30字以内，以？结尾），不要输出其他任何内容。");
-        if (excludeQuestions != null && !excludeQuestions.isEmpty()) {
-            pb.append("以下问题已经问过，新问题不得与它们重复或高度相似：");
-            for (String q : excludeQuestions) {
-                pb.append("\n- ").append(q);
+        StringBuilder pb = new StringBuilder();
+        pb.append("你是一名答辩考官，正在考核学生的课题《").append(topicName).append("》。\n");
+        if (topicDescription != null && !topicDescription.trim().isEmpty()) {
+            pb.append("课题简介:").append(truncateForPrompt(topicDescription, 120)).append("\n");
+        }
+        if (currentQuestion != null && !currentQuestion.trim().isEmpty()) {
+            pb.append("刚才题目:").append(truncateForPrompt(currentQuestion, FOLLOW_UP_REFERENCE_LENGTH)).append("\n");
+        }
+        if (studentAnswer != null && !studentAnswer.trim().isEmpty()) {
+            pb.append("学生刚才回答:").append(truncateForPrompt(studentAnswer, FOLLOW_UP_ANSWER_CONTEXT_LENGTH)).append("\n");
+        }
+        if (!presetQuestions.isEmpty()) {
+            pb.append("题库范围摘要:\n");
+            for (int i = 0; i < Math.min(5, presetQuestions.size()); i++) {
+                DefenseQuestions q = presetQuestions.get(i);
+                pb.append(i + 1).append(". ").append(truncateForPrompt(q.getQuestion(), FOLLOW_UP_REFERENCE_LENGTH));
+                if (q.getStandardAnswer() != null && !q.getStandardAnswer().isBlank()) {
+                    pb.append("；要点:").append(truncateForPrompt(q.getStandardAnswer(), FOLLOW_UP_REFERENCE_LENGTH));
+                }
+                pb.append("\n");
             }
         }
+        if (excludeQuestions != null && !excludeQuestions.isEmpty()) {
+            pb.append("已问过的问题/主题（新问题不得重复、不得换个说法再问）：");
+            for (String q : excludeQuestions) {
+                pb.append("\n- ").append(truncateForPrompt(q, FOLLOW_UP_REFERENCE_LENGTH));
+            }
+            pb.append("\n");
+        }
+        pb.append("请基于学生刚才回答中最薄弱或最含糊的一点追问，优先追问实现细节、方案取舍、边界条件、性能瓶颈或异常处理。")
+                .append("禁止泛泛提问‘不足与改进方向’，禁止重复已问主题。只输出一个新问题，30字以内，以？结尾，不要输出解释。\n");
+
         try {
             for (int attempt = 0; attempt < 2; attempt++) {
                 String resp = chatClient.prompt()
                         .user(pb.toString())
                         .options(OpenAiChatOptions.builder()
-                                .model("qwen2.5:3b-16k")
+                                .model(ollamaModelName)
+                                .temperature(0.0)
                                 .maxTokens(60)
                                 .build())
                         .call()
@@ -1766,27 +1832,51 @@ public class chatController {
                     return question;
                 }
                 log.warn("追问生成与已问题目相似或为空（第{}次尝试），重试", attempt + 1);
+                pb.append("上一候选问题因重复或为空已被拒绝，请换一个不同考点继续生成。\n");
             }
         } catch (Exception e) {
             log.warn("模型生成追问失败，使用兜底问题: {}", e.getMessage());
         }
 
-        String[] fallbacks = {
-                "请结合实际应用场景，谈谈该课题的不足与改进方向？",
-                "针对你刚才的回答，请补充说明关键的实现细节？",
-                "如果时间或资源受限，你会如何调整该课题的方案？"
-        };
-        // 兜底题也优先选与已问题目不相似的，避免兜底题撞上刚问过的题
-        List<String> available = new ArrayList<>();
+        String[] fallbacks = buildFollowUpFallbacks(currentQuestion, studentAnswer);
+        // 兜底题按固定顺序取第一个不相似项，避免随机性影响 N7 复现
         for (String f : fallbacks) {
             if (!isSimilarToAnyQuestion(f, excludeQuestions)) {
-                available.add(f);
+                return f;
             }
         }
-        if (!available.isEmpty()) {
-            return available.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(available.size()));
+        return fallbacks[0];
+    }
+
+    private String[] buildFollowUpFallbacks(String currentQuestion, String studentAnswer) {
+        String focus = extractFirstKeyword(studentAnswer);
+        if (focus.isEmpty()) {
+            focus = extractFirstKeyword(currentQuestion);
         }
-        return fallbacks[java.util.concurrent.ThreadLocalRandom.current().nextInt(fallbacks.length)];
+        if (focus.isEmpty()) {
+            focus = "该课题核心方案";
+        }
+        return new String[] {
+                "请说明" + focus + "的关键实现细节？",
+                "如果" + focus + "出现异常，你如何排查？",
+                "请分析" + focus + "的性能瓶颈？",
+                "请说明" + focus + "的数据流转过程？"
+        };
+    }
+
+    private String truncateForPrompt(String text, int maxLength) {
+        if (text == null) return "";
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > maxLength ? normalized.substring(0, maxLength) + "..." : normalized;
+    }
+
+    private String extractCurrentQuestionFromPrompt(String prompt) {
+        if (prompt == null || prompt.isEmpty()) return "";
+        Matcher matcher = Pattern.compile("(?m)^当前题[:：](.+)$").matcher(prompt);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
+        }
+        return "";
     }
 
     /**
@@ -1823,20 +1913,60 @@ public class chatController {
     }
 
     /**
-     * 题目相似判定（2026.9.15 追问去重用）：归一化（去标点/空白、转小写）后，
-     * 完全相等、互为包含、或字符二元组重合度（Dice 系数）> 0.5 视为相似。
+     * 题目相似判定（N48 增强）：先做字面去重，再用技术词/主题词集合做同主题去重。
      */
     private boolean isSimilarToAnyQuestion(String question, List<String> askedList) {
         if (question == null || askedList == null || askedList.isEmpty()) return false;
         String a = normalizeForCompare(question);
         if (a.isEmpty()) return false;
+        Set<String> aKeywords = extractQuestionKeywords(question);
         for (String asked : askedList) {
             String b = normalizeForCompare(asked);
             if (b.isEmpty()) continue;
             if (a.equals(b) || a.contains(b) || b.contains(a)) return true;
             if (bigramDice(a, b) > 0.5) return true;
+            if (isSameTopicByKeywords(aKeywords, extractQuestionKeywords(asked))) return true;
         }
         return false;
+    }
+
+    private boolean isSameTopicByKeywords(Set<String> a, Set<String> b) {
+        if (a.isEmpty() || b.isEmpty()) return false;
+        int overlap = 0;
+        for (String keyword : a) {
+            if (b.contains(keyword)) overlap++;
+        }
+        if (overlap >= FOLLOW_UP_TOPIC_OVERLAP_MIN) return true;
+        int union = a.size() + b.size() - overlap;
+        return union > 0 && (double) overlap / union >= FOLLOW_UP_TOPIC_JACCARD;
+    }
+
+    private Set<String> extractQuestionKeywords(String text) {
+        Set<String> keywords = new LinkedHashSet<>();
+        if (text == null || text.isBlank()) return keywords;
+        String lower = text.toLowerCase();
+        String[] domainTerms = {
+                "hadoop", "hdfs", "mapreduce", "yarn", "hive", "hbase", "spark", "flink", "kafka",
+                "redis", "mysql", "sql", "api", "http", "jvm", "ollama", "whisper", "ffmpeg",
+                "namenode", "datanode", "resourcemanager", "nodemanager", "shuffle", "etl", "aqi", "pm2.5", "pm10",
+                "小文件", "副本", "分片", "容错", "高可用", "数据清洗", "数据仓库", "数据挖掘", "数据可视化",
+                "实时计算", "离线计算", "批处理", "流处理", "性能", "异常", "部署", "权限", "鉴权", "索引", "事务"
+        };
+        for (String term : domainTerms) {
+            if (lower.contains(term.toLowerCase())) {
+                keywords.add(term.toLowerCase());
+            }
+        }
+        Matcher matcher = Pattern.compile("[A-Za-z][A-Za-z0-9+#._-]{1,}").matcher(text);
+        while (matcher.find()) {
+            keywords.add(matcher.group().toLowerCase());
+        }
+        return keywords;
+    }
+
+    private String extractFirstKeyword(String text) {
+        Set<String> keywords = extractQuestionKeywords(text);
+        return keywords.isEmpty() ? "" : keywords.iterator().next();
     }
 
     private String normalizeForCompare(String s) {

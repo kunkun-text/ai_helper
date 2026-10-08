@@ -267,6 +267,29 @@ CREATE TABLE `voice_responses` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 /*!40101 SET character_set_client = @saved_cs_client */;
 --
+-- Table structure for table `defense_audit_log`
+-- 【N15 · 2026-10-08】补入：与 docs/ddl_defense_audit_log.sql 完全一致（新库导入 schema.sql 即含审计日志，
+-- 存量库可单独执行 ddl_defense_audit_log.sql）。故意不建外键：审计记录要在答辩记录被删后仍可追溯。
+--
+DROP TABLE IF EXISTS `defense_audit_log`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `defense_audit_log` (
+  `log_id` bigint NOT NULL AUTO_INCREMENT,
+  `defense_id` int DEFAULT NULL COMMENT '答辩场次 defense_records.defense_id',
+  `user_id` int DEFAULT NULL COMMENT 'users.user_id（谁在答辩）',
+  `topic_id` int DEFAULT NULL COMMENT '课题 ID',
+  `event` varchar(32) NOT NULL COMMENT 'START=新建并开始 / RESUME=续答 / FINISH=结束并汇总',
+  `round_num` int DEFAULT NULL COMMENT '事件发生时的已完成轮次（START/RESUME）或总轮次（FINISH）',
+  `detail` varchar(500) DEFAULT NULL COMMENT '补充说明',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`log_id`) USING BTREE,
+  KEY `idx_defense_id` (`defense_id`) USING BTREE,
+  KEY `idx_created_at` (`created_at`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `system_feedback`
 -- 【B5 · 2026-10-05】补入：与 docs/ddl_system_feedback.sql 完全一致（新库导入 schema.sql 即含反馈模块，
 -- 存量库仍可单独执行 ddl_system_feedback.sql）
