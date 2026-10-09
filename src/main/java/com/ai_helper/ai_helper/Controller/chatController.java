@@ -171,6 +171,26 @@ public class chatController {
      */
     private static final int GROUNDED_MIN_HITS = 3;
 
+    /**
+     * 【P-03 · 2026-10-09】OFF_TARGET 复核点评"自认无关"措辞：复核判[切题]但点评正文含这些强否定措辞时，
+     * 裁决与理由脱节，不再维持原分。实测（defenseId=325 第8轮）复核点评写"与…数据分片策略无关"却判[切题]。
+     * 只收强否定，不收"建议补充/不够"类软措辞，避免误伤正常切题轮次。
+     */
+    private static final String[] OFF_TARGET_ADMISSION_PHRASES = {
+            "与本题无关", "与所问无关", "与本问题无关", "无关，未", "未正面回应", "未回应本题",
+            "没有回应本题", "答非所问", "未作答本题", "没有正面回应"
+    };
+
+    /**
+     * 【P-06 · 2026-10-09】点评结论性否定措辞：点评说"未提及 X"而答案明示了 X 时，点评结论与答案内容
+     * 自相矛盾（幻觉反例）。实测（defenseId=325 第5轮）学生明确写"用Hive或MapReduce按时间维度分组"，
+     * 点评却说"未提及MapReduce或Hive的具体应用"，因词组重叠达标而绕过接地校验。
+     * 命中此类措辞时不再因重叠达标放行，强制走重写。只收结论性否定，不收"建议补充"类提升性建议。
+     */
+    private static final String[] CONCLUSIVE_NEGATION_PHRASES = {
+            "未提及", "未提到", "没有提到", "没有提及", "未涉及", "没有涉及", "未运用", "没有运用", "缺少对"
+    };
+
     /** 追问主题级去重：两道题共享的有效关键词达到该数，视为同主题（N48）。 */
     private static final int FOLLOW_UP_TOPIC_OVERLAP_MIN = 2;
 
@@ -593,12 +613,24 @@ public class chatController {
         p.append("示例3（错误，回答了本题但内容有明显错误）：\n点评:[错误]把小文件与大文件的读写机制说反了，小文件反而是HDFS的负担，加磁盘并不能消除该问题。（有明显回答错误）\n评分:30/50|6|6|6|6|6\n下一题:请解释HDFS中NameNode的作用？\n\n");
         p.append("【轮次铁律】5道预设题未全部答完前，必须逐题输出『下一题:』提问下一道预设题；预设题答完后，最多允许5次AI追问，追问阶段每轮仍输出『下一题:』（30字以内）由你自拟追问。只有『预设题全部答完且追问已达5次』时，最后一行才允许输出『总结:』。任何情况下严禁提前输出『总结:』或提前结束答辩；只要还剩预设题或追问额度，最后一行必须输出『下一题:』，严禁输出『总结:』。每轮末尾会附带 [进度: 第X题/共Y题, 已追问Z/5次]，请据此判断当前进度并输出正确标签。\n\n");
         p.append("【判分第一步·先判是否切题】拿学生这段回答去对照上面给出的【当前题】，只有当【整段回答】完全未正面回应本题所问时才判为跑题（例如问“如何判断AQI等级”，却通篇只讲HBase如何存储数据），点评必须以[跑题]开头，评分固定为 0/50|0|0|0|0|0。以下情形严禁判跑题：① 回答使用了Markdown加粗、编号、列表等排版格式；② 回答主体回应了本题，只是夹带口头语、自嘲或“这道题我不会”之类附带语句；③ 回答包含与本题相关的具体概念、步骤、事实或方法（哪怕不完整）。回答正面回应了本题、且包含与本题相关的具体事实/步骤/数据的，必须判为切题，点评以[切题]开头。\n");
-        p.append("【判分第二步·切题才给分】正确完整、条理清晰 = 35~50；基本正确但不完整 = 20~34；有明显错误或关键缺漏 = 5~19；答非所问、含糊其辞、“不知道” = 0。严禁凭印象乱给高分。\n");
+        p.append("【判分第二步·五档分数表（先定档，再给分，任何学科任何题目通用）】\n");
+        p.append("第一档【正确回答 → 高分】：回答的要点、方法、原理与正确知识一致，允许表述不够详细或缺少延伸。总分 35~50：完整清晰有条理给 42~50，正确但有缺漏给 35~41。\n");
+        p.append("第二档【小错误 → 正常分并点一句】：回答主体正确，只有个别小问题（一个次要数字/年份不准、一处用词不严谨、漏掉一个不影响结论的细节）。必须判[切题]，总分 26~34，点评末尾用一句话点明这个小问题即可，严禁夸大成“有明显错误”，严禁因此大幅扣分。\n");
+        p.append("第三档【大错误 → 按半分计】：回答回应了本题，但核心内容一半以上错误——关键概念说反、机制或因果颠倒、主要步骤错误、错误结论占主体。必须判[错误]，总分按内容实际正确比例给 15~30（对了一半左右给 25~30，只对一小部分给 15~20），系统会按半分计入最终成绩。\n");
+        p.append("第四档【相关知识但完全错误 → 可怜分】：回答确实在回答本题（用的是本题领域的概念、术语），但核心知识从头错到尾——定义错误、原理完全说反、方法根本不可行、结论全错。必须判[错误]，总分只给 5~14，点评写明具体错在哪。严禁因为“篇幅长、表述流利、态度认真、用了专业词汇”就给分——错误内容说得越流利，越要给低分。\n");
+        p.append("第五档【完全不相关 → 零分】：整段回答与本题所问完全无关——通篇在答另一道题/另一领域、纯闲聊、乱码、辱骂、复制题目原文。判[跑题]，评分固定 0/50|0|0|0|0|0。\n");
+        p.append("分数纪律：① [错误]档总分严禁给到 31 或以上；② [切题]档总分不得低于 26（除非回答确实只沾到零星正确内容，此时它应该属于第三/四档的[错误]）；③ 五维分数相加必须等于总分；④ 定档只看回答内容本身，与题目属于哪门学科、哪个领域无关——本表适用于所有题目。\n\n");
         p.append("【判分第三步·三档标记怎么选】每轮点评必须且只能用 [切题]、[错误]、[跑题] 三者之一开头：\n");
         p.append("① [跑题]：整段回答完全没回应本题所问的内容（例：问“如何判断AQI等级”，却通篇讲HBase如何存储）。只要回答谈到了本题所问的主题，就【严禁】判[跑题]。\n");
         p.append("② [错误]：回答确实在回应本题，但内容存在明显错误——关键概念说反、方法用错、事实或数据错误、结论错误、把无关技术硬套本题。此时点评要先一句话点出【具体错在哪里】（例如“把小文件读写机制说反了”），不要写“表述不够清晰”这类套话，并在点评末尾附上“（有明显回答错误）”。\n");
         p.append("③ [切题]：回答正确、与本题相关。\n");
         p.append("硬性要求：内容明显错误的回答必须判[错误]——既【严禁】用[切题]给它正常分，也【严禁】用[跑题]顶替。\n\n");
+        p.append("【五档快速对照（跨学科通用，换任何题目都按此定档）】\n");
+        p.append("· 问“如何优化数据库查询性能”，答“加索引、避免全表扫描、分页取数” → 第一档，[切题] 40 左右；\n");
+        p.append("· 问“HTTP 404 是什么含义”，答“404 表示资源未找到”，只是把另一状态码说串 → 第二档，[切题] 30 左右，点评末尾点明那一处即可；\n");
+        p.append("· 问“光合作用需要什么原料”，答“需要水和二氧化碳，产物是氧气和葡萄糖，但光合作用发生在细胞核中”（一半对一半错） → 第三档，[错误] 25 左右，系统按半分计入；\n");
+        p.append("· 问“为什么天空是蓝色的”，答“因为海水是蓝色的，海面反光把天空染蓝了”（沾边但原理全错） → 第四档，[错误] 8 左右；\n");
+        p.append("· 问“Java 的 JVM 是什么”，通篇回答“JavaScript 的闭包与原型链” → 第五档，[跑题] 0。\n\n");
         p.append("【判分第四步·软性纠错同样算错误】下面这些措辞说明你已经发现回答有问题，此时必须判[错误]："
                 + "“建议改为/改成/应改为”、“用X替代/替换Y”、“应为/实际是/事实上”、“说反了/有误/不准确/不正确/不成立/有偏差”、"
                 + "“混淆了/用错了/不可行/行不通”。【严禁】一边在点评里纠正学生、一边仍判[切题]给正常分——"
@@ -644,7 +676,13 @@ public class chatController {
                 p.append("\n");
                 int ni = qi + 1;
                 if (ni < questions.size()) {
-                    p.append("下题:").append(questions.get(ni).getQuestion()).append("\n");
+                    // 【P-02 · 2026-10-09】不再向判分上下文暴露下一道预设题原文。
+                    // 实测（defenseId=325 第3轮）：prompt 同时给出「当前题:AQI等级」与「下题:大文件存储」，
+                    // 3B 模型把「下题」当「本题」判跑题（学生答 AQI，点评却说"未回应本题所问的大文件存储"）。
+                    // 预设题阶段的「下一题」行会被 N52 用题库题无条件覆盖（见 sendMessageWithMemory），
+                    // 因此这里只要求模型照常输出该行、不给出下题内容，从根上消除串题源；
+                    // "严禁点评其他轮次题目"的软禁令对 3B 模型约束力不足，故改为物理隔离。
+                    p.append("下一道预设题已由系统准备，你无需知道其内容，也【严禁】在点评或评分中提及任何下一题相关内容；请照常输出『下一题:』行（系统会自动替换为题库题目）。\n");
                 } else if (remainingExtra > 0) {
                     p.append("已无预设题,可追问").append(remainingExtra).append("个后总结\n");
                 } else {
@@ -718,16 +756,20 @@ public class chatController {
         // 2026-09-26：比对范围由「仅当前题」扩展为「本场任意已问题目」，防止学生复制"别的题"的题目当回答仍拿分。
         boolean copiedFromQuestion = isCopiedQuestion(userInput, topicId, answeredCount, existingQuestionIds, history);
         boolean pleadForScore = isPleadForScore(userInput);
+        // 【P-04 · 2026-10-09】辱骂/反讽吹捧与讨分同流程：固定零分、不调评分模型（defenseId=325 第7/9轮实测漏网）
+        boolean abusiveOrSarcastic = isAbusiveOrSarcastic(userInput);
         // 【N47 · 2026-10-02】跨轮复读检测：与本场此前轮次的答案高度相似（Dice ≥ 0.8）→ 固定零分。
         // 判定在调用模型之前完成（与复制题目同思路，不依赖模型自觉）；只比对更早轮次，前端重试不受影响。
         boolean repeatOfPriorAnswer = isRepeatOfPriorRoundAnswer(userInput, topicId, userId, answeredCount);
         if (topicId != null && userId != null
                 && (isGiveUpAnswer(userInput) || isJunkAnswer(userInput) || copiedFromQuestion || pleadForScore
-                || repeatOfPriorAnswer)) {
-            // 点评文案按判定来源区分：复制题目 / 讨分 / 放弃作答 / 敷衍作答 / 复读旧答案
+                || repeatOfPriorAnswer || abusiveOrSarcastic)) {
+            // 点评文案按判定来源区分：复制题目 / 讨分 / 辱骂反讽 / 放弃作答 / 敷衍作答 / 复读旧答案
             String zeroComment;
             if (copiedFromQuestion) {
                 zeroComment = "检测到直接复制题目内容作答，本题计0分。请结合自己的理解，用自己的话作答。";
+            } else if (abusiveOrSarcastic) {
+                zeroComment = "学生未正面作答，而是辱骂/调侃考官，本题计0分。请尊重答辩环节，结合问题认真作答。";
             } else if (pleadForScore) {
                 zeroComment = "学生未正面作答，而是抱怨/要求给分，本题计0分。答辩成绩依据回答内容评定，请认真答题。";
             } else if (repeatOfPriorAnswer) {
@@ -854,10 +896,11 @@ public class chatController {
                                     existingQuestionIds, trimmedHistory);
                             if (copiedQuestion) {
                                 log.info("跑题复核跳过：回答为复制题目原文，维持0分 - defenseId: {}", defenseId);
-                            } else if (isComplainOrPlead(userInput)) {
+                            } else if (isComplainOrPlead(userInput) || isAbusiveOrSarcastic(userInput)) {
                                 // 【复核排除名单 · 2026-09-27】实测 defenseId 294 第6轮：纯抱怨被判 0 后被复核
                                 // 救成 25 分（越闹分越高），且重评时模型把抱怨当成上一题的作答，语义完全错位。
-                                log.info("跑题复核跳过：回答为抱怨/要分，维持0分 - defenseId: {}", defenseId);
+                                // 【P-04 · 2026-10-09】辱骂/反讽同样排除复核（defenseId=325 第7/9轮漏网）。
+                                log.info("跑题复核跳过：回答为抱怨/要分/辱骂/反讽，维持0分 - defenseId: {}", defenseId);
                             } else if (isClearlyOffTarget(userInput, topicId, assistantCountInHistory - 1,
                                     existingQuestionIds, trimmedHistory)) {
                                 // 【N53 · 2026-10-02】救回门槛：回答与当前题二元组覆盖率≈0 → 明显跑题的长回答，
@@ -887,6 +930,32 @@ public class chatController {
                                     comment = (strippedRescored == null || strippedRescored.isEmpty())
                                             ? comment : strippedRescored;
                                     confirmedOff = false;
+                                    // 【P-01 · 2026-10-09】改判救回必须与首判同源接入错误判定，否则口径分裂：
+                                    // 实测（defenseId=325）第3轮复核输出 [错误]（AQI除以100确为明显错误）却按复核
+                                    // 总分 31 原样落库，而首判 [错误] 的第4轮同口径错误走了半分档 15.5——
+                                    // 同一事实错误两种计分。此处与下方半分档分支同源：
+                                    // ① 复核评分行判 [错误]，或点评正文带“（有明显回答错误）”错误声明；
+                                    // ② 复核总分低于 N45 一致性保护阈值（WRONG_ANSWER_HALF_SCORE_MAX_TOTAL）→ 半分档；
+                                    //    达到阈值则按 N45 口径不打折，仅保留错误声明。
+                                    // 评分行由 normalizeCommentAndScore 统一重写，前端气泡/库中/Redis 三处保持同源。
+                                    boolean recheckWrongMarked = isWrongAnswerMarkedInResponse(rescored)
+                                            || (comment != null && comment.contains(WRONG_ANSWER_NOTE));
+                                    if (recheckWrongMarked) {
+                                        if (newTotal < WRONG_ANSWER_HALF_SCORE_MAX_TOTAL) {
+                                            scores = applyWrongAnswerHalfScore(scores);
+                                            if (comment != null && !comment.contains(WRONG_ANSWER_NOTE)) {
+                                                comment = comment + WRONG_ANSWER_NOTE;
+                                            }
+                                            log.info("跑题复核改判后复核判[错误]，按半分计 - defenseId: {}, 复核总分: {} → {}",
+                                                    defenseId, newTotal, scores.get("totalScore"));
+                                        } else {
+                                            if (comment != null && !comment.contains(WRONG_ANSWER_NOTE)) {
+                                                comment = comment + WRONG_ANSWER_NOTE;
+                                            }
+                                            log.info("跑题复核改判后复核判[错误]但自评达正常档({})，判定标记不可信不打折 - defenseId: {}, 总分: {}",
+                                                    WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, newTotal);
+                                        }
+                                    }
                                 } else {
                                     // 【复核日志补全 · 2026-09-27】无论改判还是维持都留痕，便于排查"复核了但没改"
                                     log.info("跑题误判复核维持0分 - defenseId: {}, 原因: {}", defenseId,
@@ -915,10 +984,40 @@ public class chatController {
                         String wrongBase = (strippedWrong == null || strippedWrong.isEmpty())
                                 ? "回答针对本题，但存在明显错误。" : strippedWrong;
                         if (wrongModelTotal >= WRONG_ANSWER_HALF_SCORE_MAX_TOTAL) {
-                            // 【N45 一致性保护 · 2026-09-27】见常量注释：模型自评已达正常档却仍标 [错误]，
-                            // 判定标记不可信 → 只保留点评里的错误提示，分数按模型自己的给法落库。
-                            log.info("检测到[错误]标记但模型自评达正常档({})，判定标记不可信，不打折 - defenseId: {}, 原总分: {}",
-                                    WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, wrongModelTotal);
+                            // 【五档裁决 · 2026-10-09】自评达阈值时不再直接不打折，交一次复核仲裁：
+                            // 两种可能——a) 明显错误的回答被标[错误]却给高分（328场R4：原理全反拿32，
+                            // prompt 的[错误]≤30约束被模型无视，N45 保护反而兜住漏网）；
+                            // b) 正确答案被误标[错误]（N45 原场景，300场第4轮）。
+                            // 复核判[错误] → 半分；复核判[切题] → 维持原分；复核失败维持原判（方向安全）。
+                            boolean wrongConfirmed = false;
+                            try {
+                                if (defenseId != null) {
+                                    String n45Question = getQuestionTextForRound(topicId, assistantCountInHistory - 1,
+                                            existingQuestionIds, trimmedHistory);
+                                    String n45Rescored = runRecheck(completePrompt, RecheckType.WRONG_ANSWER,
+                                            n45Question, userInput);
+                                    if (n45Rescored != null) {
+                                        wrongConfirmed = isWrongAnswerMarkedInResponse(n45Rescored);
+                                        Object n45C = scorePersistenceService.parseScoresFromResponse(n45Rescored).get("comment");
+                                        if (n45C instanceof String n45Comment && !n45Comment.isBlank()) {
+                                            String n45Stripped = stripTopicMarker(n45Comment);
+                                            if (n45Stripped != null && !n45Stripped.isEmpty()) {
+                                                wrongBase = n45Stripped;
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception n45Ex) {
+                                log.warn("N45阈值复核异常，维持原判: {}", n45Ex.getMessage());
+                            }
+                            if (wrongConfirmed) {
+                                log.info("N45阈值触发但复核确认[错误]，改按半分计 - defenseId: {}, 原总分: {} → {}",
+                                        defenseId, wrongModelTotal, scores != null ? applyWrongAnswerHalfScore(scores).get("totalScore") : "?");
+                                scores = applyWrongAnswerHalfScore(scores);
+                            } else {
+                                log.info("检测到[错误]标记但模型自评达正常档({})且复核未判[错误]，维持原分 - defenseId: {}, 原总分: {}",
+                                        WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, wrongModelTotal);
+                            }
                             comment = wrongBase.contains(WRONG_ANSWER_NOTE)
                                     ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
                         } else {
@@ -958,8 +1057,33 @@ public class chatController {
                                 log.warn("答非所问复核命中，归零 - defenseId: {}, 当前题: {}", defenseId, currentQuestion);
                                 recheckDone = true;
                             } else {
-                                log.info("答非所问复核维持原分 - defenseId: {}, 当前题: {}, 覆盖率低于阈值但复核判切题",
-                                        defenseId, currentQuestion);
+                                // 【P-03 · 2026-10-09】复核判[切题]但点评正文自认"无关/未回应" → 裁决与理由脱节，
+                                // 不再盲目维持原分。实测（defenseId=325 第8轮）：学生把问题原样反抛回来（零实质内容），
+                                // OFF_TARGET 复核点评写"与…数据分片策略无关"却判[切题]，原样维持 32 分。
+                                // 剥掉三档标记后的点评正文命中自认措辞 → 视同复核改判[跑题]，走归零。
+                                Map<String, Object> reParsed = scorePersistenceService.parseScoresFromResponse(rescored);
+                                String recheckComment = reParsed == null ? null : (String) reParsed.get("comment");
+                                String recheckBody = stripTopicMarker(recheckComment);
+                                boolean selfAdmittedOffTarget = false;
+                                if (recheckBody != null && !recheckBody.isEmpty()) {
+                                    for (String phrase : OFF_TARGET_ADMISSION_PHRASES) {
+                                        if (recheckBody.contains(phrase)) {
+                                            selfAdmittedOffTarget = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (selfAdmittedOffTarget) {
+                                    scores = applyZeroScore(scores);
+                                    aiResponse = forceZeroScoreLine(aiResponse);
+                                    comment = "回答内容与本题无关（复核点评自认未正面回应所问内容），未正面回应所问内容。";
+                                    recheckDone = true;
+                                    log.warn("答非所问复核点评自认无关，裁决与理由脱节，归零 - defenseId: {}, 当前题: {}, 复核点评: {}",
+                                            defenseId, currentQuestion, recheckBody);
+                                } else {
+                                    log.info("答非所问复核维持原分 - defenseId: {}, 当前题: {}, 覆盖率低于阈值但复核判切题",
+                                            defenseId, currentQuestion);
+                                }
                             }
                         }
 
@@ -1932,13 +2056,50 @@ public class chatController {
 
     private boolean isSameTopicByKeywords(Set<String> a, Set<String> b) {
         if (a.isEmpty() || b.isEmpty()) return false;
+        // 【P-05 · 2026-10-09】同义组归并后再求交集：实测（defenseId=325 追问378/379/380）
+        // "数据分片策略 / 调整Block大小优化性能 / Block默认值"三连同主题，因"分片"与"Block"
+        // 不共享字面关键词而全部漏判。归并后 378∩379 = {mapreduce, 分片(含block归并)} 即达拦截阈值。
+        Set<String> na = canonicalizeKeywords(a);
+        Set<String> nb = canonicalizeKeywords(b);
         int overlap = 0;
-        for (String keyword : a) {
-            if (b.contains(keyword)) overlap++;
+        for (String keyword : na) {
+            if (nb.contains(keyword)) overlap++;
         }
         if (overlap >= FOLLOW_UP_TOPIC_OVERLAP_MIN) return true;
-        int union = a.size() + b.size() - overlap;
+        int union = na.size() + nb.size() - overlap;
         return union > 0 && (double) overlap / union >= FOLLOW_UP_TOPIC_JACCARD;
+    }
+
+    /**
+     * 【P-05 · 2026-10-09】主题同义组：组内关键词视为同一考点，映射到组内第一个词后参与交集计算。
+     * 只收强同义（同一技术概念的别名），不收弱关联，避免把不同考点误判同主题导致追问频繁退化兜底题。
+     */
+    private static final String[][] KEYWORD_SYNONYM_GROUPS = {
+            {"分片", "block", "切片", "split"},
+            {"小文件", "smallfile"},
+    };
+
+    /** 同义词组归并：组内关键词统一映射到组内第一个词 */
+    private Set<String> canonicalizeKeywords(Set<String> keywords) {
+        Set<String> canonical = new LinkedHashSet<>();
+        for (String keyword : keywords) {
+            String mapped = keyword;
+            for (String[] group : KEYWORD_SYNONYM_GROUPS) {
+                boolean hit = false;
+                for (String g : group) {
+                    if (g.equalsIgnoreCase(keyword)) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (hit) {
+                    mapped = group[0];
+                    break;
+                }
+            }
+            canonical.add(mapped);
+        }
+        return canonical;
     }
 
     private Set<String> extractQuestionKeywords(String text) {
@@ -1950,7 +2111,8 @@ public class chatController {
                 "redis", "mysql", "sql", "api", "http", "jvm", "ollama", "whisper", "ffmpeg",
                 "namenode", "datanode", "resourcemanager", "nodemanager", "shuffle", "etl", "aqi", "pm2.5", "pm10",
                 "小文件", "副本", "分片", "容错", "高可用", "数据清洗", "数据仓库", "数据挖掘", "数据可视化",
-                "实时计算", "离线计算", "批处理", "流处理", "性能", "异常", "部署", "权限", "鉴权", "索引", "事务"
+                "实时计算", "离线计算", "批处理", "流处理", "性能", "异常", "部署", "权限", "鉴权", "索引", "事务",
+                "大小", "默认"
         };
         for (String term : domainTerms) {
             if (lower.contains(term.toLowerCase())) {
@@ -2006,6 +2168,23 @@ public class chatController {
             "算我对", "给我算对", "明明我是对的", "我明明是对的", "重评", "重新评"
     };
 
+    /**
+     * 【P-04 · 2026-10-09】辱骂词表：这类输入不是对题目的回答。实测（defenseId=325 第7轮）学生辱骂考官
+     * （"脑子有病/破事/关我屁事"）未命中抱怨词表，白花一次跑题复核调用。
+     */
+    private static final String[] ABUSE_PHRASES = {
+            "脑子有病", "有病吧", "破事", "关我屁事", "关你屁事", "烦老子", "白痴", "弱智", "废物", "滚蛋"
+    };
+
+    /**
+     * 【P-04 · 2026-10-09】反讽吹捧词表：阴阳怪气式讨分。实测（defenseId=325 第9轮）约250字反讽
+     * （"大数据领域的爱因斯坦/佩服佩服"）因 isComplainOrPlead 的 60 字上限整体跳过检测，
+     * 复核改判白拿 31 分。反讽词要求 ≥2 个同现才判（正常作答几乎不会同时出现两个反讽短语，防误伤）。
+     */
+    private static final String[] SARCASM_PHRASES = {
+            "爱因斯坦", "太有水平", "太厉害了", "佩服佩服", "思维深度", "高深的问题", "简直是个天才", "我这种凡人"
+    };
+
     /** 是否为抱怨/要分类输入：短文本（≤60字） + 高特征短语双重约束，避免误伤正常作答 */
     private boolean isComplainOrPlead(String userInput) {
         if (userInput == null) return false;
@@ -2015,6 +2194,25 @@ public class chatController {
             if (text.contains(phrase)) return true;
         }
         return false;
+    }
+
+    /**
+     * 【P-04 · 2026-10-09】辱骂/反讽判定：不受 isComplainOrPlead 的 60 字长度上限约束——
+     * 长段阴阳怪气整体命中多个反讽特征才是真信号。辱骂词命中 1 个即判；反讽词需 ≥2 个同现。
+     * 命中即与讨分同流程：固定零分、不调评分模型、不参与复核。
+     */
+    private boolean isAbusiveOrSarcastic(String userInput) {
+        if (userInput == null) return false;
+        String text = normalizeForCompare(userInput);
+        if (text.isEmpty()) return false;
+        for (String phrase : ABUSE_PHRASES) {
+            if (text.contains(phrase)) return true;
+        }
+        int sarcasmHits = 0;
+        for (String phrase : SARCASM_PHRASES) {
+            if (text.contains(phrase)) sarcasmHits++;
+        }
+        return sarcasmHits >= 2;
     }
 
     /**
@@ -2153,7 +2351,11 @@ public class chatController {
             for (String bg : answerBigrams) {
                 if (commentBigrams.contains(bg)) hits++;
             }
-            if (hits >= GROUNDED_MIN_HITS) return comment;
+            // 【P-06 · 2026-10-09】结论性否定反例：点评说"未提及X/未涉及X"而答案里明明有 X（词组重叠
+            // 照样达标），重叠数达标也不能放行，强制走重写。实测（defenseId=325 第5轮）学生明确写
+            // "用Hive或MapReduce按时间维度分组"，点评却说"未提及MapReduce或Hive的具体应用"，漏网。
+            boolean conclusiveNegation = containsAnyPhrase(comment, CONCLUSIVE_NEGATION_PHRASES);
+            if (hits >= GROUNDED_MIN_HITS && !conclusiveNegation) return comment;
 
             log.warn("点评疑似模板话/幻觉（与本轮答案仅 {} 处词组重叠），触发重写 - defenseId: {}, 原点评: {}",
                     hits, defenseId, comment);
@@ -2181,6 +2383,15 @@ public class chatController {
         }
     }
 
+    /** 【P-06 · 2026-10-09】文本是否命中词表中的任一短语（供结论性否定反例检测等共用） */
+    private boolean containsAnyPhrase(String text, String[] phrases) {
+        if (text == null || text.isEmpty()) return false;
+        for (String phrase : phrases) {
+            if (text.contains(phrase)) return true;
+        }
+        return false;
+    }
+
     /**
      * 【N46/N49】点评重写调用：只要求模型输出一行「引用本轮答案具体词」的点评，
      * 不改评分行（分值仍由服务端管）。调用失败返回 null。
@@ -2193,7 +2404,7 @@ public class chatController {
                 p.append("当前题：").append(question).append("\n");
             }
             p.append("学生本轮回答：").append(answer).append("\n");
-            p.append("此前生成的点评：「").append(oldComment).append("」没有引用本轮回答的具体内容（空话模板或串台幻觉），判定不合格。\n");
+            p.append("此前生成的点评：「").append(oldComment).append("」没有引用本轮回答的具体内容，或其结论与学生回答的实际内容相矛盾（例如回答里明明用了某项技术，点评却说没有提及），判定不合格。\n");
             p.append("请只输出一行新点评：以 点评: 开头、40字以内；必须引用学生本轮回答原文里的 1~2 个具体词（技术名词、步骤或数据），");
             p.append("基于该回答的实际内容评价（可肯定优点、可指出不足）；严禁提及本题与本轮回答之外的任何内容，严禁空话套话。");
             String resp = chatClient.prompt()
@@ -2669,6 +2880,10 @@ public class chatController {
                     + "检查回答里的技术概念、方法步骤、数据阈值、结论判断是否与公认事实一致。"
                     + "特别强调：如果学生回答原文描述的做法本身就是正确的，严禁把学生的原话复述成“纠正”或“应该改为”——"
                     + "那是把正确答案当错误（实测已发生）。"
+                    + "定档口径按判分第二步的五档表执行：回答内容一半以上错误（关键概念说反、机制或因果颠倒、主要步骤错误）→ [错误]；"
+                    + "回答用本题领域概念但定义/原理完全说反、结论全错 → [错误]，分数只给 5~14；"
+                    + "只有个别次要瑕疵（一个次要数字不准、一处用词不严谨）才判 [切题]。"
+                    + "混合回答（一半对一半错）按错误占比定档：错误占一半以上必须判[错误]并给 15~30 分，严禁因表述流利、篇幅长而判[切题]。"
                     + "若发现关键概念说反、方法用错、事实或数据错误、结论错误、把无关技术硬套本题，"
                     + "点评必须以[错误]开头，先一句话点明【具体错在哪里】（不要写“表述不够清晰”这类套话），末尾附（有明显回答错误），"
                     + "分值按判分第二步给，不要自行减半；若逐条核查后确实没有事实性错误，维持[切题]并按原档位给分。"

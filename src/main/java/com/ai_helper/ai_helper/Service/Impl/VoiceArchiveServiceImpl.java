@@ -4,7 +4,9 @@ import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.FileStorageService;
 import com.ai_helper.ai_helper.Service.VoiceArchiveService;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
+import com.ai_helper.ai_helper.mapper.DefenseTopicsMapper;
 import com.ai_helper.ai_helper.mapper.VoiceResponseMapper;
+import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.entity.VoiceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +38,7 @@ public class VoiceArchiveServiceImpl implements VoiceArchiveService {
     private final VoiceResponseMapper voiceResponseMapper;
     private final DefenseRecordsService defenseRecordsService;
     private final DefenseRecordsMapper defenseRecordsMapper;
+    private final DefenseTopicsMapper defenseTopicsMapper;
 
     @Override
     public String archive(String loginUserNumber, Integer topicId, Integer questionId,
@@ -74,7 +77,14 @@ public class VoiceArchiveServiceImpl implements VoiceArchiveService {
             // 4. 写库；失败则回收刚落的盘，保证「要么都成、要么都不成」
             VoiceResponse record = new VoiceResponse();
             record.setDefenseId(defenseId);
-            record.setQuestionId(questionId);
+            // 【P-07 · 2026-10-09】questionId 为空时按「课题 + 题目原文」归一化精确匹配题库反查：
+            // 前端对预设题轮次无法可靠映射题库主键（defenseId=325 实测 question_id 恒 NULL）。
+            // 预设题可命中；追问自拟题不在题库中，查不到即维持 NULL（与原行为一致）。
+            Integer resolvedQuestionId = questionId;
+            if (resolvedQuestionId == null && question != null && !question.isBlank()) {
+                resolvedQuestionId = resolveQuestionIdByExactText(topicId, question);
+            }
+            record.setQuestionId(resolvedQuestionId);
             record.setQuestion(truncate(question == null || question.isBlank() ? "（未记录题目）" : question, MAX_QUESTION_LENGTH));
             record.setResponseText(truncate(responseText, MAX_RESPONSE_TEXT_LENGTH));
             record.setResponseAudioUrl(publicUrl);
@@ -87,7 +97,7 @@ public class VoiceArchiveServiceImpl implements VoiceArchiveService {
                 return "";
             }
             log.info("语音录音已归档 - defenseId: {}, questionId: {}, url: {}, 大小: {} 字节",
-                    defenseId, questionId, publicUrl, audio.length);
+                    defenseId, resolvedQuestionId, publicUrl, audio.length);
             return publicUrl;
         } catch (Exception e) {
             // 归档失败不影响识别与作答：删掉可能残留的文件后返回空串
@@ -136,5 +146,31 @@ public class VoiceArchiveServiceImpl implements VoiceArchiveService {
             return null;
         }
         return text.length() > maxLength ? text.substring(0, maxLength) : text;
+    }
+
+    /**
+     * 【P-07 · 2026-10-09】按题目原文回填题库题号：归一化（去空白/标点/大小写）后与
+     * defense_questions.question 精确匹配。任何异常都返回 null（保持原 NULL 行为，方向安全）。
+     */
+    private Integer resolveQuestionIdByExactText(Integer topicId, String question) {
+        try {
+            List<DefenseQuestions> questions = defenseTopicsMapper.getDefenseQuestionById(topicId);
+            if (questions == null || questions.isEmpty()) {
+                return null;
+            }
+            String nq = normalizeQuestionText(question);
+            for (DefenseQuestions q : questions) {
+                if (q.getQuestion() != null && normalizeQuestionText(q.getQuestion()).equals(nq)) {
+                    return q.getQuestionId();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("按题目原文回填 questionId 失败（保持 NULL）: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String normalizeQuestionText(String s) {
+        return s == null ? "" : s.toLowerCase().replaceAll("[\\s\\p{P}\\p{S}]+", "");
     }
 }
