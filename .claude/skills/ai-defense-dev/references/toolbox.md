@@ -28,15 +28,15 @@ node --check pages/xxx/xxx.js
 ```powershell
 powershell -ExecutionPolicy Bypass -File diagnose.ps1
 ```
-覆盖：物理内存、MySQL 连通+9 表齐全、Redis（带密码 PING）、Ollama 服务/模型/显存、GPU+端口、环境变量、推理速度。默认值自动读本机 `application.yml`。
+覆盖：物理内存、MySQL 连通+11 表齐全、Redis（带密码 PING）、Ollama 服务/模型/显存、GPU+端口、环境变量、推理速度。默认值自动读本机 `application.yml`。
 
 ## 4. 直查 MySQL（root/123456 @3306/ai_helper）
 
 ```bat
 mysql -uroot -p123456 -e "SELECT defense_id, user_id, topic_id, status, score FROM ai_helper.defense_records ORDER BY defense_id DESC LIMIT 5;"
 ```
-常用表：`users`（user_number 有唯一索引）、`defense_records`（status: pending/completed/graded）、`defense_score_record`（五维评分行，幂等唯一索引 `uk_defense_round` 未执行迁移脚本）、`defense_answers`、`defense_topics`、`defense_questions`、`system_feedback`。
-完整 9 表结构见 `docs/schema.sql`。
+常用表：`users`（user_number 有唯一索引）、`defense_records`（status: pending/completed/graded）、`defense_score_record`（五维评分行，幂等唯一索引 `uk_defense_round`，存量库按 diagnose.ps1 提示补迁移脚本）、`defense_answers`、`defense_topics`、`defense_questions`、`system_feedback`、`voice_responses`、`defense_audit_log`。
+完整 11 张表结构见 `docs/schema.sql`。
 
 ## 5. curl 接口测试套路（cmd 变量法）
 
