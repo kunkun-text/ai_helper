@@ -30,7 +30,9 @@ import java.util.Set;
  * 教师端题库批量导入实现（N10 · 2026-10-08）。
  *
  * <p>流程：校验登录身份与课题归属 → 限制文件大小 → 解析 CSV → 逐行校验 → （覆盖模式则清空原题目）→ 逐条入库。
- * 解析与校验在写库之前完成，因此「行数超限」这类错误不会先删掉原题目再报错（事务内也不会留下半截数据）。</p>
+ * 解析与校验在写库之前完成，因此「行数超限」这类错误不会先删掉原题目再报错（事务内也不会留下半截数据）。
+ * 【2026-10-10】覆盖模式在课题下任何题目已有作答引用时会被整体拒绝——
+ * 外键级联会把学生作答连同被删题目一起删掉，不能用覆盖导入变相清作答。</p>
  */
 @Slf4j
 @Service
@@ -182,6 +184,14 @@ public class QuestionImportServiceImpl implements QuestionImportService {
 
         // 3. 写库（覆盖模式先清空该课题原题目）
         if (replace) {
+            // 【2026-10-10 · 数据保护】覆盖导入会清空课题全部题目，而 defense_answers.question_id
+            // 外键 ON DELETE CASCADE 会把已被作答的题连同学生答案一起级联删除。
+            // 课题下任何题目已有作答 → 整体拒绝覆盖（追加模式无删除，不受影响）。
+            int answeredRef = defenseTopicsMapper.countAnswersByTopicId(topicId);
+            if (answeredRef > 0) {
+                log.warn("覆盖导入拒绝：课题下题目已有作答引用 - topicId: {}, 作答引用数: {}", topicId, answeredRef);
+                throw new BusinessException("该课题已有学生作答记录，覆盖导入会连同学生作答一起删除；请改用「追加导入」或另建新课题");
+            }
             int removed = defenseTopicsMapper.deleteQuestionsByTopicId(topicId);
             log.info("覆盖导入：已清空课题原题目 - topicId: {}, 清除条数: {}", topicId, removed);
         }

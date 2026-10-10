@@ -175,15 +175,18 @@ Page({
   // ======== 消息管理 ========
 
   addSystemMessage(text) {
+    // 路径式 setData：只下发新增这一条，不再把整个 messages 数组重新序列化传一遍
+    const index = this.data.messages.length;
     this.setData({
-      messages: [...this.data.messages, { id: Date.now(), type: 'system', text }],
+      [`messages[${index}]`]: { id: Date.now(), type: 'system', text },
       scrollToId: 'scroll-bottom',
     });
   },
 
   addUserMessage(text) {
+    const index = this.data.messages.length;
     this.setData({
-      messages: [...this.data.messages, { id: Date.now(), type: 'user', text }],
+      [`messages[${index}]`]: { id: Date.now(), type: 'user', text },
       scrollToId: 'scroll-bottom',
     });
   },
@@ -204,8 +207,10 @@ Page({
       totalScore: parsed.totalScore,
       isSummary: !!parsed.summary,
     };
+    // 与上两处同理：AI 消息体最大（含点评/评分/题目），尤其不该整数组重发
+    const index = this.data.messages.length;
     this.setData({
-      messages: [...this.data.messages, msg],
+      [`messages[${index}]`]: msg,
       lastAiMessage: msg,
       scrollToId: 'scroll-bottom',
       showRetry: false,

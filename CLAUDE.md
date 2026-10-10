@@ -16,7 +16,7 @@
 
 ---
 
-## 当前进度（2026-10-09）
+## 当前进度（2026-10-10）
 
 ### 已完成 ✅
 
@@ -39,7 +39,8 @@
 | 教师端统计导出 | 已开发待实测 | N9：`/teacher/stats/topics` + 按课题导出 + 课题统计 CSV |
 | 场次审计日志 | 已开发待实测 | N15：新表 `defense_audit_log`（**11 张表**）+ START/RESUME/FINISH 埋点 |
 | 纯函数回归测试 | ✅ 18/18 通过 | N14：`CsvUtilsTest` / `AiTextUtilsTest` / `ScorePersistenceServiceImplTest` |
-| 判分复盘整改 | ✅ 已实测 | P-01~P-09（2026-10-09，defenseId=325 复盘）：五档判分表、N45 复核仲裁、防作弊词表（辱骂/反讽前置零分）、追问主题同义去重、接地校验反例、语音归档回填 question_id；零分档两场 8/8 全对 |
+| 判分复盘整改 | ✅ 已实测 | P-01~P-09（2026-10-09，defenseId=325 复盘）：五档判分表、N45 复核仲裁、防作弊词表（辱骂/反讽前置零分）、追问主题同义去重、接地校验反例、语音归档回填 question_id；零分档两场 8/8 全对。2026-10-10 五场景二次实测（defenseId=330/331，全新答案）：全对(38/38)、全错无关(0/0)稳定；半对半错、全错相关、夹杂错误仍受 3B 模型"错误识别"能力限制（同场景两场差异达 15.5 分），链路机制本身按设计工作 |
+| Gemini 审查修订 | ✅ 编译/单测/语法过；DDL 已执行复验 | 2026-10-10 四项：① `editDefense` 改差量更新（实证 `defense_answers` 三外键全 CASCADE，旧「清空重建」会级联删历史作答）；② 题库覆盖导入加作答引用守卫；③ 7 个判分阈值外置 `app.scoring.*`（默认值不变，行为一致）；④ defense-voice.js 三处改路径式增量 setData。DDL 收尾：评分表去重 530→479、`uk_defense_round` 唯一索引就位、补 `system_feedback`、删冗余 `idx_defense_round`（diagnose 全绿）。chatController 拆分 / ASR 异步化单独立项（用户拍板本轮不做） |
 
 ### 待开发 🔧
 

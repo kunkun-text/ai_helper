@@ -62,4 +62,48 @@
     <select id="selectTeacherIdByTopicId" resultType="java.lang.Integer">
         select teacher_id from defense_topics where topic_id = #{topicId}
     </select>
+
+    <!-- ==================== 【2026-10-10 · 差量更新】editDefense 防级联删作答 ==================== -->
+
+    <!-- 课题下 teacher 类题目全量行（差量比对用）。列口径与 getDefenseQuestionById 一致 -->
+    <select id="selectTeacherQuestionsByTopicId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseQuestions">
+        SELECT
+            question_id AS questionId,
+            topic_id AS topicId,
+            teacher_id AS teacherId,
+            question_type AS questionType,
+            question,
+            standard_answer AS standardAnswer,
+            created_at AS createdAt,
+            updated_at AS updatedAt
+        FROM defense_questions
+        WHERE topic_id = #{topicId} AND question_type = 'teacher'
+        ORDER BY question_id ASC
+    </select>
+
+    <!-- 删除守卫：题目被学生作答引用的次数（defense_answers.question_id 外键 ON DELETE CASCADE） -->
+    <select id="countAnswersByQuestionId" resultType="int">
+        SELECT COUNT(*) FROM defense_answers WHERE question_id = #{questionId}
+    </select>
+
+    <!-- 覆盖导入守卫：课题下全部题目被作答引用总数 -->
+    <select id="countAnswersByTopicId" resultType="int">
+        SELECT COUNT(*) FROM defense_answers da
+        JOIN defense_questions dq ON da.question_id = dq.question_id
+        WHERE dq.topic_id = #{topicId}
+    </select>
+
+    <!-- 原位更新：保留 question_id，只动题干/标准答案/更新时间 -->
+    <update id="updateDefenseQuestion">
+        UPDATE defense_questions
+        SET question = #{question},
+            standard_answer = #{standardAnswer},
+            updated_at = #{updatedAt}
+        WHERE question_id = #{questionId}
+    </update>
+
+    <!-- 按主键删单题（Service 已先做作答引用守卫） -->
+    <delete id="deleteDefenseQuestionById">
+        DELETE FROM defense_questions WHERE question_id = #{questionId}
+    </delete>
 </mapper>

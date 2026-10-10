@@ -1,6 +1,6 @@
 # AI 答辩辅助系统 — 改动记录
 
-> 基于 git commit `508d803`（母版），截至 2026-10-08
+> 基于 git commit `508d803`（母版），截至 2026-10-10
 > 本文档按「时间倒序 + 功能模块」组织，方便快速定位某次改动的上下文。
 
 ---
@@ -9,7 +9,8 @@
 
 | 想看什么 | 跳到 |
 |---|---|
-| 最新改动（2026-10-08 追问质量与低功耗加固） | [追问质量与低功耗加固](#2026-10-08) |
+| 最新改动（2026-10-10 审查遗留修订） | [Gemini 审查遗留项修订](#2026-10-10) |
+| 追问质量与低功耗加固（2026-10-08） | [追问质量与低功耗加固](#2026-10-08) |
 | 上线缺漏整改（2026-10-05） | [上线缺漏整改](#2026-10-05) |
 | 判分可信度收口（2026-10-02） | [判分可信度收口](#2026-10-02) |
 | 功能扩展（数据总览/导出/反馈） | [2026-10-01 大规模优化](#2026-10-01) |
@@ -20,7 +21,271 @@
 
 ---
 
+# 2026-10-10
+
+## Gemini 审查遗留项修订（DDL 数据兜底 / editDefense 差量更新 / 阈值外置 / voice 页增量 setData）
+
+> 改动日期：10.10，涉及后端 5 个文件 + 前端 1 个文件 + 2 份 yml + 数据库 DDL 两笔。
+> **状态：编译 / 单测 / JS 语法校验通过；DDL 已执行并复验（备份 51 行 → 去重 → 建唯一索引 → 补反馈表 → 删冗余索引，diagnose 全绿）；editDefense/导入守卫/阈值外置待人工审核与答辩回归。**
+
+### 一、背景与处置总表
+
+依据已核实的 Gemini 审查报告（工作稿，未入库；2026-10-10 按用户要求删除）与 CHANGES.md 2026-10-09 收尾节遗留清单逐项修订：
+
+| # | 项 | 来源 | 处置 |
+|---|---|---|---|
+| 1 | 库缺 `system_feedback` + `uk_defense_round` 唯一索引 | 报告 5.1（唯一数据正确性风险） | ✅ 已执行 DDL（备份 51 行 → 去重 530→479 → 建唯一索引 → 补表 → 删冗余索引，diagnose 全绿） |
+| 2 | `editDefense` 删除重建丢历史作答 | 报告 5.2 | ✅ 改差量更新（同族隐患：题库覆盖导入加守卫） |
+| 3 | 判分阈值硬编码 | 报告 2.3 | ✅ 外置 `app.scoring.*`（7 个阈值，默认值不变） |
+| 4 | `defense-voice.js` 三处全量 setData | CHANGES 10-09 遗留 2 | ✅ 与 defense.js 统一为路径式增量（用户拍板现在改） |
+| — | chatController 拆分（报告 2.1/2.2） | 单独立项 | ⏸ 本轮不做（用户拍板） |
+| — | ASR 同步阻塞异步化（报告 4.2） | 优先级已下调 | ⏸ 本轮不做（信号量已缓解） |
+| — | 裸 Thread / TextTools / ASR 临时音频 | 报告 4.1/6.1/6.2 | 维持现状（报告已撤回/降级） |
+
+### 二、DDL：补反馈表 + 评分幂等唯一索引（报告 5.1）
+
+- 实机查重：`defense_score_record` 530 行中 **9 组 `(defense_id, round_num)` 重复对**（defense 26/231/232/233/235/236，N4 修复前的重试残留，同组各行分数互不相同）。
+- **先备份后清理**：迁移脚本将删除的行（每组保留 id 最小一行，共 **51 行**）先存入备份表 **`defense_score_record_dup_bak_20261010`**（与脚本 DELETE 口径一致，每行一份）；确认无误后可自行 DROP。
+- 执行 `docs/migration-20260928-score-record-unique.sql`（去重 + 建 `uk_defense_round` 唯一索引）与 `docs/ddl_system_feedback.sql`（补反馈表），再单独 `ALTER TABLE defense_score_record DROP INDEX idx_defense_round`（迁移脚本内该行默认注释，须另删）。
+- **执行方式备忘**：`mysql` 不在 PATH，需全路径 `D:\mysql\mysql-9.6.0-winx64\bin\mysql.exe`；`source docs/xxx.sql` 在 `mysql < file` 重定向批处理下报语法错，故两个脚本改为各自 `mysql < docs/xxx.sql` 直接执行。
+- 复验（实测）：`defense_score_record` 由 530 → **479 行**、重复组 **0**、`uk_defense_round` Non_unique=0、`idx_defense_round` 已删、`system_feedback` 已建（含 `idx_status_created`）、备份表 **51 行**；`diagnose.ps1 -SkipInferenceTest` **全部通过**。
+- 从此 N4 评分幂等恢复双层：代码侧先查后插 + DB 唯一索引兜底并发。
+
+### 三、editDefense 差量更新（报告 5.2，同族隐患一并修）
+
+**取证**：实查 `information_schema`，`defense_answers` 三条外键全部 `ON DELETE CASCADE`——旧实现「先清空题目再重建」比报告描述的"脱钩"更严重：**教师保存一次编辑（哪怕只改课题名、题目原样未动），全部历史作答行会被级联删除**（评分行无外键，留下孤儿）。
+
+| 文件 | 改动 |
+|---|---|
+| `DefenseTopicsMapper.java/.xml` | 新增 5 方法：`selectTeacherQuestionsByTopicId`（teacher 类题目全量行，比对用）、`countAnswersByQuestionId`（删除守卫）、`countAnswersByTopicId`（导入覆盖守卫）、`updateDefenseQuestion`（保留 question_id 原位更新）、`deleteDefenseQuestionById`（守卫后单删） |
+| `DefenseTopicsServiceImpl.editDefense` | 重写为差量更新：① 题干文本（trim 归一化）匹配上的题**保留原 question_id**，题干/标准答案有变化才原位 UPDATE；② 新文本 INSERT；③ 从提交列表消失的题——无作答引用才 DELETE，**有作答则整体拒绝并明确报错（零写入）**。比对与守卫全部在任何写库之前完成，校验失败不留任何痕迹 |
+| `QuestionImportServiceImpl`（同族隐患，主动扩大） | 覆盖导入前新增作答引用守卫：课题下任何题目已有学生作答 → 整体拒绝覆盖（`countAnswersByTopicId`），与 editDefense 同源级联删除风险一并堵住 |
+
+- 前端无需改动（仍全量提交题目列表，文本未变的题自动保留 ID）。
+- 语义约定：改题干文本 ≙ 换题（旧题有作答时拒绝）；仅改标准答案 → 保留 ID 原位更新，作答关联不断。
+- `deleteQuestionsByTopicId` 保留（题库覆盖导入清空用，已加作答引用守卫）。
+
+### 四、判分阈值外置（报告 2.3）
+
+- `AppProperties` 新增 `Scoring` 段（7 个阈值，字段默认值=原常量值，经验注释随迁）：
+  `wrongAnswerHalfScoreMaxTotal=32.0 / offTargetCoverageThreshold=0.25 / crossRoundRepeatDice=0.8 / rescueMinCoverage=0.05 / groundedMinHits=3 / followUpTopicOverlapMin=2 / followUpTopicJaccard=0.34`
+- `chatController`：7 个常量删除、12 处引用 + 1 处 javadoc 改经 `scoring()` 统一读取；词表/文案类常量（ERROR_CUE_PHRASES 等）不属于可调阈值，保留为类内常量。
+- `application.yml(.example)` 补 `app.scoring` 段；**不配置时按代码默认值运行，行为与外置前完全一致**；调阈值不再需要重新编译。
+- 全类旧常量名仅剩 2 处注释性提及（语义说明，非代码引用）。
+
+### 五、defense-voice.js 消息追加改增量 setData（CHANGES 10-09 遗留 2）
+
+- `addSystemMessage` / `addUserMessage` / `addAiMessage` 三处 `messages: [...this.data.messages, msg]` 改为路径式增量 `setData`（与 10-09 defense.js 同款，已实跑验证过）。
+- 安全性核实同 defense.js：`messages` 全文件仅这 3 处写入、无其他消费方；`defense-voice.wxml:24` 同样 `wx:key="id"`。
+- F10 真机实测尚未开始，本次改动后实测直接覆盖最终代码（用户拍板）。
+
+### 六、验证
+
+- `mvn -o -q compile` → BUILD SUCCESS；`mvn -o test` → **19/19 通过**（阈值外置 + editDefense 差量更新 + 导入守卫全部编译通过）。
+- `node --check`（`defense-voice.js` / `defense.js`）→ 通过。
+- DDL 执行 + `diagnose.ps1 -SkipInferenceTest` 复验 → **全部通过**（见第二节）。
+- editDefense / 导入覆盖守卫 / 阈值外置：编译级验证 + 逻辑自审，**待答辩回归与真机验证**。
+
+### 七、遗留与待实测
+
+1. editDefense 差量更新需实测回归：a) 只改课题名保存 → 题目 question_id 不变、作答完好；b) 新增题目 → 插入；c) 删除有作答的题 → 整体拒绝且**课题名改动也不生效**（零写入）；d) 删除无作答的题 → 正常删除。
+2. 覆盖导入拒绝分支需实测（需造"有作答课题"场景）。
+3. 阈值外置后，N45/N48 等阈值调整走 `app.scoring.*`；建议多场答辩观察后再调。
+4. defense-voice.js 三处增量 setData 随 F10 真机实测一并验证。
+5. chatController 拆分（AiDefenseService）单独立项（报告 2.1/2.2，AI 协议红线，改动面大）。
+6. 备份表 `defense_score_record_dup_bak_20261010` 确认无误后可自行 DROP。
+
+### 八、五档判分 · 五场景二次实测（defenseId=330/331，全部新写答案）
+
+> 目的：按用户要求对五档判分表（见 2026-10-09 晚节）做**跨答案通用性**复核——两场答案全部重写（与 325 及 328/329 均不同），每场五种场景各落一道预设题。
+> 方法：测试账号 `t20261010`(user_id=30)、`t20261010b`(user_id=31)，课题 topic_id=28，经 `/api/chat/clear` + `/api/chat` 逐轮驱动；分数取自 `defense_score_record`，判分路径取自后端日志（`defenseId: 330/331`）。
+
+**场景与落库结果**
+
+| 场景 | 对应预设题 | 330 | 331 | 应有口径 | 结论 |
+|---|---|---|---|---|---|
+| 全对 | q45 Hadoop 生态组件 | 38 | 38 | 35~50 | ✅ 稳定 |
+| 半对半错 | q69 MapReduce 统计月均 | 32 | 29 | 7.5~15（大错误×0.5） | ❌ 落「小错误」档，未半分 |
+| 全错但相关 | q71 HDFS 小文件 | 32 | 16.5 | 2.5~7（相关全错×0.5） | ⚠️ 极不稳定（差 15.5） |
+| 全错且无关 | q72 时间序列趋势 | 0 | 0 | 0 | ✅ 稳定 |
+| 大量正确夹杂错误 | q70 判定 AQI 等级 | 38 | 34 | 26~34（点一句） | ❌ 注入的错误两场均未被识别 |
+
+**判分路径（日志实测）**
+
+| 场次-轮 | 分数 | 命中分支 | 说明 |
+|---|---|---|---|
+| 330-R1 全对 | 38 | 直给[切题] | — |
+| 330-R2 半对半错 | 32 | 接地校验重写点评（0 词组重叠）→ 直给[切题] | 未判错误 |
+| 330-R3 夹杂错误 | 38 | 直给[切题] | 注入错误未识别 |
+| 330-R4 全错相关 | 32 | 检测到错误标记但自评达正常档(32) → N45 复核未判[错误] → **维持 32** | 卡在阈值 |
+| 330-R5 全错无关 | 0 | [跑题] 复核维持 → 强制五维归零 | ✅ |
+| 331-R1 全对 | 38 | 错误漏判复核未判[错误] → 维持 38 | — |
+| 331-R2 半对半错 | 29 | 错误漏判复核（"不正确"命中纠错措辞）→ 复核未判[错误] → 维持 29 | 未半分 |
+| 331-R3 夹杂错误 | 34 | 直给[切题] | 注入错误未识别 |
+| 331-R4 全错相关 | 16.5 | 自评 33≥32 → N45 触发 → 复核确认[错误] → **半分 16.5** | ✅ 机制生效 |
+| 331-R5 全错无关 | 0 | [跑题] → 强制归零 | ✅ |
+
+**结论**
+
+1. **稳定可复现**：全对（38/38）、全错且无关（0/0），两场一致。
+2. **不稳定**：半对半错（32/29）、全错但相关（32/16.5）、大量正确夹杂错误（38/34）——同一场景两次差异最高达 15.5 分。
+3. **瓶颈定位**：判分链路（错误标记 → N45 复核仲裁 → 半分档 → 跑题归零）**机制全部按设计工作**（330-R4 维持、331-R4 半分、两场 R5 归零均有日志实锤）；卡点在 **3B 模型是否主动给出"错误"信号**——模型对"错误占比/错误识别"能力弱，常把半错/全错回答判 [切题] 并给 26~38 的分，服务端据此无从半分。
+4. **与 325/328/329 结论一致**：零分档、正确档稳定；错误档受模型能力限制。
+
+**顺带观察**：331 场第 5 轮作答后，"下一题"行复述了原题（q72）而非生成新追问，疑追问退化/重复，建议 F10/V0 真机时一并观察。
+
+**测试数据**：新增测试账号 `t20261010`/`t20261010b`（user_id=30/31）与场次 defenseId=330/331（均 pending、各 5 轮）。如需清理需另行确认（涉及 users / defense_records / defense_answers / defense_score_record 多表）。
+
+### 九、追问退化修复（首轮追问复述当前题）+ 判分路线拍板
+
+> 改动文件：`chatController.java`（3 处 off-by-one）。**状态：`mvn -o -q compile` BUILD SUCCESS；运行时验证待后端重启后进行。**
+
+**问题（实锤）**：§八二次实测中，defenseId=331 第 5 轮作答后，"下一题"把原题 q72 又念了一遍——首个追问退化成复述当前题。
+
+**根因**：追问去重集合漏掉"当前题"。
+- `assistantCountInHistory = answeredCount + 1`（`chatController:833`），R5 作答时 = 5，当前题即第 5 道预设题（下标 4）。
+- 但 `collectAskedQuestions(topicId, assistantCountInHistory - 1, ...)` 只收集下标 0..3，**恰好漏掉当前题**；模型复述当前题时 `isSimilarToAnyQuestion` 判为"不重复"，原样再次出题。
+- 仅"预设题最后一轮 → 首个追问"这个边界触发（330 场模型自拟了新追问，故未暴露）。
+
+**修复**：三处 `collectAskedQuestions(...)` 去掉 `-1` 偏差，使已问集合含当前题 → 复述会被去重并重生成。
+
+| 位置 | 改动 |
+|---|---|
+| 追问去重（`chatController:1197`） | `assistantCountInHistory - 1` → `assistantCountInHistory` |
+| `appendNextQuestionFallback`（`:1661`） | `assistantCountInHistory - 1` → `assistantCountInHistory` |
+| `handleGiveUpAnswer`（`:1774`） | `currentRound - 1` → `currentRound` |
+
+**验证**：`mvn -o -q compile` EXIT=0。运行时验证（跑一场到"第 5→6 轮"看追问是否仍复述）需重启后端后执行。
+
+**下一步 · 判分路线已拍板**：用户选定**路线 B（独立错误抽取 + 服务端定档）**。**硬约束：每轮总耗时 ≤ 20 秒**（当前约 10 秒/轮，新增模型调用须控制在 +2~5 秒内，8G 低功耗机也要能跑）。同轮随后即按路线 B 实施（见 §十）。
+
+### 十、路线 B · 独立「错误抽取」复核 + 服务端定档（2026-10-10）
+
+> 改动文件：`chatController.java`（新增 4 方法 + 判分链路 1 处插入）、`AppProperties.java`（`Scoring` 增 4 项）、`application.yml(.example)`。**状态：`mvn -o -q compile` BUILD SUCCESS、`read_lints` 0 告警；待实测（重点看单轮耗时是否 ≤20 秒）。**
+
+**背景**：§八二次实测证明——五档判分表已写进首判 prompt，但 3B 模型对"错误占比"识别弱，常把半错/全错回答判 [切题] 给 26~38 的高分，服务端无从半分。路线 B：把"定档"从首判里拆出来，单独做一次极短的错误抽取判断，服务端据此映射到固定分数区间。
+
+**实现**
+
+| 位置 | 改动 |
+|---|---|
+| `AppProperties.Scoring` | 新增 `errorVerdictEnabled`(true) / `minorWrongFinalCap`(34.0) / `halfWrongFinalCap`(15.0) / `relatedWrongFinalCap`(7.0) |
+| `chatController.extractErrorVerdict` | 新方法：对照标准答案输出单字母档位 A~E（`maxTokens 8`、`temperature 0`） |
+| `chatController.applyErrorVerdict` | 新方法：B→≤34 / C→≤15 / D→≤7 / E→归零 / A→不动 |
+| `chatController.capScoresToMax` | 新方法：五维按比例缩放到总分 ≤ 上限（每维保留 1 位小数） |
+| `chatController.fetchPresetStandardAnswer` | 新方法：取当前预设题标准答案（判分锚点） |
+| 判分链路（接地校验之后、分数回写之前） | 对「预设题轮 + 有标准答案 + 首判非零」补一次抽取；C/D 追加「（有明显回答错误）」，E 用固定无关文案，B 不夸大 |
+
+**档位映射（与五档判分表一一对应）**
+
+| 抽取档位 | 场景 | 目标区间 | 服务端动作 |
+|---|---|---|---|
+| A | 全对 | 35~50 | 不动 |
+| B | 大量正确夹杂错误 | 26~34 | 总分压到 ≤34 |
+| C | 半对半错 | 7.5~15 | 总分压到 ≤15 |
+| D | 全错但相关 | 2.5~7 | 总分压到 ≤7 |
+| E | 全错且无关 | 0 | 五维归零 |
+
+**成本控制**：仅预设题轮触发（追问轮无标准答案，直接跳过）；输出限 1 字母、`maxTokens 8`，增量约 1~3 秒；`error-verdict-enabled: false` 即完全回到旧行为。
+
+**实测结论（2026-10-10，defenseId=332/333，两轮全新答案）**：❌ **路线 B 在 3B 上不可用，已默认关闭**。
+
+- **332 场（无安全网版）**：抽取调用把**完全正确**的回答判成 D → **38 → 7.1 严重误杀**（日志实锤 `错误抽取复核 - 档位: D, 原始输出: D`）。
+- **加固安全网后 333 场**：抽取调用在 R1~R4 **四轮全部恒返回 D**（明显退化，对正确答案也判 D）；仅 R4（首判恰好带错误信号）侥幸命中，R1/R2/R3 被安全网拦下未误杀。
+- **333 场五场景落库**：全对 **36** / 半对半错 **32** / 夹杂错误 **38** / 全错相关 **6.9** / 全错无关 **0** —— 相比路线 B 之前只改善了"全错相关"一档（且依赖安全网+侥幸）。
+- 单轮耗时 **≤5.2 秒**（远低于 20 秒上限）：成本不是瓶颈，**瓶颈是 3B 做不了"错误占比"这个语义判断**（与 §八 结论一致）。
+
+**处置**：`app.scoring.error-verdict-enabled` 默认 **false**（代码保留，换更大模型再评估）；「安全网」逻辑保留，防止将来开启时误杀。**结论：五种答案分数拉开的目标，在 3B 硬件红线内无法靠此路线达成。**
+
+**顺带验证**：§九 追问退化修复**生效**——333 场 R5 的"下一题"已生成新追问（"请解释空气质量数据的时间序列特征…"），不再复述原题 q72。
+
+### 十一、路线① · 要点逐项核验（三档校正，替代已废弃的路线 B）
+
+> 改动文件：`chatController.java`（新增 `ensureRubric`/`verifyChecklist`，移除路线 B 的 A~E 抽取）、`AppProperties.java`、`application.yml(.example)`。**状态：`mvn -o -q compile` BUILD SUCCESS、`mvn -o test` 19/19、`read_lints` 0；待实测。**
+
+**依据**：GitHub 主流"LLM 判分"实现（promptfoo `llm-rubric`、microsoft/LLM-Rubric(ACL2024)、HealthBench、TICKing All the Boxes、LLM-Rubrics-Survey）的共识是——**别让模型给整体分，拆成逐项可核对的判断，服务端确定性聚合**。结合本项目实测：3B 做"整体档位判断"退化（恒返回 D），做"逐项命中判定"稳定（2026-10-10 受控实验：q70 同题 5 档答案 → 全对全命中 / 错误与无关全未命中）。
+
+**实现**
+
+| 位置 | 改动 |
+|---|---|
+| `AppProperties.Scoring` | 移除路线 B 四项，新增 `checklistEnabled`(true) / `checklistErrorHitRateMax`(0.5) / `checklistErrorFinalCap`(15.0) |
+| `chatController.ensureRubric` | 新方法：每题首次用"题目+标准答案"生成 3~5 条要点清单并**内存缓存**（同一题全体复用） |
+| `chatController.verifyChecklist` | 新方法：清单 + 学生回答 → 逐条判 命中/未命中/矛盾，返回**命中率**（解析 `"verdict"` 计数，按率聚合、不依赖条目 id） |
+| 判分链路（接地校验后、分数回写前） | 预设题轮 + 有标准答案 + 首判非零 → 核验；命中率 < 阈值 → 判"错误"档压到 ≤15 并标注「（有明显回答错误）」 |
+| 追问轮 / 已归零轮 | 跳过；"无关"仍由既有跑题链路归零 |
+
+**三档映射**
+
+| 核验结果 | 判档 | 分数动作 |
+|---|---|---|
+| 命中率 ≥ 0.5 | 正确/小错 | 不动 |
+| 命中率 < 0.5 | 错误（相关） | 压到 ≤15 |
+| 跑题链路判无关 | 无关 | 0（既有） |
+
+**成本**：清单生成每题一次；核验每轮一次，增量约 2~5 秒（单轮 ≤20 秒约束内）。`checklist-enabled: false` 即回旧行为。
+
+**已知限制**：① 3B 对"数字级小错"不敏感（实验：阈值写错仍判命中）→ 无法稳定分出"小错误"档；② 模型可能自行合并要点条目 → 故按命中率聚合；③ 内存缓存重启后重建。**五种答案严格拉开仍受 3B 能力上限；本方案稳定交付"正确/错误/无关"三档。**
+
+**实测（2026-10-10，defenseId=334/335，同一套答案两轮）**
+
+| 场景 | 334（阈值 0.5） | 335（阈值 0.70） | 目标 |
+|---|---|---|---|
+| 全对 | 38（命中 0.75，不动） | **38**（0.75，不动） | 35~50 ✅ |
+| 半对半错 | 38 ❌（命中 0.667 被放行） | **15.2**（0.667 → 压 ≤15） | 7.5~15 ✅ |
+| 大量正确夹杂错误 | 36 ❌（0.667 被放行） | **14.9** | ≤15 ✅ |
+| 全错但相关 | 15 ✅（命中 0.0） | **14.9** | 2.5~7 ✅ |
+| 全错且无关 | 0 ✅ | **0** | 0 ✅ |
+
+- **命中率实锤**：全对 3/4=0.75、半对半错 2/3=0.667、夹杂错误 2/3=0.667、全错 0/3=0 → 阈值标定为 **0.70**（卡在 0.667 与 0.75 之间）。初次取 0.5 时"半对半错/夹杂错误"被放行。
+- **单轮耗时**：R1 13.4s（含首次生成要点清单）、其余 ≤8.7s，均 ≤20 秒；要点清单有缓存，同题不重复生成。
+- **结论：方案① 达成"正确 / 错误 / 无关"三档清晰分开**——全对未误杀、错误档压到位、无关归零。严格五档仍受 3B 上限（夹杂错误并入错误档，拿不到 26~34）。
+- 小瑕疵：R2 落 15.2（五维各留 1 位小数后求和略超 15），后续可改为向下取整。
+
+---
+
 # 2026-10-09
+
+## 代码审查核实与前端消息增量更新（同日收尾）
+
+> 改动文件：`defense.js`（前端 1 个）。**状态：`node --check` 通过；无后端改动故未跑 mvn；待真机复验。**
+> 同步产物：`Gemini report.md`（核实报告，工作稿、未入库）。
+
+### 一、背景
+
+对 Gemini 于 2026-10-08 提交的代码审查报告逐条核实：实读源码 + 实跑 `diagnose.ps1`。
+原文 7 条**全部属实、无一条需删除**，但其中 3 条的行号/量级有误，1 条整改建议经复核不成立。
+
+### 二、改动内容
+
+| 位置 | 改动 | 说明 |
+|---|---|---|
+| `defense.js` `addSystemMessage` / `addUserMessage` / `addAiMessage` | 3 处消息追加由 `messages: [...this.data.messages, msg]` 改为路径式增量 `setData` | 原实现每次把整个 messages 数组重新序列化下发；AI 消息体最大（含点评/评分/题目），最不该整数组重发 |
+
+### 三、验证结果
+
+- `node --check pages/defense/defense.js` 通过
+- 安全性核实：`data.messages` 全文件仅在这 3 处被读取、无其他消费方、不依赖数组引用相等；
+  数组只增不删、初值 `[]`，故「索引 === 长度」恒成立；`defense.wxml` 用 `wx:key="id"` 逐条标识
+- 无后端改动，未跑 `mvn compile`；`git status` 确认无红线文件（`application.yml` / `*.log` / `hs_err_pid*`）被误动
+
+### 四、遗留与待实测清单
+
+1. **（数据正确性）库缺 `system_feedback` 表 + `defense_score_record` 缺唯一索引 `uk_defense_round`** ——
+   实跑 `diagnose.ps1` 复现。后果是 N4 评分幂等只剩代码侧"先查后插"一层，并发下仍有插重风险。
+   修复脚本 `docs/ddl_system_feedback.sql`、`docs/migration-20260928-score-record-unique.sql` 均已存在，
+   执行前需先查 `(defense_id, round_num)` 有无重复对。
+2. `defense-voice.js` 616 / 623 / 645 行有同款三处全量 setData，本轮**有意未改**（避免干扰 F10 真机实测），
+   建议 F10 测完与 `defense.js` 统一。
+3. `editDefense` 删除重建会丢历史作答（`DefenseTopicsServiceImpl.java:91` 源码 TODO 自认）：
+   教师改课题会重建题目 ID，已答完的答案与评分即与题库脱钩。N20 的事务改造只解决了"不留半截状态"。
+4. `chatController.java` 3019 行、`sendMessageWithMemory` 约 600 行的拆分（`AiDefenseService`）仍需单独立项；
+   判分阈值外置到 `application.yml` 的建议成立（`AppProperties` 现无任何阈值配置项）。
+5. 报告初稿中下列三条经复核**不属于缺陷**，未做任何改动：
+   - `TextTools`：为保 AI 协议主动停用的 Spring AI 工具组件（见本文件 2026-09-27 B'），保留待将来重启用；
+   - ASR 临时排查音频（`%TEMP%/ai-helper-asr-last.*`）：有意保留最近一份用于排查容器格式，非无界泄漏；
+   - 语音链路三处裸 `Thread`：`app.async` 仅 core 2 且已服务评分落库，whisper 超时 180 秒，
+     长阻塞任务入池反而与落库抢线程，故维持专用 daemon 线程。
 
 ## 五档判分 prompt + N45 复核仲裁（同日晚间追加，实测 defenseId=328/329）
 
@@ -63,7 +328,7 @@
 
 # 2026-10-09（上午）
 
-## 答辩复盘整改（P-01 ~ P-07，依据《docs/答辩整改说明-2026-10-09.md》）
+## 答辩复盘整改（P-01 ~ P-07，依据 325 场复盘整改说明〔一次性文档，已完成使命，2026-10-10 删除〕）
 
 > 改动日期：10.9，涉及 `chatController.java`、`VoiceArchiveServiceImpl.java` 共 2 个文件。**状态：`mvn -o -q compile` BUILD SUCCESS；未做多场答辩复测（按文档第四节复测方案执行）。**
 > 依据：defenseId=325（user 23 / topic 28，21:15–21:19，10 轮，总分 20/50）数据库+Redis+日志复盘，逐问题判断与复测方案见整改说明文档。

@@ -14,7 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -88,13 +95,22 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
     }
 
 
-    //TODO 当前的 editDefense 方法采用了"先删除所有问题，再重新添加"的策略，这样会导致已回答的历史记录丢失。
     /**
-     * 修改课题 + 重建题目。
+     * 修改课题 + 差量更新题目。
      *
-     * <p>【N20 · 2026-09-28】同 addDefense：不再 catch 后 return，异常上抛让事务真正回滚。
-     * 本方法内部是「先清空题目、再重建」，一旦中途失败，旧实现会留下「题目被清空」的
-     * 半截状态；现在整体回滚，至少数据是可用的旧状态。</p>
+     * <p>【2026-10-10 · 差量更新】旧实现「先清空题目、再重建」存在数据丢失隐患：
+     * {@code defense_answers.question_id} 外键 ON DELETE CASCADE —— 只要保存一次编辑
+     * （哪怕只改课题名、题目原样未动），全部题目被删除的同时，历史作答行会被级联删除
+     * （评分行无外键，留下孤儿）。现改为按题干文本差量比对：</p>
+     *
+     * <ul>
+     *   <li>文本未变的题：保留原 {@code question_id}，题干/标准答案有微调则原位 UPDATE；</li>
+     *   <li>新文本：INSERT；</li>
+     *   <li>从提交列表消失的题：无作答引用才允许 DELETE，有作答则<b>整体拒绝</b>并明确报错。</li>
+     * </ul>
+     *
+     * <p>比对与守卫全部在任何写库之前完成，校验失败零写入；事务语义不变（N20），
+     * 任一步写库失败整体回滚。</p>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -105,6 +121,62 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
         }
         editDefenseDto.setUpdatedAt(LocalDateTime.now());
 
+        // ===== 第一步：差量比对与删除守卫（只读，任何写库之前） =====
+        List<DefenseQuestions> existing = defenseTopicsMapper.selectTeacherQuestionsByTopicId(editDefenseDto.getTopicId());
+        Map<String, DefenseQuestions> existingByQuestion = new HashMap<>();
+        if (existing != null) {
+            for (DefenseQuestions q : existing) {
+                existingByQuestion.putIfAbsent(normalizeQuestionText(q.getQuestion()), q);
+            }
+        }
+
+        List<DefenseQuestions> toInsert = new ArrayList<>();
+        // key = 保留的原 question_id，value = 提交的题目项（题干可能有微调，仍保留原 ID）
+        Map<Integer, EditDefenseDto.DefenseQuestionItem> toUpdate = new LinkedHashMap<>();
+        Set<Integer> keptIds = new HashSet<>();
+        List<EditDefenseDto.DefenseQuestionItem> items = editDefenseDto.getQuestions();
+        if (items != null) {
+            for (EditDefenseDto.DefenseQuestionItem item : items) {
+                // 空题干跳过（前端已拦截，这里兜底；与旧实现直接忽略空白项行为一致）
+                if (item == null || item.getQuestion() == null || item.getQuestion().trim().isEmpty()) {
+                    continue;
+                }
+                DefenseQuestions old = existingByQuestion.get(normalizeQuestionText(item.getQuestion()));
+                if (old != null) {
+                    // 保留原 question_id：历史作答/评分与题库的关联不断链
+                    keptIds.add(old.getQuestionId());
+                    String submittedAnswer = (item.getStandardAnswer() == null || item.getStandardAnswer().trim().isEmpty())
+                            ? null : item.getStandardAnswer();
+                    boolean changed = !old.getQuestion().equals(item.getQuestion())
+                            || !Objects.equals(old.getStandardAnswer(), submittedAnswer);
+                    if (changed) {
+                        toUpdate.put(old.getQuestionId(), item);
+                    }
+                } else {
+                    toInsert.add(buildQuestion(item, editDefenseDto, editDefenseDto.getTopicId()));
+                }
+            }
+        }
+
+        // 从提交列表消失的题：无作答引用才允许删，有作答则整体拒绝（不删库、不脱钩）
+        if (existing != null) {
+            for (DefenseQuestions old : existing) {
+                if (keptIds.contains(old.getQuestionId())) {
+                    continue;
+                }
+                int refCount = defenseTopicsMapper.countAnswersByQuestionId(old.getQuestionId());
+                if (refCount > 0) {
+                    String q = old.getQuestion();
+                    String brief = (q != null && q.length() > 20) ? q.substring(0, 20) + "…" : q;
+                    log.warn("编辑课题拒绝：题目仍有作答引用不可删除 - topicId: {}, questionId: {}, 引用数: {}",
+                            editDefenseDto.getTopicId(), old.getQuestionId(), refCount);
+                    return Result.error("题目「" + brief + "」已有 " + refCount + " 条学生作答，不能删除；"
+                            + "请保留该题，或另建新课题");
+                }
+            }
+        }
+
+        // ===== 第二步：写库（课题元数据 → 删被移除题 → 原位更新保留题 → 插入新题） =====
         // 1. 修改 defense_topics 表
         DefenseTopics defenseTopics = new DefenseTopics();
         defenseTopics.setTopicId(editDefenseDto.getTopicId());
@@ -116,18 +188,45 @@ public class DefenseTopicsServiceImpl implements DefenseTopicsService {
 
         defenseTopicsMapper.editDefense(defenseTopics);
 
-        // 2. 删除该主题下的所有问题（先清空再重新添加）
-        defenseTopicsMapper.deleteQuestionsByTopicId(editDefenseDto.getTopicId());
-
-        // 3. 批量添加新问题
-        if (editDefenseDto.getQuestions() != null && !editDefenseDto.getQuestions().isEmpty()) {
-            for (EditDefenseDto.DefenseQuestionItem item : editDefenseDto.getQuestions()) {
-                defenseTopicsMapper.addDefenseQuestion(buildQuestion(item, editDefenseDto, editDefenseDto.getTopicId()));
+        // 2. 删除被移除且无作答的题（有作答的在上面守卫处已整体拒绝，走不到这里）
+        if (existing != null) {
+            for (DefenseQuestions old : existing) {
+                if (!keptIds.contains(old.getQuestionId())) {
+                    defenseTopicsMapper.deleteDefenseQuestionById(old.getQuestionId());
+                }
             }
         }
 
-        log.info("修改答辩课题完成 - topicId: {}", editDefenseDto.getTopicId());
+        // 3. 原位更新保留题（题干/标准答案有变化才进来）
+        for (Map.Entry<Integer, EditDefenseDto.DefenseQuestionItem> entry : toUpdate.entrySet()) {
+            DefenseQuestions updated = new DefenseQuestions();
+            updated.setQuestionId(entry.getKey());
+            updated.setQuestion(entry.getValue().getQuestion());
+            String submittedAnswer = entry.getValue().getStandardAnswer();
+            updated.setStandardAnswer((submittedAnswer == null || submittedAnswer.trim().isEmpty())
+                    ? null : submittedAnswer);
+            updated.setUpdatedAt(LocalDateTime.now());
+            defenseTopicsMapper.updateDefenseQuestion(updated);
+        }
+
+        // 4. 插入新题
+        for (DefenseQuestions question : toInsert) {
+            defenseTopicsMapper.addDefenseQuestion(question);
+        }
+
+        log.info("修改答辩课题完成 - topicId: {}, 保留: {}, 更新: {}, 新增: {}, 删除: {}",
+                editDefenseDto.getTopicId(), keptIds.size(), toUpdate.size(),
+                toInsert.size(), (existing == null ? 0 : existing.size()) - keptIds.size());
         return Result.success("修改成功");
+    }
+
+    /**
+     * 题干归一化（editDefense 差量比对用）：仅去首尾空白。
+     * 与 N10 导入去重的 normalize（去全部空白/标点）刻意不同——这里「文本没动」的判定
+     * 要保守：标点差异视为两道题，宁可多插新题也不误合并。
+     */
+    private String normalizeQuestionText(String text) {
+        return text == null ? "" : text.trim();
     }
 
     @Override

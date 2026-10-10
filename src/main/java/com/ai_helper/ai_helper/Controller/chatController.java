@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
@@ -82,6 +83,19 @@ public class chatController {
     @Value("${spring.ai.openai.chat.options.model:unknown}")
     private String ollamaModelName;
 
+    /**
+     * 判分阈值配置（application.yml 的 app.scoring.* 段）。
+     * 【2026-10-10 · 阈值外置】原为类内硬编码常量（Gemini 审查 2.3），现统一外置到
+     * {@link AppProperties.Scoring}，经验注释随迁；不配置 yml 时按代码默认值运行，行为不变。
+     */
+    @Autowired
+    private AppProperties appProperties;
+
+    /** 判分阈值统一入口：改默认值需同步 AppProperties.Scoring 字段默认值与 application.yml(.example) */
+    private AppProperties.Scoring scoring() {
+        return appProperties.getScoring();
+    }
+
     /** 每轮对话保留的最大消息数（6轮 × 2条 = 12条） */
     private static final int MAX_HISTORY_MESSAGES = 12;
 
@@ -98,15 +112,9 @@ public class chatController {
     /** 明显回答错误的标注文案（学生端可见） */
     private static final String WRONG_ANSWER_NOTE = "（有明显回答错误）";
 
-    /**
-     * 半分档允许的模型自评总分上限（N45 一致性保护，2026-09-27）：模型原总分达到此值，说明它其实认可
-     * 这段回答，却仍标了 [错误] —— 模型的"标记"与"评分行"是两套互不校验的输出，两者打架时不再无条件
-     * 信标记：只保留点评提示，按模型自己的分数落库，不砍半。仅对"模型自己标 [错误]"生效；复核模型判
-     * [错误] 的路径（错误漏判复核）不受影响，否则会把复核机制架空。
-     * 触发案例：defenseId=297 第 3 轮，AQI 正确版答案模型自给 36 分（五维 6/8/7/7/8）却标 [错误]，被砍成 18。
-     * 经验值，实测可调；调低则保护面变窄（30~31 分的误杀案例会被漏掉）。
-     */
-    private static final double WRONG_ANSWER_HALF_SCORE_MAX_TOTAL = 32.0;
+    // 【2026-10-10 · 阈值外置】N45 半分档阈值（WRONG_ANSWER_HALF_SCORE_MAX_TOTAL）等判分阈值常量
+    // 已迁移到 AppProperties.Scoring（application.yml 的 app.scoring.* 段），经验注释随迁，
+    // 本类经 scoring() 统一读取；措辞类常量（词表/文案）不属于可调阈值，仍保留为类内常量。
 
     // ==================== 判分可信度复核（2026-09-27，实测 defenseId=295 引入） ====================
     // 背景：3B 模型的 [切题]/[错误]/[跑题] 三档标记并不可靠。295 场 10 轮里 [错误] 档 0 次触发，而——
@@ -138,38 +146,8 @@ public class chatController {
             "严格来说", "严格来讲", "用错", "记错", "缺陷", "漏洞", "误导"
     };
 
-    /** 题目概念覆盖率低于该值 → 疑似答非所问，触发 OFF_TARGET 复核（经验值，实测后可微调） */
-    private static final double OFF_TARGET_COVERAGE_THRESHOLD = 0.25;
-
     /** 参与复核的最短回答长度（归一化后）：更短的回答走放弃/敷衍固定零分流程，不占用复核调用 */
     private static final int RECHECK_MIN_ANSWER_LENGTH = 20;
-
-    /**
-     * 跨轮重复作答判定阈值（N47 · 2026-10-02）：归一化后与本场此前任一轮答案的二元组 Dice ≥ 该值
-     * 即判「复读旧答案」，走固定零分流程、不调评分模型。实测 297 场第 5 轮把第 2 轮约 500 字答案
-     * 原样重发（仅个别数字变动）照拿 34 分。阈值取 0.8（防作弊复用同款经验值）：
-     * 正常作答即使引用自己此前的表述，主体内容不同，Dice 不会到 0.8；前端"重试"重发同轮答案
-     * 时只与本轮已落库行比对为空（N47 只比对**更早轮次**的答案），不受影响。
-     */
-    private static final double CROSS_ROUND_REPEAT_DICE = 0.8;
-
-    /**
-     * 跑题复核救回的最低相关性门槛（N53 · 2026-10-02）：回答与当前题的二元组覆盖率低于该值时，
-     * 视为"明显跑题的长回答"，不进入复核救回、维持 0 分。实测 300 场第 6/8 轮：通篇"今天天气不错…
-     * 做菜"类的跑题长回答满足「0 分 + ≥20字」复核条件，被复核误救成 28/14 分。
-     * 切题回答总会复述题目关键词（覆盖率明显高于该值）；取 0.05 为经验值，300 场第 1 轮被救回的
-     * 正确长回答覆盖率远高于此，不受影响。
-     */
-    private static final double RESCUE_MIN_COVERAGE = 0.05;
-
-    /**
-     * 点评"接地"最低命中数（N46/N49 · 2026-10-02）：点评里必须出现至少该数量的「本轮答案」二元组。
-     * 实测两连翻车：① 298/299 场点评全是"概念阐述准确、逻辑清晰…"模板话（N49），299 场第 4 轮
-     * 点评的是第 5 轮主题（幻觉）；② 2026-10-02 基线实测第 3 轮答 AQI 等级，点评却是第 2 轮的
-     * MapReduce 内容。模板话/幻觉点评与本轮答案的二元组交集为 0~1，真实点评引用 1~2 个具体词
-     * 即有 3+ 命中，故取 3 为经验阈值。
-     */
-    private static final int GROUNDED_MIN_HITS = 3;
 
     /**
      * 【P-03 · 2026-10-09】OFF_TARGET 复核点评"自认无关"措辞：复核判[切题]但点评正文含这些强否定措辞时，
@@ -190,12 +168,6 @@ public class chatController {
     private static final String[] CONCLUSIVE_NEGATION_PHRASES = {
             "未提及", "未提到", "没有提到", "没有提及", "未涉及", "没有涉及", "未运用", "没有运用", "缺少对"
     };
-
-    /** 追问主题级去重：两道题共享的有效关键词达到该数，视为同主题（N48）。 */
-    private static final int FOLLOW_UP_TOPIC_OVERLAP_MIN = 2;
-
-    /** 追问主题级去重：关键词 Jaccard 相似度达到该值，视为同主题（N48）。 */
-    private static final double FOLLOW_UP_TOPIC_JACCARD = 0.34;
 
     /** 追问生成时注入的学生回答截断长度，避免长回答撑爆 prompt。 */
     private static final int FOLLOW_UP_ANSWER_CONTEXT_LENGTH = 180;
@@ -907,7 +879,7 @@ public class chatController {
                                 // 不再送复核救回（300 场第 6/8 轮"今天天气不错…做菜"被复核误救成 28/14 分）。
                                 // 切题回答总会复述题目关键词，覆盖率远高于门槛，救回通道不受影响。
                                 log.info("跑题复核跳过：回答与当前题几乎零相关（覆盖率低于 {}），明显跑题不予救回 - defenseId: {}",
-                                        RESCUE_MIN_COVERAGE, defenseId);
+                                        scoring().getRescueMinCoverage(), defenseId);
                             } else {
                                 String rescored = rescoreSuspectedMisjudge(completePrompt, topicId,
                                         assistantCountInHistory - 1, existingQuestionIds, trimmedHistory, userInput);
@@ -941,7 +913,7 @@ public class chatController {
                                     boolean recheckWrongMarked = isWrongAnswerMarkedInResponse(rescored)
                                             || (comment != null && comment.contains(WRONG_ANSWER_NOTE));
                                     if (recheckWrongMarked) {
-                                        if (newTotal < WRONG_ANSWER_HALF_SCORE_MAX_TOTAL) {
+                                        if (newTotal < scoring().getWrongAnswerHalfScoreMaxTotal()) {
                                             scores = applyWrongAnswerHalfScore(scores);
                                             if (comment != null && !comment.contains(WRONG_ANSWER_NOTE)) {
                                                 comment = comment + WRONG_ANSWER_NOTE;
@@ -953,7 +925,7 @@ public class chatController {
                                                 comment = comment + WRONG_ANSWER_NOTE;
                                             }
                                             log.info("跑题复核改判后复核判[错误]但自评达正常档({})，判定标记不可信不打折 - defenseId: {}, 总分: {}",
-                                                    WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, newTotal);
+                                                    scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId, newTotal);
                                         }
                                     }
                                 } else {
@@ -983,7 +955,7 @@ public class chatController {
                         String strippedWrong = stripTopicMarker(comment);
                         String wrongBase = (strippedWrong == null || strippedWrong.isEmpty())
                                 ? "回答针对本题，但存在明显错误。" : strippedWrong;
-                        if (wrongModelTotal >= WRONG_ANSWER_HALF_SCORE_MAX_TOTAL) {
+                        if (wrongModelTotal >= scoring().getWrongAnswerHalfScoreMaxTotal()) {
                             // 【五档裁决 · 2026-10-09】自评达阈值时不再直接不打折，交一次复核仲裁：
                             // 两种可能——a) 明显错误的回答被标[错误]却给高分（328场R4：原理全反拿32，
                             // prompt 的[错误]≤30约束被模型无视，N45 保护反而兜住漏网）；
@@ -1016,7 +988,7 @@ public class chatController {
                                 scores = applyWrongAnswerHalfScore(scores);
                             } else {
                                 log.info("检测到[错误]标记但模型自评达正常档({})且复核未判[错误]，维持原分 - defenseId: {}, 原总分: {}",
-                                        WRONG_ANSWER_HALF_SCORE_MAX_TOTAL, defenseId, wrongModelTotal);
+                                        scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId, wrongModelTotal);
                             }
                             comment = wrongBase.contains(WRONG_ANSWER_NOTE)
                                     ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
@@ -1047,7 +1019,7 @@ public class chatController {
                                 : null;
                         if (defenseId != null && currentQuestion != null && !currentQuestion.isEmpty()
                                 && normalizeAnswerForJudge(userInput).length() >= RECHECK_MIN_ANSWER_LENGTH
-                                && questionCoverage(currentQuestion, userInput) < OFF_TARGET_COVERAGE_THRESHOLD) {
+                                && questionCoverage(currentQuestion, userInput) < scoring().getOffTargetCoverageThreshold()) {
                             String rescored = runRecheck(completePrompt, RecheckType.OFF_TARGET,
                                     currentQuestion, userInput);
                             if (rescored != null && isOffTopicMarkedInResponse(rescored)) {
@@ -1116,6 +1088,40 @@ public class chatController {
                     // 与本轮答案的二元组交集≈0；真实点评引用 1~2 个具体词即达标。不合格追加一次重写。
                     comment = ensureGroundedComment(comment, scores, userInput, topicId,
                             assistantCountInHistory, existingQuestionIds, trimmedHistory, defenseId);
+
+                    // ==================== 路线① · 要点逐项核验（三档校正，2026-10-10） ====================
+                    // 实测（defenseId=332/333）：3B 做"整体档位判断"会退化（恒返回 D，把全对判 D），
+                    // 但做"逐项命中判定"稳定得多（全对→全命中，错误/无关→全未命中）。故改为：
+                    // ① 每题首次使用时生成一份 3~5 条要点清单并缓存（同一题全体复用）；
+                    // ② 每轮把清单 + 学生回答交给模型逐条判 命中/未命中/矛盾；
+                    // ③ 命中率低于阈值 → 判"错误"档，压到 ≤ checklist-error-final-cap。
+                    // 追问轮无标准答案跳过；"无关"由既有跑题链路归零。控制耗时（增量约 2~5 秒，≤20 秒内）。
+                    if (defenseId != null
+                            && assistantCountInHistory <= existingQuestionCount
+                            && userInput != null && !userInput.trim().isEmpty()) {
+                        Object ckTotalObj = scores.get("totalScore");
+                        double ckPreTotal = (ckTotalObj instanceof Number cv) ? cv.doubleValue() : 0.0;
+                        if (ckPreTotal > 0) {
+                            int ckIndex = assistantCountInHistory - 1;
+                            String ckQuestion = getQuestionTextForRound(topicId, ckIndex, existingQuestionIds, trimmedHistory);
+                            String ckStd = fetchPresetStandardAnswer(topicId, ckIndex);
+                            Integer ckQuestionId = (ckIndex >= 0 && ckIndex < existingQuestionIds.size())
+                                    ? existingQuestionIds.get(ckIndex) : null;
+                            String ckRubric = ensureRubric(ckQuestionId, ckQuestion, ckStd);
+                            double ckRate = verifyChecklist(ckRubric, userInput);
+                            if (ckRate >= 0 && ckRate < scoring().getChecklistErrorHitRateMax()) {
+                                double cap = scoring().getChecklistErrorFinalCap();
+                                Map<String, Object> ckCapped = capScoresToMax(scores, cap);
+                                log.warn("要点核验判为「错误」档（命中率 {} < {}），压至 ≤ {} - defenseId: {}, 原总分: {} → {}",
+                                        ckRate, scoring().getChecklistErrorHitRateMax(), cap, defenseId,
+                                        ckPreTotal, ckCapped.get("totalScore"));
+                                scores = ckCapped;
+                                if (comment == null || !comment.contains(WRONG_ANSWER_NOTE)) {
+                                    comment = (comment == null ? "" : comment) + WRONG_ANSWER_NOTE;
+                                }
+                            }
+                        }
+                    }
 
                     // 统一口径（2026-09-26）：点评/评分两行都用服务端最终文案与分值重写，
                     // 让「前端气泡 == 落库分 == Redis 记忆」完全一致，杜绝模型自报总分与五维和打架。
@@ -1220,7 +1226,9 @@ public class chatController {
                         // 模型自拟下一题若与已问题目重复/高度相似，则重新生成一道
                         if (nextQuestion != null && !nextQuestion.isEmpty()
                                 && assistantCountInHistory >= existingQuestionCount) {
-                            List<String> askedQuestions = collectAskedQuestions(topicId, assistantCountInHistory - 1, defenseId);
+                            // 【2026-10-10 · 追问退化修复】已问集合必须包含"当前题"：原实现传 assistantCountInHistory-1，
+                            // 恰在"预设题最后一轮 → 首个追问"边界漏掉当前题（实测 defenseId=331 第5轮把原题 q72 又念一遍）。
+                            List<String> askedQuestions = collectAskedQuestions(topicId, assistantCountInHistory, defenseId);
                             if (isSimilarToAnyQuestion(nextQuestion, askedQuestions)) {
                                 log.warn("模型下一题与已问题目重复/高度相似，重新生成: {}", nextQuestion);
                                 String regenerated = generateFollowUpQuestion(topicId, askedQuestions,
@@ -1683,7 +1691,8 @@ public class chatController {
             nextQuestion = fetchPresetQuestionText(topicId, assistantCountInHistory);
         } else {
             nextQuestion = generateFollowUpQuestion(topicId,
-                    collectAskedQuestions(topicId, assistantCountInHistory - 1, null));
+                    // 【2026-10-10】已问集合含当前题，避免兜底追问复述当前题（同 :1195 修复）
+                    collectAskedQuestions(topicId, assistantCountInHistory, null));
         }
         if (nextQuestion == null || nextQuestion.trim().isEmpty()) {
             return aiResponse;
@@ -1795,7 +1804,8 @@ public class chatController {
                 nextQuestion = fetchPresetQuestionText(topicId, qi + 1);
             } else if (!lastRound) {
                 nextQuestion = generateFollowUpQuestion(topicId,
-                        collectAskedQuestions(topicId, currentRound - 1, defenseId));
+                        // 【2026-10-10】currentRound 即本次作答序号；已问集合含当前题（同 :1195 修复）
+                        collectAskedQuestions(topicId, currentRound, defenseId));
             } else {
                 terminal = true;
             }
@@ -2065,9 +2075,9 @@ public class chatController {
         for (String keyword : na) {
             if (nb.contains(keyword)) overlap++;
         }
-        if (overlap >= FOLLOW_UP_TOPIC_OVERLAP_MIN) return true;
+        if (overlap >= scoring().getFollowUpTopicOverlapMin()) return true;
         int union = na.size() + nb.size() - overlap;
-        return union > 0 && (double) overlap / union >= FOLLOW_UP_TOPIC_JACCARD;
+        return union > 0 && (double) overlap / union >= scoring().getFollowUpTopicJaccard();
     }
 
     /**
@@ -2295,9 +2305,9 @@ public class chatController {
             for (int i = 0; i < comparable; i++) {
                 String prev = answers.get(i).getStudentAnswer();
                 if (prev == null || prev.isEmpty()) continue;
-                if (bigramDice(na, normalizeForCompare(prev)) >= CROSS_ROUND_REPEAT_DICE) {
+                if (bigramDice(na, normalizeForCompare(prev)) >= scoring().getCrossRoundRepeatDice()) {
                     log.info("跨轮复读命中 - 与第 {} 条历史答案 Dice ≥ {}，判复读",
-                            i + 1, CROSS_ROUND_REPEAT_DICE);
+                            i + 1, scoring().getCrossRoundRepeatDice());
                     return true;
                 }
             }
@@ -2318,7 +2328,7 @@ public class chatController {
         try {
             String question = getQuestionTextForRound(topicId, questionIndex, existingQuestionIds, trimmedHistory);
             if (question == null || question.isEmpty()) return false;
-            return questionCoverage(question, userInput) < RESCUE_MIN_COVERAGE;
+            return questionCoverage(question, userInput) < scoring().getRescueMinCoverage();
         } catch (Exception e) {
             log.warn("跑题救回门槛计算异常，放行复核: {}", e.getMessage());
             return false;
@@ -2328,7 +2338,7 @@ public class chatController {
     /**
      * 【N46/N49 · 2026-10-02】点评接地校验：点评必须引用「本轮答案」里的具体词。
      *
-     * <p>判据：点评与本轮答案（归一化后）的二元组交集 &lt; {@link #GROUNDED_MIN_HITS} →
+     * <p>判据：点评与本轮答案（归一化后）的二元组交集 &lt; {@code app.scoring.grounded-min-hits} →
      * 不接地（模板话 / 幻觉——2026-10-02 基线第 3 轮答 AQI、点评却是第 2 轮 MapReduce 内容的实锤）。
      * 不合格时追加一次「带本题 + 本轮回答原文」的重写调用；重写结果自身也不接地或调用失败
      * 则维持原点评（方向安全）。零分路径的点评是服务端固定文案，不参与校验。</p>
@@ -2355,7 +2365,7 @@ public class chatController {
             // 照样达标），重叠数达标也不能放行，强制走重写。实测（defenseId=325 第5轮）学生明确写
             // "用Hive或MapReduce按时间维度分组"，点评却说"未提及MapReduce或Hive的具体应用"，漏网。
             boolean conclusiveNegation = containsAnyPhrase(comment, CONCLUSIVE_NEGATION_PHRASES);
-            if (hits >= GROUNDED_MIN_HITS && !conclusiveNegation) return comment;
+            if (hits >= scoring().getGroundedMinHits() && !conclusiveNegation) return comment;
 
             log.warn("点评疑似模板话/幻觉（与本轮答案仅 {} 处词组重叠），触发重写 - defenseId: {}, 原点评: {}",
                     hits, defenseId, comment);
@@ -2747,6 +2757,139 @@ public class chatController {
         }
         zeroed.put("totalScore", 0.0);
         return zeroed;
+    }
+
+    // ==================== 路线① · 要点逐项核验（三档校正，2026-10-10） ====================
+
+    /** 题目ID → 要点清单 的内存缓存（首次生成后复用；重启后重建，题量小可接受） */
+    private final java.util.concurrent.ConcurrentHashMap<Integer, String> rubricCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 从题库获取指定下标预设题的标准答案（路线① 要点核验的锚点） */
+    private String fetchPresetStandardAnswer(Integer topicId, int index) {
+        try {
+            Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (qr.getCode() == 1 && qr.getData() != null && index >= 0 && index < qr.getData().size()) {
+                return qr.getData().get(index).getStandardAnswer();
+            }
+        } catch (Exception e) {
+            log.warn("题库获取标准答案失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 【路线① · 2026-10-10】取该题要点清单：命中缓存直接返回，否则用模型从「题目 + 标准答案」生成一份并缓存。
+     *
+     * <p>为什么缓存：要点清单对同一道题是固定的，生成一次后全体学生复用，避免每轮重复生成；
+     * 先用内存缓存（重启后重建、题量小可接受），后续可改为落库并支持教师编辑。</p>
+     *
+     * @return 要点清单文本；开关关闭、缺标准答案或生成失败返回 null（调用方跳过核验，方向安全）
+     */
+    private String ensureRubric(Integer questionId, String question, String standardAnswer) {
+        if (!scoring().isChecklistEnabled()) return null;
+        if (questionId == null || question == null || question.isEmpty()
+                || standardAnswer == null || standardAnswer.trim().isEmpty()) {
+            return null;
+        }
+        String cached = rubricCache.get(questionId);
+        if (cached != null && !cached.isEmpty()) return cached;
+        try {
+            String prompt = "请把下面这道答辩题的标准答案拆成 3 到 5 条可独立核对的要点，每条一句话，"
+                    + "只输出一个 JSON 字符串数组，不要任何多余文字。\n"
+                    + "题目：" + truncateForPrompt(question, 120) + "\n"
+                    + "标准答案：" + truncateForPrompt(standardAnswer, 300);
+            String resp = chatClient.prompt()
+                    .user(prompt)
+                    .options(OpenAiChatOptions.builder()
+                            .model(ollamaModelName)
+                            .temperature(0.0)
+                            .maxTokens(200)
+                            .build())
+                    .call()
+                    .content();
+            String rubric = resp == null ? "" : resp.trim();
+            if (rubric.isEmpty()) return null;
+            rubricCache.put(questionId, rubric);
+            log.info("要点清单生成完成 - questionId: {}, 内容: {}", questionId, rubric);
+            return rubric;
+        } catch (Exception e) {
+            log.warn("要点清单生成失败，跳过核验: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 【路线①】逐项核验：返回「命中率」(0~1)；调用失败或无法解析返回 -1（调用方维持原判，方向安全）。
+     *
+     * <p>解析模型输出里 {@code "verdict":"命中|未命中|矛盾"} 的计数，命中率 = 命中 / 总项数。
+     * 实测（2026-10-10 实验）：全对→全命中、错误/无关→全未命中，该判定比"整体档位"稳得多；
+     * 且模型可能自行合并条目，故按"命中率"聚合、不依赖固定条目 id。</p>
+     */
+    private double verifyChecklist(String rubric, String answer) {
+        if (rubric == null || rubric.isEmpty() || answer == null || answer.trim().isEmpty()) return -1;
+        try {
+            String prompt = "你是答辩判分助手。下面是一组要点和一个学生的回答，请逐条判断学生对每个要点的覆盖情况，"
+                    + "verdict 只能取 命中、未命中、矛盾 三者之一，并引用学生原话作为 evidence。\n"
+                    + "要点清单：" + truncateForPrompt(rubric, 300) + "\n"
+                    + "学生回答：" + truncateForPrompt(answer, 300) + "\n"
+                    + "只输出 JSON，包含 items 数组，每个元素有 id、verdict、evidence 三个字段。";
+            String resp = chatClient.prompt()
+                    .user(prompt)
+                    .options(OpenAiChatOptions.builder()
+                            .model(ollamaModelName)
+                            .temperature(0.0)
+                            .maxTokens(300)
+                            .build())
+                    .call()
+                    .content();
+            if (resp == null) return -1;
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\"verdict\"\\s*[:：]\\s*\"?(命中|未命中|矛盾)\"?").matcher(resp);
+            int hit = 0, total = 0;
+            while (m.find()) {
+                total++;
+                if ("命中".equals(m.group(1))) hit++;
+            }
+            if (total == 0) {
+                log.warn("要点核验输出无法解析，维持原判: {}", resp);
+                return -1;
+            }
+            double rate = (double) hit / total;
+            log.info("要点核验 - 命中 {}/{} = {}, 原始输出: {}", hit, total, rate, resp);
+            return rate;
+        } catch (Exception e) {
+            log.warn("要点核验调用失败，维持原判: {}", e.getMessage());
+            return -1;
+        }
+    }
+
+    /**
+     * 把五维分数按同一比例缩放到「总分（五维之和）不超过 maxTotal」，各维保留 1 位小数。
+     * 当前总分已 ≤ maxTotal 时原样返回（不放大）；总分 ≤ 0 时仅回填 totalScore。
+     */
+    private Map<String, Object> capScoresToMax(Map<String, Object> scores, double maxTotal) {
+        double total = 0;
+        for (String k : SCORE_KEYS) {
+            Object v = scores.get(k);
+            total += (v instanceof Number n) ? n.doubleValue() : 0.0;
+        }
+        Map<String, Object> capped = new java.util.HashMap<>(scores);
+        if (total <= maxTotal || total <= 0) {
+            capped.put("totalScore", total);
+            return capped;
+        }
+        double ratio = maxTotal / total;
+        double newTotal = 0;
+        for (String k : SCORE_KEYS) {
+            Object v = scores.get(k);
+            double d = (v instanceof Number n) ? n.doubleValue() : 0.0;
+            d = Math.round(Math.max(0, Math.min(10, d * ratio)) * 10.0) / 10.0;
+            capped.put(k, d);
+            newTotal += d;
+        }
+        newTotal = Math.round(newTotal * 10.0) / 10.0;
+        capped.put("totalScore", newTotal);
+        return capped;
     }
 
     /**
