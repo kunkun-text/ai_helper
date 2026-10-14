@@ -713,6 +713,33 @@
   margin: 0 8rpx;
 }
 
+/* 【N15】场次审计日志（开始/续答/结束时间线） */
+.audit-log-row {
+  padding: 8rpx 0;
+  border-bottom: 1rpx solid #f0f2f5;
+}
+
+.audit-log-row:last-child {
+  border-bottom: none;
+}
+
+.audit-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.audit-log-event {
+  font-size: 26rpx;
+  color: #333333;
+  font-weight: 500;
+}
+
+.audit-log-time {
+  font-size: 22rpx;
+  color: #999999;
+}
+
 .voice-record-row {
   display: flex;
   align-items: center;

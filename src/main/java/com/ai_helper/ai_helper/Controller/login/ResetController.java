@@ -37,19 +37,33 @@ public class ResetController {
 
     private static final String TOKEN_PLACEHOLDER = "{{token}}";
 
+    /** 【N35】错误提示页模板占位符 */
+    private static final String ERROR_TITLE_PLACEHOLDER = "{{title}}";
+    private static final String ERROR_HINT_PLACEHOLDER = "{{hint}}";
+
     /** 模板加载失败时为 null，此时按错误页兜底，不影响重置接口本身 */
     private String pageTemplate;
+
+    /** 【N35 · 2026-10-14】错误提示页模板；此前是 Java 内联 HTML 字符串拼接 */
+    private String errorPageTemplate;
 
     @Resource
     private PasswordResetService passwordResetService;
 
     @PostConstruct
     void loadTemplate() {
-        ClassPathResource resource = new ClassPathResource("templates/reset-password.html");
+        pageTemplate = loadTemplateFromClasspath("templates/reset-password.html");
+        errorPageTemplate = loadTemplateFromClasspath("templates/error-page.html");
+    }
+
+    /** 从 classpath 读模板；读不到返回 null，由各调用方自行兜底 */
+    private String loadTemplateFromClasspath(String path) {
+        ClassPathResource resource = new ClassPathResource(path);
         try (InputStream in = resource.getInputStream()) {
-            pageTemplate = StreamUtils.copyToString(in, StandardCharsets.UTF_8);
+            return StreamUtils.copyToString(in, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            log.error("重置密码页模板加载失败: {}", resource.getPath(), e);
+            log.error("模板加载失败: {}", path, e);
+            return null;
         }
     }
 
@@ -74,12 +88,32 @@ public class ResetController {
         return passwordResetService.resetPassword(token, newPassword);
     }
 
-    /** 极简提示页（内容全部为固定文案，不含任何用户输入，无注入面） */
+    /**
+     * 提示页。【N35 · 2026-10-14】改由 classpath 模板 {@code templates/error-page.html} 渲染，
+     * Java 里不再拼 HTML 字符串。
+     *
+     * <p>调用方传入的都是固定文案；这里仍对占位符值做 HTML 转义，
+     * 避免将来传入动态内容时出现注入。</p>
+     */
     private String errorPage(String title, String hint) {
-        return "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
-                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                + "<title>" + title + "</title></head>"
-                + "<body style=\"font-family:Arial,sans-serif;text-align:center;padding-top:80px;color:#333\">"
-                + "<h2>" + title + "</h2><p>" + hint + "</p></body></html>";
+        if (errorPageTemplate == null) {
+            // 模板缺失时的最简兜底：纯文本，不做标签拼接，天然无注入面
+            return "重置密码页 · " + title + "：" + hint;
+        }
+        return errorPageTemplate
+                .replace(ERROR_TITLE_PLACEHOLDER, escapeHtml(title))
+                .replace(ERROR_HINT_PLACEHOLDER, escapeHtml(hint));
+    }
+
+    /** 占位符替换值做 HTML 转义（N35） */
+    private static String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

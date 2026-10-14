@@ -25,9 +25,9 @@
 
 # 2026-10-14
 
-## 文档与进度同步 + 冗余文件清理（无功能代码改动）
+## 文档同步 + 冗余清理 + 编码批次1（N15 / N35 / N58 / N59）
 
-> 改动日期：10.14。**状态：`mvn -o -q compile` EXIT 0、全部小程序 JS `node --check` 通过；已提交并推送 `origin/master`。**
+> 改动日期：10.14。**状态：`mvn -o -q compile` EXIT 0、全部小程序 JS `node --check` 通过、`read_lints` 0 告警。**
 
 ### 一、背景
 
@@ -60,13 +60,28 @@
 - `git status` → 4 modified（文档）+ 66 deleted（清理项），无未跟踪新增。
 - 12 个 Mapper XML ↔ 12 个 Mapper 接口 namespace 全匹配，**无死 XML**；`app.json` 10 个注册页与磁盘一一对应。
 
-### 五、遗留（已挂账 `需求清单-2026-09-15.md` P3，本轮不处理）
+### 五、遗留（已挂账 `需求清单-2026-09-15.md` P3）
 
 | 编号 | 项 | 处置建议 |
 |---|---|---|
-| N57 | `utils/request.js` 零引用（C2 交付物，页面仍直接 `wx.request`） | 或删、或把页面迁移到该封装，待拍板 |
-| N58 | `resources/Mapper/` 三个 XML 命名与接口不匹配（`chatController.xml`→`DefenseStudentQuestionsMapper`、`chatController_1775616568352.xml`→`DefenseAnswersMapper`、`login.xml`→`RegisterMapper`） | 功能正常，建议重命名 |
-| N59 | `POST /api/reset-password` 与 `ResetController` 的 `/api/auth/reset-password` 功能重复 | 重置页用后者，建议合并 |
+| N57 | `utils/request.js` 零引用（C2 交付物，页面仍直接 `wx.request`） | 或删、或把页面迁移到该封装，待拍板（**本轮不动**） |
+
+> N58（Mapper XML 命名）与 N59（重置接口重复）已于本日「编码批次1」修复，见下节。
+
+### 六、编码批次1（N15 / N35 / N58 / N59）
+
+> 用户确认范围「全部都做，分批交付」，本批为工程收口四件套。改动文件：`teacher.js/.wxml/.wxss`、`ResetController.java`、`PasswordResetController.java`、新增 `templates/error-page.html`、重命名 3 个 Mapper XML、删除 `PasswordResetDto.java`。
+
+| 编号 | 内容 | 实现 |
+|---|---|---|
+| N15 | 教师端场次审计日志入口 | 回答详情弹层新增「场次审计日志」时间线：`openAnswerDetail` 并行拉 `/teacher/defense/auditLog/{defenseId}`；`formatAuditLog` 把事件中文化（开始答辩/中途续答/结束答辩）并兼容 `createdAt`（ISO 字符串 / 数组两种序列化）；`closeAnswers` 复位 |
+| N35 | 剩余硬编码（内联 HTML） | 全仓最后一处内联 HTML——`ResetController.errorPage` 外置为 `templates/error-page.html`（占位符 `{{title}}` / `{{hint}}`）；模板加载抽取为 `loadTemplateFromClasspath`；新增 `escapeHtml` 对占位符值转义，模板缺失时走纯文本兜底 |
+| N58 | Mapper XML 命名规范化 | `git mv` 重命名 `chatController.xml`→`DefenseStudentQuestionsMapper.xml`、`chatController_1775616568352.xml`→`DefenseAnswersMapper.xml`、`login.xml`→`RegisterMapper.xml`；**同时删除 `target/classes/Mapper/` 下旧副本**（否则同 namespace 双份会导致启动失败） |
+| N59 | 重置密码接口去重 | 删除 `POST /api/reset-password`（全仓零调用）与随之失效的 `PasswordResetDto`；重置页表单实际提交的 `/api/auth/reset-password` 保留 |
+
+**验证**：`mvn -o -q compile` EXIT 0；`node --check pages/teacher/teacher.js` 通过；`read_lints` 0 告警。12 个 Mapper XML 命名与接口现已一一对应。
+
+**待实测**：N15 审计时间线需在教师端「查看回答详情」实测（挑有 START/RESUME/FINISH 记录的场次）；N35 重置链接异常 token 分支需实测提示页渲染。
 
 ---
 

@@ -74,6 +74,7 @@ Page({
     savingTopic: false, // 【C4】课题保存防重复提交
     selectedAnswers: null, // 添加选中的回答详情
     voiceRecords: [], // 【F11】语音答辩逐轮录音回放（来自 voice_responses）
+    auditLogs: [], // 【N15】场次审计日志（START/RESUME/FINISH 时间线）
     scoreDetailLines: [], // 【N8】逐轮五维明细文本
     radarDims: [], // 【N8】五维雷达图数据（逐轮平均）
     radarText: '', // 【N8】雷达图下方的文字汇总
@@ -1567,6 +1568,7 @@ loadMoreTopics() {
           this.setData({ 
             selectedAnswers: processedAnswers,
             voiceRecords: [],
+            auditLogs: [],
             scoreDetailLines: [],
             radarDims: [],
             radarText: ''
@@ -1628,6 +1630,27 @@ loadMoreTopics() {
               this.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
             }
           });
+
+          // 【N15 · 2026-10-14】场次审计日志（开始 / 中途续答 / 结束）；无日志或请求失败时为空，不影响其它内容
+          wx.request({
+            url: `${serverUrl}/teacher/defense/auditLog/${defenseId}`,
+            method: 'GET',
+            header: {
+              'Content-Type': 'application/json',
+              'Authorization': token ? 'Bearer ' + token : ''
+            },
+            success: (auditRes) => {
+              const auditBody = auditRes && auditRes.data;
+              if (auditBody && auditBody.code === 1 && Array.isArray(auditBody.data)) {
+                this.setData({ auditLogs: auditBody.data.map((v, i) => this.formatAuditLog(v, i)) });
+              } else {
+                this.setData({ auditLogs: [] });
+              }
+            },
+            fail: () => {
+              this.setData({ auditLogs: [] });
+            }
+          });
         } else {
           wx.showToast({
             title: res.data.msg || '获取回答详情失败',
@@ -1652,10 +1675,38 @@ loadMoreTopics() {
     this.setData({
       selectedAnswers: null,
       voiceRecords: [],
+      auditLogs: [],
       scoreDetailLines: [],
       radarDims: [],
       radarText: ''
     });
+  },
+
+  /** 【N15】审计日志行格式化：事件中文化 + created_at 兼容（ISO 字符串 / 数组） */
+  formatAuditLog(v, index) {
+    const EVENT_LABELS = { START: '开始答辩', RESUME: '中途续答', FINISH: '结束答辩' };
+    const pad2 = (n) => (n < 10 ? '0' : '') + n;
+    let time = v.createdAt;
+    if (Array.isArray(time)) {
+      time = time[0] + '-' + pad2(time[1] || 0) + '-' + pad2(time[2] || 0) + ' ' +
+        pad2(time[3] || 0) + ':' + pad2(time[4] || 0) + ':' + pad2(time[5] || 0);
+    } else if (time) {
+      time = String(time).replace('T', ' ').slice(0, 19);
+    } else {
+      time = '';
+    }
+    const roundNum = Number(v.roundNum);
+    let roundText = '';
+    if (roundNum > 0) {
+      roundText = v.event === 'FINISH' ? ('共 ' + roundNum + ' 轮') : ('第 ' + roundNum + ' 轮');
+    }
+    return {
+      key: v.logId || index,
+      event: EVENT_LABELS[v.event] || v.event || '未知事件',
+      roundText: roundText,
+      detail: v.detail || '',
+      time: time
+    };
   },
 
   /** 【F11】回放某一轮的录音（教师端；/files/** 原生支持 Range） */

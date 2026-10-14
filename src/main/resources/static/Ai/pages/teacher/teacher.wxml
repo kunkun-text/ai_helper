@@ -489,6 +489,18 @@
           <text class="muted">{{radarText}}</text>
         </view>
 
+        <!-- 【N15】场次审计日志：开始 / 中途续答 / 结束 的时间线 -->
+        <view wx:if="{{auditLogs.length > 0}}" class="form-item">
+          <text class="label">场次审计日志</text>
+          <view wx:for="{{auditLogs}}" wx:key="key" class="audit-log-row">
+            <view class="audit-log-head">
+              <text class="audit-log-event">{{item.event}}</text>
+              <text class="audit-log-time">{{item.time}}</text>
+            </view>
+            <text class="muted" wx:if="{{item.roundText || item.detail}}">{{item.roundText}}{{item.roundText && item.detail ? ' · ' : ''}}{{item.detail}}</text>
+          </view>
+        </view>
+
         <!-- 【F11】语音答辩逐轮录音回放（仅语音答辩场次有归档） -->
         <view wx:if="{{voiceRecords.length > 0}}" class="form-item">
           <text class="label">语音录音回放</text>
