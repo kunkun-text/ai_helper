@@ -2002,7 +2002,72 @@ public class chatController {
                 return f;
             }
         }
-        return fallbacks[0];
+
+        // 【N48+ · 2026-10-14】兜底题也全部与已问主题相似时的两级补救。
+        //
+        // 实测 defenseId=336 第 9/10 轮连问同一题（"请说明 aqi 的关键实现细节？"）：buildFollowUpFallbacks
+        // 的 4 道题都围绕同一个 focus 生成，而 focus 优先取「学生答案首个技术词」、取不到才用「当前题」，
+        // 于是一旦 focus 与当前题同主题，4 道兜底会被 isSameTopicByKeywords 全部判为相似，
+        // 旧实现直接 `return fallbacks[0]` —— 正好是刚问过的那道题。现在改为：
+        //   ① 先向题库借一道本场没问过的预设题（B）；
+        //   ② 题库也问尽时，用与具体考点无关的通用追问（A）；
+        // 两级都不做"放宽相似判定"，因此不会出现"换个说法再问同一点"。
+        String fromBank = pickUnaskedPresetQuestion(topicId, excludeQuestions);
+        if (fromBank != null && !fromBank.isEmpty()) {
+            log.warn("追问兜底全部与已问主题相似，改从题库借题: {}", fromBank);
+            return fromBank;
+        }
+        String generic = buildGenericFollowUp(excludeQuestions);
+        log.warn("追问与题库兜底均已问尽，改用通用追问: {}", generic);
+        return generic;
+    }
+
+    /**
+     * 【N48+ · 2026-10-14】从题库借题：挑该课题下一道本场还没问过的预设题。
+     * 按题库顺序取第一个不相似的，保证结果可复现（不引入随机性，便于 N7 复现）。
+     */
+    private String pickUnaskedPresetQuestion(Integer topicId, List<String> excludeQuestions) {
+        if (topicId == null) return null;
+        try {
+            Result<List<DefenseQuestions>> qr = defenseTopicsService.getDefenseQuestionById(topicId);
+            if (qr.getCode() == 1 && qr.getData() != null) {
+                for (DefenseQuestions q : qr.getData()) {
+                    String text = q.getQuestion();
+                    if (text == null || text.trim().isEmpty()) continue;
+                    if (!isSimilarToAnyQuestion(text, excludeQuestions)) {
+                        return text;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("追问兜底向题库借题失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 【N48+ · 2026-10-14】通用追问兜底：与具体考点无关（问方法/取舍/验证/扩展），
+     * 因此几乎不会与任何已问的具体题目相似。
+     *
+     * <p>最后的极端兜底带轮次序号，字面上必然与已问题目不同——到此仍要返回一道题，
+     * 否则追问阶段会因拿不到题目而卡住；这里只保证"不会重复刚问过的那道题"，不做相似判定。</p>
+     */
+    private String buildGenericFollowUp(List<String> excludeQuestions) {
+        String[] generic = {
+                "请结合你的项目经验，说明一个关键技术取舍及其依据？",
+                "请举例说明这套方案在实际落地时遇到的困难及解决办法？",
+                "如果让你重新设计这套方案，你会优先改进哪一点？为什么？",
+                "请说明你在这个课题里做过的最有价值的一次优化，以及它的效果？",
+                "请说明你在实现过程中如何验证结果是否正确？",
+                "请说明这套方案在数据量增长时的扩展思路？"
+        };
+        for (String g : generic) {
+            if (!isSimilarToAnyQuestion(g, excludeQuestions)) {
+                return g;
+            }
+        }
+        int roundNo = (excludeQuestions == null ? 0 : excludeQuestions.size()) + 1;
+        return "请补充说明你在本课题中的第 " + roundNo + " 个技术要点及其实践情况？";
     }
 
     private String[] buildFollowUpFallbacks(String currentQuestion, String studentAnswer) {
