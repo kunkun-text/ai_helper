@@ -105,6 +105,30 @@
 
 **新增遗留**：`utils/audio.js` 未抽（播放器三处重复，见上）。
 
+### 八、编码批次3（N7 判分深化 · 要点清单持久化）
+
+> 改动文件：`chatController.java`（3 处）；新增 `pojo/entity/DefenseRubric.java`、`mapper/RubricMapper.java`、`Mapper/RubricMapper.xml`、`docs/ddl_defense_rubric.sql`；同步 `docs/schema.sql`、`diagnose.ps1`、`CLAUDE.md` / `AGENTS.md` / 部署手册 / 业务说明（11 张表 → 12 张表）。
+
+**背景**：路线①「要点逐项核验」的清单此前只存在 `chatController` 的进程内 `ConcurrentHashMap`——后端重启即丢、多实例/多机器不共享，每次重启都要为每道题重新调一次模型生成（单次约 2~5 秒）。
+
+**实现（双层缓存 + 生成兜底）**：
+
+| 层 | 位置 | 说明 |
+|---|---|---|
+| 一级 | `rubricCache`（内存 Map） | 最快，进程内复用 |
+| 二级 | 新表 `defense_rubric` | 重启/多实例共享；`question_id` 主键，外键级联到 `defense_questions`（题目删除即清理） |
+| 兜底 | 模型生成 | 两级都没有才生成，生成后回填两级 |
+
+**容错（关键设计）**：`loadRubricFromDb` / `saveRubricToDb` 全部 try-catch —— **未执行 DDL 时自动降级为纯内存缓存**，只记一条 warn，答辩不受影响。因此可「先上代码、后补表」，也不会因漏执行脚本而报错。
+
+**同步项**：`docs/ddl_defense_rubric.sql`（存量库增量脚本，`CREATE TABLE IF NOT EXISTS`）；`docs/schema.sql` 补表定义（新库 12 张表齐全）；`diagnose.ps1` 必需表清单 **11 → 12**、新增缺表修复提示、头部注释同步；各文档「11 张表」→「12 张表」（CHANGES 历史节保留原样，不改写历史）。
+
+**未做（需拍板）**：**判分规则表化** —— 把五档判分规则从 prompt 散文改成结构化规则表会直接改变判分行为，需先定档位边界与「错误占比」口径；已挂账 `需求清单` 第三部分第 6 条。
+
+**验证**：`mvn -o -q compile` EXIT 0。
+
+**待做**：存量库执行 `mysql -uroot -p ai_helper < docs/ddl_defense_rubric.sql`；执行后 `powershell -ExecutionPolicy Bypass -File .\diagnose.ps1 -SkipInferenceTest` 应显示「12 张必需表齐全」。未执行前代码走内存缓存，功能正常。
+
 ---
 
 # 2026-10-10

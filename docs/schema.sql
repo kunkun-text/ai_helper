@@ -131,6 +131,24 @@ CREATE TABLE `defense_records` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `defense_rubric`（路线① 要点核验清单 · N7 · 2026-10-14）
+--
+
+DROP TABLE IF EXISTS `defense_rubric`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `defense_rubric` (
+  `question_id` int NOT NULL COMMENT '预设题ID（关联 defense_questions.question_id）',
+  `rubric` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL COMMENT '要点清单（模型生成的 JSON 字符串数组）',
+  `source` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT 'ai' COMMENT '来源：ai=模型生成 / teacher=教师手改（预留）',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`question_id`),
+  CONSTRAINT `defense_rubric_ibfk_1` FOREIGN KEY (`question_id`) REFERENCES `defense_questions` (`question_id`) ON DELETE CASCADE ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='要点核验清单（路线①要点逐项核验）';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `defense_score_record`
 --
 

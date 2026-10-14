@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+    要点核验清单（RubricMapper）— N7 · 2026-10-14
+    表 defense_rubric，建表语句见 docs/ddl_defense_rubric.sql（以及最新 docs/schema.sql）。
+    风格沿用现有 XML：resultType 全限定名 + 下划线转驼峰（mybatis.configuration.map-underscore-to-camel-case=true）
+-->
+<mapper namespace="com.ai_helper.ai_helper.mapper.RubricMapper">
+
+    <select id="selectByQuestionId" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseRubric">
+        SELECT question_id, rubric, source, created_at, updated_at
+        FROM defense_rubric
+        WHERE question_id = #{questionId}
+    </select>
+
+    <!-- 同一道题的清单只保留一份：重复写入按 question_id 覆盖（教师手改后 source=teacher 亦走这里） -->
+    <insert id="upsertRubric" parameterType="com.ai_helper.ai_helper.pojo.entity.DefenseRubric">
+        INSERT INTO defense_rubric (question_id, rubric, source)
+        VALUES (#{questionId}, #{rubric}, COALESCE(#{source}, 'ai'))
+        ON DUPLICATE KEY UPDATE rubric = VALUES(rubric), source = VALUES(source)
+    </insert>
+
+</mapper>

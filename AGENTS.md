@@ -18,7 +18,7 @@
 | 项目结构、技术栈、操作红线 | [`CLAUDE.md`](./CLAUDE.md) |
 | 当前需求状态（已完成/待开发/待拍板） | [`需求清单-2026-09-15.md`](./需求清单-2026-09-15.md) |
 | 某次改动的详细上下文 | [`CHANGES.md`](./CHANGES.md) |
-| 数据库表结构（11张表） | [`docs/schema.sql`](./docs/schema.sql) |
+| 数据库表结构（12张表） | [`docs/schema.sql`](./docs/schema.sql) |
 | 从零部署步骤 | [`docs/从零部署手册-8G低功耗标准.md`](./docs/从零部署手册-8G低功耗标准.md) |
 | 答辩业务流程与AI输出格式 | [`docs/答辩系统-项目情况说明.md`](./docs/答辩系统-项目情况说明.md) |
 | 写/改代码前的协作规范 | [`.claude/skills/ai-defense-dev/SKILL.md`](./.claude/skills/ai-defense-dev/SKILL.md) |
@@ -41,7 +41,7 @@
 | 题库/统计/审计 | 🔧 已开发待实测：N10 CSV 批量导入、N9 按课题统计导出、N15 场次审计日志（新表 `defense_audit_log`，共 11 张） |
 | 单元测试 | ✅ N14：18 条纯函数用例全通过（不连库） |
 | 小程序环境 | 🔧 A2 配置侧就绪（dev/lan/prod，prod 强制 HTTPS），等真实域名 |
-| 数据库 | ✅ 11 张表（新库 schema.sql 直接含 system_feedback + defense_audit_log + uk_defense_round） |
+| 数据库 | ✅ 12 张表（新库 schema.sql 直接含 system_feedback + defense_audit_log + defense_rubric + uk_defense_round） |
 | 前端真机验证 | ⚠️ V0待做 |
 
 > 上述整改对应 `上线缺漏整改清单-2026-10-05.md`（A2 小程序生产域名除外，需真实 HTTPS 域名后才能落地）；

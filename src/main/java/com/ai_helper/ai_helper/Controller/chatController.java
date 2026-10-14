@@ -36,10 +36,12 @@ import com.ai_helper.ai_helper.Service.ScorePersistenceService;
 import com.ai_helper.ai_helper.mapper.DefenseAnswersMapper;
 import com.ai_helper.ai_helper.mapper.DefenseScoreRecordMapper;
 import com.ai_helper.ai_helper.mapper.DefenseStudentQuestionsMapper;
+import com.ai_helper.ai_helper.mapper.RubricMapper;
 import com.ai_helper.ai_helper.pojo.dto.AiAnalysis;
 import com.ai_helper.ai_helper.pojo.dto.TopicDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseAnswers;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
+import com.ai_helper.ai_helper.pojo.entity.DefenseRubric;
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.entity.DefenseStudentQuestions;
 import com.ai_helper.ai_helper.pojo.vo.DefenseResumeVo;
@@ -79,6 +81,10 @@ public class chatController {
 
     @Autowired
     private DefenseScoreRecordMapper scoreRecordMapper;
+
+    /** 【N7 · 2026-10-14】要点清单持久化（路线①）：库里有就直接复用，省掉一次模型调用 */
+    @Autowired
+    private RubricMapper rubricMapper;
 
     @Value("${spring.ai.openai.chat.options.model:unknown}")
     private String ollamaModelName;
@@ -2761,7 +2767,7 @@ public class chatController {
 
     // ==================== 路线① · 要点逐项核验（三档校正，2026-10-10） ====================
 
-    /** 题目ID → 要点清单 的内存缓存（首次生成后复用；重启后重建，题量小可接受） */
+    /** 题目ID → 要点清单 的一级缓存（进程内，最快）；二级缓存是库表 {@code defense_rubric} */
     private final java.util.concurrent.ConcurrentHashMap<Integer, String> rubricCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 从题库获取指定下标预设题的标准答案（路线① 要点核验的锚点） */
@@ -2778,10 +2784,11 @@ public class chatController {
     }
 
     /**
-     * 【路线① · 2026-10-10】取该题要点清单：命中缓存直接返回，否则用模型从「题目 + 标准答案」生成一份并缓存。
+     * 【路线① · 2026-10-10】取该题要点清单：内存 → 库表 → 模型生成（生成后回填两级缓存）。
      *
-     * <p>为什么缓存：要点清单对同一道题是固定的，生成一次后全体学生复用，避免每轮重复生成；
-     * 先用内存缓存（重启后重建、题量小可接受），后续可改为落库并支持教师编辑。</p>
+     * <p><b>【N7 · 2026-10-14】改为双层缓存</b>：要点清单对同一道题是固定的，生成一次后全体学生复用。
+     * 原实现只用进程内 Map（重启即丢、多实例不共享）；现增加库表 {@code defense_rubric} 作为二级缓存，
+     * 重启后与多台机器可共用同一份清单，省掉一次模型调用。表不存在时自动降级为纯内存，答辩不受影响。</p>
      *
      * @return 要点清单文本；开关关闭、缺标准答案或生成失败返回 null（调用方跳过核验，方向安全）
      */
@@ -2791,8 +2798,16 @@ public class chatController {
                 || standardAnswer == null || standardAnswer.trim().isEmpty()) {
             return null;
         }
+        // ① 一级缓存：进程内 Map（最快）
         String cached = rubricCache.get(questionId);
         if (cached != null && !cached.isEmpty()) return cached;
+        // ② 二级缓存：库表（重启/多实例共享；读不到自动跳过）
+        String stored = loadRubricFromDb(questionId);
+        if (stored != null && !stored.isEmpty()) {
+            rubricCache.put(questionId, stored);
+            return stored;
+        }
+        // ③ 都没有则用模型生成，成功后回填两级缓存（入库失败不影响本次核验）
         try {
             String prompt = "请把下面这道答辩题的标准答案拆成 3 到 5 条可独立核对的要点，每条一句话，"
                     + "只输出一个 JSON 字符串数组，不要任何多余文字。\n"
@@ -2810,11 +2825,39 @@ public class chatController {
             String rubric = resp == null ? "" : resp.trim();
             if (rubric.isEmpty()) return null;
             rubricCache.put(questionId, rubric);
+            saveRubricToDb(questionId, rubric);
             log.info("要点清单生成完成 - questionId: {}, 内容: {}", questionId, rubric);
             return rubric;
         } catch (Exception e) {
             log.warn("要点清单生成失败，跳过核验: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * 【N7】读库里的要点清单。未落库 / 表不存在 / 查询异常一律返回 null，
+     * 由调用方继续走「模型生成」分支（方向安全，不影响答辩）。
+     */
+    private String loadRubricFromDb(Integer questionId) {
+        try {
+            DefenseRubric stored = rubricMapper.selectByQuestionId(questionId);
+            return stored == null ? null : stored.getRubric();
+        } catch (Exception e) {
+            log.warn("要点清单读取失败（未执行 docs/ddl_defense_rubric.sql？），降级为内存缓存: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 【N7】把生成的要点清单写库（按 question_id 幂等 upsert）；失败只记日志，不影响本次核验 */
+    private void saveRubricToDb(Integer questionId, String rubric) {
+        try {
+            DefenseRubric entity = new DefenseRubric();
+            entity.setQuestionId(questionId);
+            entity.setRubric(rubric);
+            entity.setSource("ai");
+            rubricMapper.upsertRubric(entity);
+        } catch (Exception e) {
+            log.warn("要点清单入库失败（未执行 docs/ddl_defense_rubric.sql？），仅用内存缓存: {}", e.getMessage());
         }
     }
 

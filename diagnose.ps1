@@ -10,7 +10,7 @@
 
   检查项（逐条 ✅ / ❌ + 修复提示）：
       1. 可用物理内存
-      2. MySQL 连通 + ai_helper 11 张表齐全 + 关键索引（uk_defense_round / idx_status_created）
+      2. MySQL 连通 + ai_helper 12 张表齐全 + 关键索引（uk_defense_round / idx_status_created）
       3. Redis 连通（带密码）
       4. Ollama 服务 + 目标模型已 pull + 是否已加载进显存
       5. 后端端口占用
@@ -189,9 +189,11 @@ $mysqlExePath = Find-Exe -Explicit $MysqlExe -ExeName "mysql.exe" -ListeningPort
     -SearchRoots @("D:\mysql", "D:\tools\mysql8", "C:\tools\mysql8", "C:\Program Files\MySQL")
 if ($mysqlOk -and $mysqlExePath) {
     # 【E2 · 2026-10-05】必需表清单：补入 system_feedback（反馈模块）
-    # 【N15 · 2026-10-08】补入 defense_audit_log（答辩场次审计日志），共 11 张
-    $expected = @("defense_answers","defense_audit_log","defense_questions","defense_records","defense_score_record",
-                  "defense_student_questions","defense_topics","system_feedback","system_settings","users","voice_responses")
+    # 【N15 · 2026-10-08】补入 defense_audit_log（答辩场次审计日志）
+    # 【N7 · 2026-10-14】补入 defense_rubric（路线①要点核验清单），共 12 张
+    $expected = @("defense_answers","defense_audit_log","defense_questions","defense_records","defense_rubric",
+                  "defense_score_record","defense_student_questions","defense_topics","system_feedback",
+                  "system_settings","users","voice_responses")
     # 用数组展开传参：PowerShell 5.1 对「-p$变量」这类拼接 token 传给原生命令时处理不一致，
     # 实测会把密码传错（Access denied），@args 展开可稳定传递。
     $mysqlArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
@@ -200,8 +202,8 @@ if ($mysqlOk -and $mysqlExePath) {
     $tables = @($raw | Where-Object { $_ -and $_ -notmatch "Warning|ERROR" })
     if ($LASTEXITCODE -eq 0 -and $tables.Count -gt 0) {
         $missing = @($expected | Where-Object { $tables -notcontains $_ })
-        $tableDetail = $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "11 张必需表齐全" })
-        Write-Check -Name "表结构检查（必需 11 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
+        $tableDetail = $(if ($missing.Count -gt 0) { "缺少: " + ($missing -join ", ") } else { "12 张必需表齐全" })
+        Write-Check -Name "表结构检查（必需 12 张，库中共 $($tables.Count) 张）" -Ok ($missing.Count -eq 0) `
             -Detail $tableDetail `
             -Fix $(if ($tables.Count -lt 3) {
                     "空库：导入最新表结构 mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
@@ -211,6 +213,8 @@ if ($mysqlOk -and $mysqlExePath) {
                     "存量库补语音归档表：mysql -uroot -p $MysqlDatabase < docs/ddl_voice_responses.sql"
                   } elseif ($missing -contains "defense_audit_log") {
                     "存量库补审计日志表：mysql -uroot -p $MysqlDatabase < docs/ddl_defense_audit_log.sql"
+                  } elseif ($missing -contains "defense_rubric") {
+                    "存量库补要点清单表：mysql -uroot -p $MysqlDatabase < docs/ddl_defense_rubric.sql"
                   } else {
                     "导入表结构：mysql -uroot -p < docs/schema.sql（注意会先删表，仅空库可用）"
                   })
