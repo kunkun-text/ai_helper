@@ -1046,12 +1046,18 @@ public class chatController {
                                 log.info("N45阈值触发但复核确认[错误]，改按半分计 - defenseId: {}, 原总分: {} → {}",
                                         defenseId, wrongModelTotal, scores != null ? applyWrongAnswerHalfScore(scores).get("totalScore") : "?");
                                 scores = applyWrongAnswerHalfScore(scores);
+                                comment = wrongBase.contains(WRONG_ANSWER_NOTE)
+                                        ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
                             } else {
-                                log.info("检测到[错误]标记但模型自评达正常档({})且复核未判[错误]，维持原分 - defenseId: {}, 原总分: {}",
+                                // 【N64 · 2026-10-14】复核未确认[错误] → 维持原分，此时**必须撤掉错误标注**。
+                                // 原实现无论复核是否确认都盖「（有明显回答错误）」，于是出现自相矛盾：
+                                // 分数按正常档保留（实测 defenseId=342 第 1 轮全对答案 32 分），
+                                // 点评却告诉学生"有明显回答错误"。标注是给学生看的负向信号，
+                                // 只在真的按错误档扣分时才允许出现。
+                                comment = stripWrongAnswerNote(wrongBase);
+                                log.info("检测到[错误]标记但模型自评达正常档({})且复核未判[错误]，维持原分并撤掉错误标注 - defenseId: {}, 原总分: {}",
                                         scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId, wrongModelTotal);
                             }
-                            comment = wrongBase.contains(WRONG_ANSWER_NOTE)
-                                    ? wrongBase : wrongBase + WRONG_ANSWER_NOTE;
                         } else {
                             log.info("检测到明显回答错误，按半分计 - defenseId: {}, 原总分: {}",
                                     defenseId, wrongModelTotal);
@@ -1156,18 +1162,28 @@ public class chatController {
                     // ② 每轮把清单 + 学生回答交给模型逐条判 命中/未命中/矛盾；
                     // ③ 命中率低于阈值 → 判"错误"档，压到 ≤ checklist-error-final-cap。
                     // 追问轮无标准答案跳过；"无关"由既有跑题链路归零。控制耗时（增量约 2~5 秒，≤20 秒内）。
+                    //
+                    // 【N63 · 2026-10-14】覆盖范围从「仅预设题」扩到「全部轮次」：原先追问轮因 question_id
+                    // 与标准答案都为空而整段跳过，等于**没有错误识别这道闸门**——实测 defenseId=342 第 8 轮，
+                    // 一份把 HTTP 端口/加密/GET-POST/状态码/长连接全说反的答案拿到 30 分，模型点评还写着
+                    // "明确了关键实现细节"。现在追问轮改用 ensureRubricForQuestion（先让模型给出该题的
+                    // 参考答案要点），再走同一套判定与阈值，因此追问轮同样能触发「错误档压分」与「无关归零」。
                     if (defenseId != null
-                            && assistantCountInHistory <= existingQuestionCount
                             && userInput != null && !userInput.trim().isEmpty()) {
                         Object ckTotalObj = scores.get("totalScore");
                         double ckPreTotal = (ckTotalObj instanceof Number cv) ? cv.doubleValue() : 0.0;
                         if (ckPreTotal > 0) {
                             int ckIndex = assistantCountInHistory - 1;
                             String ckQuestion = getQuestionTextForRound(topicId, ckIndex, existingQuestionIds, trimmedHistory);
-                            String ckStd = fetchPresetStandardAnswer(topicId, ckIndex);
-                            Integer ckQuestionId = (ckIndex >= 0 && ckIndex < existingQuestionIds.size())
-                                    ? existingQuestionIds.get(ckIndex) : null;
-                            String ckRubric = ensureRubric(ckQuestionId, ckQuestion, ckStd);
+                            String ckRubric;
+                            if (ckIndex >= 0 && ckIndex < existingQuestionIds.size()) {
+                                // 预设题：要点清单锚定题库标准答案（原路径）
+                                String ckStd = fetchPresetStandardAnswer(topicId, ckIndex);
+                                ckRubric = ensureRubric(existingQuestionIds.get(ckIndex), ckQuestion, ckStd);
+                            } else {
+                                // 追问轮：题目由模型自拟、没有题库标准答案 → 让模型先给出该题的参考答案要点
+                                ckRubric = ensureRubricForQuestion(ckQuestion);
+                            }
                             ChecklistVerdict ck = verifyChecklist(ckRubric, userInput);
                             if (!ck.isRelevant()) {
                                 // 【N7+ · 2026-10-14】与本题完全无关（问 Hadoop 答天气 / 整段讨分操控话术）→
@@ -1197,6 +1213,22 @@ public class chatController {
 
                     // 【N61 · 2026-10-14】输出侧护栏：点评在展示与落库之前，最后过一道安全检查
                     comment = sanitizeCommentSafety(comment);
+
+                    // 【N64 · 2026-10-14】一致性收口：分数不在错误档却仍带「（有明显回答错误）」时撤掉标注。
+                    // prompt 明确约束 [错误] 档严禁给到 31 以上，"正常档分数 + 错误标注"属自相矛盾
+                    // （实测 defenseId=342 第 1/6 轮：全对答案被标该注，学生端可见）。
+                    // 标注必须与分数同源；不一致时宁可不标 —— 上面各分支（复核确认[错误]/要点核验压分/
+                    // 无关归零）都已经在真正扣分时补回标注。
+                    Object finalTotalObj = scores.get("totalScore");
+                    if (finalTotalObj instanceof Number finalTotalNum
+                            && finalTotalNum.doubleValue() >= scoring().getWrongAnswerHalfScoreMaxTotal()) {
+                        String fixedComment = stripWrongAnswerNote(comment);
+                        if (fixedComment != null && !fixedComment.equals(comment)) {
+                            log.warn("点评带错误标注但总分 {} 已达正常档（≥ {}），已撤掉标注 - defenseId: {}",
+                                    finalTotalNum.doubleValue(), scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId);
+                            comment = fixedComment;
+                        }
+                    }
 
                     // 统一口径（2026-09-26）：点评/评分两行都用服务端最终文案与分值重写，
                     // 让「前端气泡 == 落库分 == Redis 记忆」完全一致，杜绝模型自报总分与五维和打架。
@@ -3005,6 +3037,15 @@ public class chatController {
     /** 题目ID → 要点清单 的一级缓存（进程内，最快）；二级缓存是库表 {@code defense_rubric} */
     private final java.util.concurrent.ConcurrentHashMap<Integer, String> rubricCache = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 【N63 · 2026-10-14】追问轮要点清单缓存：题目文本 → 要点清单。
+     * 追问题目由模型自拟、没有 {@code question_id}，无法用上面的 id 缓存，故按归一化题目文本缓存。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> rubricByQuestionText = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 追问要点清单缓存的规模上限：追问题目彼此独立、跨场不重复，避免长期运行无限增长 */
+    private static final int RUBRIC_TEXT_CACHE_MAX = 500;
+
     /** 从题库获取指定下标预设题的标准答案（路线① 要点核验的锚点） */
     private String fetchPresetStandardAnswer(Integer topicId, int index) {
         try {
@@ -3016,6 +3057,59 @@ public class chatController {
             log.warn("题库获取标准答案失败: {}", e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * 【N63 · 2026-10-14】追问轮的要点清单（题目由模型自拟，没有题库标准答案）。
+     *
+     * <p>背景：要点核验原先只覆盖预设题（靠 {@code question_id} + 题库标准答案生成清单），追问轮
+     * {@code question_id} 为空、也没有标准答案，<b>等于没有「错误识别」这道闸门</b> ——
+     * 实测 defenseId=342 第 8 轮，一份把 HTTP 端口/加密/GET-POST/状态码/长连接全说反的答案拿到 30 分，
+     * 模型点评还写着"明确了关键实现细节"。</p>
+     *
+     * <p>做法：让模型针对该题先给出自己的参考答案要点，再据此逐条核验学生回答（与原路径同一套判定与阈值）。
+     * 清单按<b>题目文本</b>缓存（追问题目没有 id），并限制缓存规模避免长期运行无限增长。</p>
+     *
+     * @return 要点清单；开关关闭或生成失败返回 null（调用方跳过核验，方向安全）
+     */
+    private String ensureRubricForQuestion(String question) {
+        if (!scoring().isChecklistEnabled()) return null;
+        if (question == null || question.trim().isEmpty()) return null;
+        String key = normalizeAnswerForJudge(question);
+        if (key.isEmpty()) return null;
+        String cached = rubricByQuestionText.get(key);
+        if (cached != null && !cached.isEmpty()) return cached;
+        try {
+            String prompt = "下面是一道答辩题（没有现成标准答案）。请你先给出这道题的参考答案要点，"
+                    + "拆成 3 到 5 条可独立核对的要点，每条一句话，只输出一个 JSON 字符串数组，不要任何多余文字。\n"
+                    + "要求：① 每条都是【可判定的知识点】——能据此判断学生答到没答到；"
+                    + "② 各条互相独立、不重复，合起来覆盖该题的核心；"
+                    + "③ 只写公认正确的结论，拿不准的内容不要写；"
+                    + "④ 不要出现“理解”“掌握”“熟悉”这类无法核对的空泛表述。\n"
+                    + "题目：" + truncateForPrompt(question, 120);
+            String resp = chatClient.prompt()
+                    .user(prompt)
+                    .options(OpenAiChatOptions.builder()
+                            .model(ollamaModelName)
+                            .temperature(0.0)
+                            .maxTokens(200)
+                            .build())
+                    .call()
+                    .content();
+            String rubric = resp == null ? "" : resp.trim();
+            if (rubric.isEmpty()) return null;
+            if (rubricByQuestionText.size() > RUBRIC_TEXT_CACHE_MAX) {
+                rubricByQuestionText.clear();
+                log.info("追问要点清单缓存超过 {} 条，已整体清理", RUBRIC_TEXT_CACHE_MAX);
+            }
+            rubricByQuestionText.put(key, rubric);
+            log.info("追问轮要点清单已生成 - 题目: {}, 清单: {}",
+                    truncateForPrompt(question, 40), truncateForPrompt(rubric, 120));
+            return rubric;
+        } catch (Exception e) {
+            log.warn("追问轮要点清单生成失败，本轮跳过要点核验: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -3310,6 +3404,26 @@ public class chatController {
     private boolean isWrongAnswerMarkedInResponse(String aiResponse) {
         if (aiResponse == null) return false;
         return java.util.regex.Pattern.compile("点评[:：]\\s*[\\[【]?\\s*错误").matcher(aiResponse).find();
+    }
+
+    /**
+     * 【N64 · 2026-10-14】从点评里撤掉「（有明显回答错误）」标注。
+     *
+     * <p>用于自相矛盾的场景：分数按正常档保留（复核未确认[错误]），或分数字面已属正常档
+     * （prompt 明确约束 [错误] 档严禁给到 31 以上），点评却仍挂着错误标注 ——
+     * 实测 defenseId=342 第 1、6 轮的全对答案即被标此注（学生端可见）。
+     * 标注是给学生看的负向信号，只在真的按错误档扣分时才应出现。</p>
+     *
+     * @return 去掉标注后的点评；点评本身只有该标注时返回中性文案（避免前端出现空点评）
+     */
+    private String stripWrongAnswerNote(String comment) {
+        if (comment == null || comment.isEmpty() || !comment.contains(WRONG_ANSWER_NOTE)) {
+            return comment;
+        }
+        String cleaned = comment.replace(WRONG_ANSWER_NOTE, "").trim();
+        return cleaned.isEmpty()
+                ? "回答已按本轮内容评分，未发现需要额外提示的错误。"
+                : cleaned;
     }
 
     /** 归一化学生回答/题目文本，用于长度判定与复制粘贴比对：转小写、去空白、标点、符号、Markdown 标记 */
