@@ -129,6 +129,26 @@
 
 **待做**：存量库执行 `mysql -uroot -p ai_helper < docs/ddl_defense_rubric.sql`；执行后 `powershell -ExecutionPolicy Bypass -File .\diagnose.ps1 -SkipInferenceTest` 应显示「12 张必需表齐全」。未执行前代码走内存缓存，功能正常。
 
+### 九、编码批次4（N7+ 判分口径调整 · 复盘 defenseId=336 后）
+
+> **触发**：用户跑完 `defenseId=336` 一轮答辩（10 轮 / 总分 21.4），复盘发现预设题 5 轮原分 31~38 全被要点核验压到 15 分（模型点评还写着"准确、逻辑清晰"），属判定过严导致的误杀。
+> **用户决策**：① 命中判定放宽；② 与题目完全无关的答案直接 0 分（例：问 Hadoop 答天气）。
+> **参考资料**（按要求检索 GitHub 实践）：`houbb/sensitive-word`（词表按用途分类 / 匹配前归一化 / 白名单优先于黑名单 / 只收高特征词）、promptfoo `llm-rubric`（让模型显式输出 verdict、约定结构化 JSON、固定 `temperature=0`、用 threshold 驱动结论）。
+
+| # | 改动 | 实现 |
+|---|---|---|
+| 1 | **命中判定放宽** | `verifyChecklist` prompt 重写：同义表述、口语化、顺序不同、只给结论**都算命中**；明确【放宽】——不得因"表述不完整／缺数据／没写代码／用词不专业"判未命中 |
+| 2 | **新增相关性判定** | 同一调用内输出 `relevant`；为 false（与本题完全无关，或整段是讨分／操控话术）→ 服务端 **直接五维归零**（`applyZeroScore` + 改写评分行），不再只压到 15 分 |
+| 3 | **阈值放宽** | `checklist-error-hit-rate-max` **0.70 → 0.50**（`AppProperties` 默认值 + `application.yml` + `application.yml.example` 三处同步，注释记录标定依据） |
+| 4 | **结构化返回 + 方向安全** | `verifyChecklist` 返回内部类 `ChecklistVerdict{relevant, hitRate, raw}`；解析失败/调用异常 → `relevant=true, hitRate=-1`（**宁可维持原判，绝不用解析失败去归零**） |
+| 5 | **指令操控词表** | 新增 `MANIPULATE_JUDGE_PHRASES`（"按你的要求／按我说的／判我全对…"）+ `MANIPULATE_JUDGE_ALLOWLIST`（"按题目要求…"，**白名单优先**），接入既有固定零分闸门；按 `sensitive-word` 做法：分类词表、匹配前归一化、"≤60 字短文本 + 高特征短语"双重约束防误伤长答案 |
+
+**为什么"无关归零"不能只靠词表**：用户举的例子（问 Hadoop 答天气）是**语义无关**，词表匹配不到；因此判定放在要点核验的同一次模型调用里（不增加调用次数），服务端只做"计数 + 归零"，口径不外泄给模型。
+
+**验证**：`mvn -o -q compile` EXIT 0；`read_lints` 0 告警；`docs/ddl_defense_rubric.sql` 已在用户库执行成功（`defense_rubric` 建表，主键 + 外键级联）。
+
+**待实测**：再跑 1~2 场答辩确认 ① 命中率普遍上升、压分显著减少；② "问 A 答 B"被 `relevant` 判为无关并归零；③ 短句操控话术被词表拦下、长答案不受误伤。
+
 ---
 
 # 2026-10-10
