@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.Controller;
 
+import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.AsrService;
 import com.ai_helper.ai_helper.Service.TtsService;
 import com.ai_helper.ai_helper.Service.VoiceArchiveService;
@@ -61,6 +62,10 @@ public class VoiceController {
 
     @Resource
     private VoiceArchiveService voiceArchiveService;
+
+    /** 【N12】语音相关配置（app.voice.*）：录音时长上限下发给前端使用 */
+    @Resource
+    private AppProperties appProperties;
 
     /**
      * 文本转语音：返回可直接播放的音频地址。
@@ -199,6 +204,8 @@ public class VoiceController {
         data.put("asrMessage", asrService.unavailableReason());
         data.put("asrInstalling", asrService.installing());
         data.put("asrProgress", asrService.installProgress());
+        // 【N12】录音时长上限（学生端「按住说话」的时长与「最长 N 秒」提示都由它决定）
+        data.put("maxRecordSeconds", appProperties.getVoice().getMaxRecordSeconds());
         return Result.success(data);
     }
 

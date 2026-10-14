@@ -90,6 +90,31 @@
   line-height: 1.6;
 }
 
+/* 【N12】识别失败重试 / 重新录制入口 */
+.voice-retry-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 12rpx;
+}
+
+.voice-retry-btn {
+  padding: 8rpx 24rpx;
+  border-radius: 999rpx;
+  background: #fff4e8;
+  color: #d97706;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+/* 【N12】上滑进入取消区：按钮转灰红，提示松手即取消（含录音中态，故提高特异性） */
+.voice-hold-btn.cancel-zone,
+.voice-hold-btn.recording.cancel-zone {
+  background: #ffeded;
+  color: #d93025;
+}
+
 /* 按住说话：主按钮，录音中变红 */
 .voice-hold-btn {
   flex: 1;

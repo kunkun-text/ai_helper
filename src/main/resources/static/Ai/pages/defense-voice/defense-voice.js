@@ -46,6 +46,10 @@ Page({
     isRecording: false,   // 是否正在录音
     isRecognizing: false, // 松开后到识别结果返回之间
     recordSeconds: 0,     // 录音计时（提示用）
+    maxRecordSeconds: 60, // 【N12】录音时长上限（秒）：进页面时由 /api/voice/status 下发，不再硬编码
+    recordLimitWarn: false, // 【N12】接近上限（剩 10 秒内）的提醒
+    cancelHint: false,    // 【N12】手指滑入「取消区」时的提示
+    showVoiceRetry: false, // 【N12】识别失败后的「重新识别」入口
     isSpeaking: false,    // 是否正在播报题目
     voiceTip: '',         // 语音区提示文案（优先级低于录音/识别/播报状态）
     speakText: '',        // 最近一次可重播的题目文本
@@ -176,6 +180,19 @@ Page({
       if (this._unloaded) {
         return;
       }
+      // 【N12】上滑取消：直接丢弃本次录音，不上传识别（否则"取消"只是视觉取消，仍会走 ASR）
+      const cancelled = this._recordCancelled;
+      this._recordCancelled = false;
+      if (cancelled) {
+        this.setData({
+          isRecording: false,
+          isRecognizing: false,
+          voiceTip: '已取消本次录音',
+          cancelHint: false,
+          recordLimitWarn: false,
+        });
+        return;
+      }
       this.setData({ isRecording: false });
 
       const filePath = res && res.tempFilePath;
@@ -248,6 +265,12 @@ Page({
         const data = (res.data && res.data.data) || {};
         const ready = data.asrReady !== false;
         const installing = !!data.asrInstalling;
+        // 【N12】录音上限由后端配置下发（app.voice.max-record-seconds），前端据此设置录音时长与提示
+        const limit = parseInt(data.maxRecordSeconds, 10);
+        if (limit > 0) {
+          this._maxRecordSeconds = limit;
+          this._safeSetData({ maxRecordSeconds: limit });
+        }
         if (ready) {
           this._stopVoiceStatusTimer();
           this._safeSetData({ asrReady: true, asrTip: '' });
@@ -324,10 +347,20 @@ Page({
     // 先停掉正在播报的题目，避免把播报声录进去
     this.stopSpeak();
     this._voicePressed = true;
-    this.setData({ answerText: '', voiceTip: '', isRecognizing: false });
+    this._cancelZone = false;
+    this._voiceStartY = null;
+    this.setData({
+      answerText: '',
+      voiceTip: '',
+      isRecognizing: false,
+      recordLimitWarn: false,
+      cancelHint: false,
+      showVoiceRetry: false,
+    });
     try {
       this._recorder.start({
-        duration: 60000,
+        // 【N12】时长上限取自后端配置（默认 60 秒），不再硬编码
+        duration: (this._maxRecordSeconds || this.data.maxRecordSeconds || 60) * 1000,
         sampleRate: 16000,
         numberOfChannels: 1,
         encodeBitRate: 48000,
@@ -341,9 +374,32 @@ Page({
     }
   },
 
-  /** 松开手指：结束录音（识别在 onStop 回调里发起） */
+  /**
+   * 【N12】按住后手指移动：上滑超过阈值即进入「取消区」，松手丢弃本次录音。
+   * 仅改本地标志与提示文案，不发任何请求。
+   */
+  onVoiceTouchMove(e) {
+    if (!this._voicePressed) {
+      return;
+    }
+    const touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+    if (!touch) {
+      return;
+    }
+    if (this._voiceStartY === null || this._voiceStartY === undefined) {
+      this._voiceStartY = touch.clientY;
+      return;
+    }
+    const inCancelZone = (this._voiceStartY - touch.clientY) > 60;
+    if (inCancelZone !== !!this._cancelZone) {
+      this._cancelZone = inCancelZone;
+      this._safeSetData({ cancelHint: inCancelZone });
+    }
+  },
+
+  /** 松开手指：结束录音（识别在 onStop 回调里发起）；处于取消区则丢弃本次录音 */
   onVoiceTouchEnd() {
-    this._stopRecordingInner(false);
+    this._stopRecordingInner(!!this._cancelZone);
   },
 
   /** 手指滑出按钮：同样结束录音，避免录音一直开着 */
@@ -356,6 +412,8 @@ Page({
       return;
     }
     this._voicePressed = false;
+    // 【N12】取消标志交给 onStop 回调：真正丢弃录音（不上传识别）
+    this._recordCancelled = !!cancel;
     try {
       if (this._recorder) this._recorder.stop();
     } catch (e) {
@@ -363,9 +421,21 @@ Page({
     }
     this._stopRecordTimer();
     if (cancel) {
-      this.setData({ isRecording: false, isRecognizing: false, voiceTip: '' });
+      this.setData({
+        isRecording: false,
+        isRecognizing: false,
+        voiceTip: '已取消本次录音',
+        cancelHint: false,
+        recordLimitWarn: false,
+      });
     } else {
-      this.setData({ isRecording: false, isRecognizing: true, voiceTip: '识别中…' });
+      this.setData({
+        isRecording: false,
+        isRecognizing: true,
+        voiceTip: '识别中…',
+        cancelHint: false,
+        recordLimitWarn: false,
+      });
     }
   },
 
@@ -400,6 +470,8 @@ Page({
    * 识别失败/引擎未就绪时给出可读提示，不阻塞答辩。
    */
   uploadAudioForText(tempFilePath) {
+    // 【N12】记住本次录音：识别失败时「重新识别」可直接复用，不必重录一遍
+    this._lastAudioPath = tempFilePath;
     // 【D2】保存 UploadTask：卸载/切后台时 abort，离开页面不再继续回调
     this._asrUploadTask = wx.uploadFile({
       url: config.getBaseUrl() + '/api/voice/asr',
@@ -431,7 +503,8 @@ Page({
         // code 非 1 = 后端给出的业务提示（引擎未就绪 / 超时 / 音频异常）
         if (payload.code !== 1) {
           const msg = payload.msg || '识别失败，请重试';
-          this._safeSetData({ isRecognizing: false, voiceTip: msg });
+          // 【N12】失败时给出「重新识别」入口（复用这段录音，不必重录）
+          this._safeSetData({ isRecognizing: false, voiceTip: msg, showVoiceRetry: true });
           wx.showToast({ title: msg, icon: 'none', duration: 2500 });
           return;
         }
@@ -439,7 +512,7 @@ Page({
         const data = payload.data || {};
         const text = (data.text || '').trim();
         if (!text) {
-          this._safeSetData({ isRecognizing: false, voiceTip: '没听清，请按住再说一次' });
+          this._safeSetData({ isRecognizing: false, voiceTip: '没听清，请按住再说一次', showVoiceRetry: true });
           wx.showToast({ title: '没听清，请重试', icon: 'none' });
           return;
         }
@@ -448,6 +521,7 @@ Page({
           isRecognizing: false,
           answerText: text,
           voiceTip: '识别完成，确认无误后点「发送」',
+          showVoiceRetry: false,
         });
 
         // 【F11】后端归档成功时给一个回放入口；空串 = 本次未归档（缺题目上下文或归档失败）
@@ -462,11 +536,44 @@ Page({
           return;
         }
         const aborted = err && err.errMsg && err.errMsg.indexOf('abort') >= 0;
-        this._safeSetData({ isRecognizing: false, voiceTip: aborted ? '' : '网络异常，识别失败，请重试' });
+        this._safeSetData({
+          isRecognizing: false,
+          voiceTip: aborted ? '' : '网络异常，识别失败，请重试',
+          showVoiceRetry: !aborted,
+        });
         if (!aborted) {
           wx.showToast({ title: '识别失败，请重试', icon: 'none' });
         }
       },
+    });
+  },
+
+  /** 【N12】识别失败后一键重试：复用上一次录音，不必重新录一遍 */
+  onRetryAsr() {
+    if (this.data.isRecognizing) {
+      return;
+    }
+    const path = this._lastAudioPath;
+    if (!path) {
+      wx.showToast({ title: '录音已失效，请重新录制', icon: 'none' });
+      this.setData({ showVoiceRetry: false });
+      return;
+    }
+    this.setData({ showVoiceRetry: false, isRecognizing: true, voiceTip: '识别中…' });
+    this.uploadAudioForText(path);
+  },
+
+  /** 【N12】清空本次识别结果与录音，重新作答 */
+  onRetakeVoice() {
+    if (this.data.isRecording || this.data.isRecognizing) {
+      return;
+    }
+    this._lastAudioPath = null;
+    this.setData({
+      answerText: '',
+      lastVoiceUrl: '',
+      showVoiceRetry: false,
+      voiceTip: '已清空，请按住下方按钮重新作答',
     });
   },
 
@@ -579,9 +686,12 @@ Page({
 
   _startRecordTimer() {
     this._stopRecordTimer();
-    this.setData({ recordSeconds: 0 });
+    this.setData({ recordSeconds: 0, recordLimitWarn: false });
     this._recordTimer = setInterval(() => {
-      this.setData({ recordSeconds: this.data.recordSeconds + 1 });
+      const next = this.data.recordSeconds + 1;
+      const limit = this._maxRecordSeconds || this.data.maxRecordSeconds || 60;
+      // 【N12】剩 10 秒内给出"即将达到上限"提醒（到上限时微信会自动停止录音）
+      this.setData({ recordSeconds: next, recordLimitWarn: (limit - next) <= 10 });
     }, 1000);
   },
 

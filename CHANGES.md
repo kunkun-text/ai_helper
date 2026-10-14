@@ -83,6 +83,28 @@
 
 **待实测**：N15 审计时间线需在教师端「查看回答详情」实测（挑有 START/RESUME/FINISH 记录的场次）；N35 重置链接异常 token 分支需实测提示页渲染。
 
+### 七、编码批次2（N12 语音输入完善）
+
+> 先由 code-explorer 只读盘点 F10/F11 现状与缺口，再按「改动克制」原则实施。**全程不触碰 `/api/chat` 与 AI 协议标签**，语音页零改动复用文字答辩链路。
+> 改动文件：`VoiceController.java`、`defense-voice.js/.wxml/.wxss`、`student.js`、`teacher.js`。
+
+| # | 缺口（盘点实锤） | 实现 |
+|---|---|---|
+| 1 | 录音上限前端硬编码 `60000`，`app.voice.max-record-seconds` 从未被消费 | 后端 `/api/voice/status` 下发 `maxRecordSeconds`；前端据此 `recorder.start({ duration })`，提示行显示「正在聆听 N 秒 / 最长 M 秒」，剩 10 秒内追加「（即将达到上限）」 |
+| 2 | 「取消」只是视觉取消——`recorder.onStop` 仍会上传识别 | 新增 `onVoiceTouchMove` 上滑手势（>60px 进取消区，按钮转灰红、文案变「松开手指，取消本次录音」）；`_recordCancelled` 标志交由 `onStop` **真正丢弃**录音 |
+| 3 | 识别失败即丢弃录音，只能重录 | ASR 上传时记住 `_lastAudioPath`；失败/没听清显示「↻ 重新识别这段录音」（`onRetryAsr`） |
+| 4 | 无法清空重录 | 有识别结果时显示「🎙 重新录制」（`onRetakeVoice`），清空答案与回放地址 |
+| 5 | 发送按钮在录音/识别中未禁用（仅 JS 守卫） | `disabled` 与 `send-active` 均补 `isRecording / isRecognizing` |
+| 6 | 学生端/教师端回放结束后不释放 `innerAudioContext` | 两处 `playVoiceRecord` 补 `onEnded` 回收（`_releaseVoiceCtx`） |
+
+**未做（有意）**：抽公共 `utils/audio.js` 统一三处播放器——需改 `student.js` / `teacher.js` 两个约 1900 行大文件，并引入跨页音频生命周期耦合；收益是代码整洁而非功能，本轮不做（记账于下）。
+
+**验证**：`mvn -o -q compile` EXIT 0；`node --check`（defense-voice / student / teacher）全为 0；`read_lints` 0 告警。
+
+**待真机实测**：录音上限提示与到点自动停止、上滑取消、重试/重录、三处回放（真机与开发者工具录音格式不同，务必真机过一遍）。
+
+**新增遗留**：`utils/audio.js` 未抽（播放器三处重复，见上）。
+
 ---
 
 # 2026-10-10

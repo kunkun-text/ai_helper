@@ -114,7 +114,7 @@
   <!-- 底部语音作答区（对应文字答辩的输入栏；答辩流程与评分口径完全一致） -->
   <view class="voice-bar {{isFinished ? 'input-bar-hidden' : ''}}">
     <view class="voice-tip {{isRecording ? 'recording' : (isSpeaking ? 'speaking' : '')}}">
-      <text wx:if="{{isRecording}}">正在聆听 {{recordSeconds}} 秒，松开发送</text>
+      <text wx:if="{{isRecording}}">{{cancelHint ? '松开手指，取消本次录音' : ('正在聆听 ' + recordSeconds + ' 秒 / 最长 ' + maxRecordSeconds + ' 秒，松开发送' + (recordLimitWarn ? '（即将达到上限）' : ''))}}</text>
       <text wx:elif="{{isRecognizing}}">识别中…</text>
       <text wx:elif="{{isSpeaking}}">🔊 正在播报题目</text>
       <text wx:elif="{{isAiThinking}}">AI 考官思考中，请稍候</text>
@@ -133,10 +133,17 @@
       <text class="voice-replay-btn" bindtap="playLastVoice">▶ 回放本轮录音</text>
     </view>
 
+    <!-- 【N12】识别失败可一键重试；已有识别结果时可清空重录 -->
+    <view wx:if="{{!isFinished && !isRecording && !isRecognizing && (showVoiceRetry || answerText)}}" class="voice-retry-row">
+      <text wx:if="{{showVoiceRetry}}" class="voice-retry-btn" bindtap="onRetryAsr">↻ 重新识别这段录音</text>
+      <text wx:if="{{answerText}}" class="voice-retry-btn" bindtap="onRetakeVoice">🎙 重新录制</text>
+    </view>
+
     <view class="voice-actions">
       <!-- 【D2】识别中/录音中/引擎未就绪一律禁用，避免重复触发录音或识别期间再次上传 -->
-      <button class="voice-hold-btn {{isRecording ? 'recording' : ''}}"
+      <button class="voice-hold-btn {{isRecording ? 'recording' : ''}} {{cancelHint ? 'cancel-zone' : ''}}"
         bindtouchstart="onVoiceTouchStart"
+        bindtouchmove="onVoiceTouchMove"
         bindtouchend="onVoiceTouchEnd"
         bindtouchcancel="onVoiceTouchCancel"
         disabled="{{isAiThinking || isFinished || isRecording || isRecognizing || !asrReady}}">
@@ -149,9 +156,9 @@
           <view class="wave-bar"></view>
         </view>
       </button>
-      <button class="send-btn voice-send-btn {{answerText && !isAiThinking && !isFinished ? 'send-active' : ''}}"
+      <button class="send-btn voice-send-btn {{answerText && !isAiThinking && !isFinished && !isRecording && !isRecognizing ? 'send-active' : ''}}"
         bindtap="sendAnswer"
-        disabled="{{!answerText || isAiThinking || isFinished}}">
+        disabled="{{!answerText || isAiThinking || isFinished || isRecording || isRecognizing}}">
         发送
       </button>
     </view>

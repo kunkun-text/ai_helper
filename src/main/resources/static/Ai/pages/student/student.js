@@ -1254,11 +1254,26 @@ Page({
     }
     const ctx = wx.createInnerAudioContext();
     ctx.src = uploader.resolveFileUrl(url);
+    // 【N12】播放结束/失败即释放音频实例，避免页面内长期占用
+    ctx.onEnded(() => this._releaseVoiceCtx(ctx));
     ctx.onError(() => {
+      this._releaseVoiceCtx(ctx);
       wx.showToast({ title: '录音播放失败', icon: 'none' });
     });
     ctx.play();
     this._voiceCtx = ctx;
+  },
+
+  /** 【N12】释放指定音频实例（仅当它仍是当前实例时置空） */
+  _releaseVoiceCtx(ctx) {
+    try {
+      ctx.destroy();
+    } catch (e) {
+      // 已销毁时忽略
+    }
+    if (this._voiceCtx === ctx) {
+      this._voiceCtx = null;
+    }
   },
 
   // 视频上传相关方法
