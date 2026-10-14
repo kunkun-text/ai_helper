@@ -27,7 +27,7 @@
 
 ## 文档与进度同步 + 冗余文件清理（无功能代码改动）
 
-> 改动日期：10.14。**状态：`mvn -o -q compile` EXIT 0、全部小程序 JS `node --check` 通过。未 commit（按约定需用户明确要求）。**
+> 改动日期：10.14。**状态：`mvn -o -q compile` EXIT 0、全部小程序 JS `node --check` 通过；已提交并推送 `origin/master`。**
 
 ### 一、背景
 
