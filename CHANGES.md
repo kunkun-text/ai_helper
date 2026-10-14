@@ -1,6 +1,7 @@
 # AI 答辩辅助系统 — 改动记录
 
-> 基于 git commit `508d803`（母版），截至 2026-10-10
+> 基于 git commit `508d803`（母版），截至 2026-10-10（最新提交 `2bc6c62`）；
+> 2026-10-14：**无功能代码改动**；本次为文档同步 + 冗余文件清理（见 [2026-10-14](#2026-10-14) 节）。
 > 本文档按「时间倒序 + 功能模块」组织，方便快速定位某次改动的上下文。
 
 ---
@@ -9,7 +10,8 @@
 
 | 想看什么 | 跳到 |
 |---|---|
-| 最新改动（2026-10-10 审查遗留修订） | [Gemini 审查遗留项修订](#2026-10-10) |
+| 文档同步 + 冗余清理（2026-10-14） | [2026-10-14](#2026-10-14) |
+| 判分路线 B/路线① 与 Gemini 审查修订（2026-10-10） | [2026-10-10](#2026-10-10) |
 | 追问质量与低功耗加固（2026-10-08） | [追问质量与低功耗加固](#2026-10-08) |
 | 上线缺漏整改（2026-10-05） | [上线缺漏整改](#2026-10-05) |
 | 判分可信度收口（2026-10-02） | [判分可信度收口](#2026-10-02) |
@@ -18,6 +20,51 @@
 | 事务/鉴权/续答加固 | [2026-09-28 核心加固](#2026-09-28) |
 | 语音答辩 | [F10 语音答辩](#f10-语音答辩) |
 | 历史改动（9月） | [2026-09 改动归档](#2026-09-改动归档) |
+
+---
+
+# 2026-10-14
+
+## 文档与进度同步 + 冗余文件清理（无功能代码改动）
+
+> 改动日期：10.14。**状态：`mvn -o -q compile` EXIT 0、全部小程序 JS `node --check` 通过。未 commit（按约定需用户明确要求）。**
+
+### 一、背景
+
+用户要求"过一遍项目并核对冗余"。做法：磁盘文件 ↔ `git ls-files`（270 个跟踪文件）逐项核对 + code-explorer 只读排查孤儿文件/死代码 + 实际编译与语法校验。结论：10-11 ~ 10-14 无功能代码改动；文档进度落后于 10-10 实况；另有一批零引用残留。
+
+### 二、文档同步
+
+| 文件 | 改动 |
+|---|---|
+| `CLAUDE.md` | 进度节 → 10-14（基线 `2bc6c62`）；「评分可信度」改「链路就位／三档已实测」；新增「判分档位校正（路线①）」行；待开发表更新 N7、新增「前端请求封装未接入」；重写「待你拍板」（归档 5 项已决）；**包路径纠错** `com/aihelper` → `com/ai_helper/ai_helper`、补 `exception` 包；底部日期 |
+| `AGENTS.md` | 状态速查 → 10-14；「评分可信度」行重写；补 10-10 判分路线注记 |
+| `需求清单-2026-09-15.md` | 版本 → 10-14；1.10/1.11 标题状态修正（实测不可用已关闭／已实测通过）；重写第三部分待拍板；第四部分批次表加状态列 + 批次 G |
+| `CHANGES.md` | 头部基线口径 + 本节 |
+
+### 三、冗余清理（删除 4 项，均零引用）
+
+| 项 | 类型 | 证据 |
+|---|---|---|
+| `AI-helper/` | 7 层空目录残留 | `dir /s /b` 无任何文件；N40 曾记"已删除"但实际残留 |
+| `src/main/resources/static/Ai/pages/webview/` | 空目录 | `dir /a` 无输出；`app.json` 未注册；F5 已下线该页 |
+| `src/main/resources/static/Ai/docuument/`（65 文件 / 52 tsx，Vite+React 原型） | 孤儿资源 | 小程序端零引用；位于 `static/` 下会被 Spring 当静态资源打包/暴露；目录名拼写错误 |
+| `pojo/dto/DefenseHistoryDto.java` | 死代码 | 全仓零引用 |
+
+**有意保留（不删）**：`util/TextTools.java`（主动停用待重启，见 `ChatConfiguration.java:31`）；`utils/request.js`（C2 交付物，页面未迁移 → 挂账）；4 个前端未调用的后端接口（`/api/final-evaluate`、`/teacher/feedback/pending-count`、`/teacher/defense/auditLog/{id}`、`/api/reset-password`）；`docs/*.sql` 增量脚本；`application.yml.example`；`.codebuddy/`。
+
+### 四、验证
+
+- `mvn -o -q compile` → EXIT 0（`COMPILE_OK`）。
+- 小程序全部 JS `node --check` → 全过，无 FAIL。
+- `git status` → 4 modified（文档）+ 66 deleted（清理项），无未跟踪新增。
+- 12 个 Mapper XML ↔ 12 个 Mapper 接口 namespace 全匹配，**无死 XML**；`app.json` 10 个注册页与磁盘一一对应。
+
+### 五、遗留
+
+1. `utils/request.js` 零引用：或删、或把页面 `wx.request` 迁移到该封装（二选一，需拍板）。
+2. `resources/Mapper/` 三个 XML 命名与接口不匹配（`chatController.xml`→`DefenseStudentQuestionsMapper`、`chatController_1775616568352.xml`→`DefenseAnswersMapper`、`login.xml`→`RegisterMapper`）：功能正常，建议重命名。
+3. `POST /api/reset-password` 与 `ResetController` 的 `/api/auth/reset-password` 功能重复（重置页用的是后者），建议合并。
 
 ---
 
