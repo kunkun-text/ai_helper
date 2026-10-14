@@ -47,6 +47,7 @@
 | 判分深化批次3（N7） | ✅ 编译通过（DDL 已执行） | 2026-10-14：路线①要点清单**落库持久化**（新表 `defense_rubric`，第 12 张）+ 内存/库表双层缓存；表缺失自动降级；`diagnose.ps1` 表检查 11→12。**DDL 已在用户库执行成功** |
 | 判分口径校准（N7+ 批次4） | ✅ 编译/lint 通过 | 2026-10-14 晚：复盘 `defenseId=336`（预设题 5 轮原分 31~38 被压到 15）后——命中判定放宽、新增相关性判定（**与本题无关直接 0 分**）、阈值 0.70→0.50、新增指令操控词表（白名单优先，参考 GitHub `sensitive-word` / promptfoo `llm-rubric`） |
 | 追问兜底修复（N60 批次5） | ✅ 编译/lint 通过 | 2026-10-14 晚：修复 `defenseId=336` 第 9/10 轮连问同一题——`generateFollowUpQuestion` 兜底改两级（① 向题库借一道本场没问过的预设题；② 通用追问 + 轮次序号保底），保证返回题不在已问集合里 |
+| 提示词强化与护栏（N61 批次6） | ✅ 单测 26/26 通过 | 2026-10-14 晚：system 消息拆分（身份/三行格式/三条最高纪律，主判分+复核共用）+ prompt 结尾自检 4 条（近因强化）+ 要点清单 1-shot；外置违禁词表 `forbidden-words.txt` + `ForbiddenWordFilter`（输入侧越狱话术→固定零分；输出侧点评安全校验；白名单优先）。参考 Lost in the Middle / DAIR.AI CoT / NeMo Guardrails input-output rails / sensitive-word |
 
 ### 待开发 🔧
 
@@ -89,7 +90,7 @@ ai/                                    # 项目根
 │   ├── Service/ & Service/Impl/       # 业务层
 │   ├── Mapper/                        # MyBatis Mapper
 │   ├── pojo/                          # 实体/VO/枚举
-│   ├── util/                          # 工具类（TextTools / AiTextUtils / CsvUtils / UploadUtils / LoginTokenUtils）
+│   ├── util/                          # 工具类（TextTools / AiTextUtils / CsvUtils / UploadUtils / LoginTokenUtils / ForbiddenWordFilter）
 │   ├── constant/                      # 常量（AiProtocolConstants / VoiceConstants 等）
 │   ├── exception/                      # 业务异常（BusinessException）
 │   ├── result/                        # 统一响应（Result / ResultCode / PageResult）
@@ -97,7 +98,9 @@ ai/                                    # 项目根
 ├── src/main/resources/
 │   ├── application.yml                # 主配置（gitignore，不提交）
 │   ├── application.yml.example        # 配置模板（git跟踪）
-│   ├── mapper/*.xml                   # MyBatis XML
+│   ├── Mapper/*.xml                   # MyBatis XML（12 个，命名与接口一一对应）
+│   ├── forbidden-words.txt            # 违规话术词表（N61：越狱/索要提示词 + 白名单，可直接扩充）
+│   ├── templates/                     # HTML 模板（reset-password / error-page）
 │   └── static/Ai/                     # 微信小程序前端代码
 │       ├── app.js / app.json / app.wxss
 │       ├── pages/
