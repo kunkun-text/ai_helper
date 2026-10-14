@@ -48,6 +48,8 @@
 | 判分口径校准（N7+ 批次4） | ✅ 编译/lint 通过 | 2026-10-14 晚：复盘 `defenseId=336`（预设题 5 轮原分 31~38 被压到 15）后——命中判定放宽、新增相关性判定（**与本题无关直接 0 分**）、阈值 0.70→0.50、新增指令操控词表（白名单优先，参考 GitHub `sensitive-word` / promptfoo `llm-rubric`） |
 | 追问兜底修复（N60 批次5） | ✅ 编译/lint 通过 | 2026-10-14 晚：修复 `defenseId=336` 第 9/10 轮连问同一题——`generateFollowUpQuestion` 兜底改两级（① 向题库借一道本场没问过的预设题；② 通用追问 + 轮次序号保底），保证返回题不在已问集合里 |
 | 提示词强化与护栏（N61 批次6） | ✅ 单测 26/26 通过 | 2026-10-14 晚：system 消息拆分（身份/三行格式/三条最高纪律，主判分+复核共用）+ prompt 结尾自检 4 条（近因强化）+ 要点清单 1-shot；外置违禁词表 `forbidden-words.txt` + `ForbiddenWordFilter`（输入侧越狱话术→固定零分；输出侧点评安全校验；白名单优先）。参考 Lost in the Middle / DAIR.AI CoT / NeMo Guardrails input-output rails / sensitive-word |
+| 审题去重统一出口（N62 批次7） | ✅ 编译/lint 通过 | 2026-10-14 晚：新增 `ensureUniqueNextQuestion` 作为「下一题」唯一出口；修复 `appendNextQuestionFallback` 的 `defenseId=null` 漏洞（已问集合漏掉本场追问）；预设题阶段题库重复只告警（下标与 `question_id` 强绑定，不可替换） |
+| 重跑复验（同一份答案 336 vs 338） | ✅ 已实测 | 2026-10-14 晚：原封不动重放 `defenseId=336` 十轮答案 → **总分 21.4 → 26.4**；预设题 5 轮 75.2 → 142（误杀消除，同题第 3 轮命中率 0.0 → 1.0）；N60 重复题修复生效（第 10 轮改用通用追问）；「答非所问→0 分」实测生效（走既有跑题路径，新增 `relevant` 闸门本次未触发） |
 
 ### 待开发 🔧
 

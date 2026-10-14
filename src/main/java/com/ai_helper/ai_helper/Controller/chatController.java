@@ -1301,17 +1301,13 @@ public class chatController {
                         // 模型自拟下一题若与已问题目重复/高度相似，则重新生成一道
                         if (nextQuestion != null && !nextQuestion.isEmpty()
                                 && assistantCountInHistory >= existingQuestionCount) {
-                            // 【2026-10-10 · 追问退化修复】已问集合必须包含"当前题"：原实现传 assistantCountInHistory-1，
-                            // 恰在"预设题最后一轮 → 首个追问"边界漏掉当前题（实测 defenseId=331 第5轮把原题 q72 又念一遍）。
-                            List<String> askedQuestions = collectAskedQuestions(topicId, assistantCountInHistory, defenseId);
-                            if (isSimilarToAnyQuestion(nextQuestion, askedQuestions)) {
-                                log.warn("模型下一题与已问题目重复/高度相似，重新生成: {}", nextQuestion);
-                                String regenerated = generateFollowUpQuestion(topicId, askedQuestions,
-                                        extractCurrentQuestionFromPrompt(fullPrompt), userInput);
-                                if (regenerated != null && !regenerated.isEmpty()) {
-                                    nextQuestion = regenerated;
-                                }
-                            }
+                            // 【N62 · 2026-10-14】改走统一出口复核（ensureUniqueNextQuestion）：
+                            // 追问阶段交给学生的题一律不允许与已问集合重复。此前这里的重新生成结果未复核就赋回，
+                            // 且各分支各自去重容易漏。
+                            // 已问集合必须包含"当前题"（【2026-10-10】原实现传 assistantCountInHistory-1，
+                            // 恰在"预设题最后一轮 → 首个追问"边界漏掉当前题，实测 defenseId=331 第5轮把原题 q72 又念一遍）。
+                            nextQuestion = ensureUniqueNextQuestion(nextQuestion, topicId, defenseId,
+                                    assistantCountInHistory, extractCurrentQuestionFromPrompt(fullPrompt), userInput);
                         }
                         // 【N52 · 2026-09-28】预设题阶段一律改用题库题目。原实现是"解析不到才兜底"，不够：
                         // 实测 298/299 连续两场，3B 模型没照【轮次铁律】提问库里的题，自己编了题（题库第 2/3 题
@@ -1381,7 +1377,7 @@ public class chatController {
                         }
                         // 兜底：剥离后若无"下一题/追问"，按阶段补一行干净标签，避免前端"有分无题"
                         aiResponse = appendNextQuestionFallback(aiResponse, assistantCountInHistory >= existingQuestionCount,
-                                topicId, assistantCountInHistory);
+                                topicId, assistantCountInHistory, defenseId);
                     }
                 }
             }
@@ -1752,7 +1748,7 @@ public class chatController {
      *  统一拼"下一题:"标签（前端 parseSegmentFormat 只认 下一题/下一问，不认"追问:"）。
      */
     private String appendNextQuestionFallback(String aiResponse, boolean presetDone, Integer topicId,
-                                              int assistantCountInHistory) {
+                                              int assistantCountInHistory, Integer defenseId) {
         if (aiResponse == null) return null;
         // 已含下一题或追问标签则不用补【F1】标签常量化
         if (aiResponse.contains(AiProtocolConstants.NEXT_QUESTION_TAG)
@@ -1762,12 +1758,24 @@ public class chatController {
         }
         String nextQuestion;
         if (!presetDone) {
-            // 预设阶段：取题库中当前轮次的下一道题（assistantCountInHistory 同样用于该下标）
+            // 预设阶段：按下标取题库题。题目顺序是设计约定（question_id 与下标一一对应），
+            // 不能因为"与前面相似"就换成别的题；若题库本身有重复数据，只告警提示修数据。
             nextQuestion = fetchPresetQuestionText(topicId, assistantCountInHistory);
+            if (nextQuestion != null && !nextQuestion.trim().isEmpty()) {
+                List<String> asked = collectAskedQuestions(topicId, assistantCountInHistory, defenseId);
+                if (isSimilarToAnyQuestion(nextQuestion, asked)) {
+                    log.warn("题库第 {} 道题与已问题目相似，疑似题库重复数据（仍按题库顺序提问）: {}",
+                            assistantCountInHistory + 1, nextQuestion);
+                }
+            }
         } else {
-            nextQuestion = generateFollowUpQuestion(topicId,
-                    // 【2026-10-10】已问集合含当前题，避免兜底追问复述当前题（同 :1195 修复）
-                    collectAskedQuestions(topicId, assistantCountInHistory, null));
+            // 【N62 · 2026-10-14】追问阶段的兜底题也必须验重。原实现把 defenseId 传成 null，
+            // 而 collectAskedQuestions 在 defenseId 为 null 时只收集预设题 —— 本场此前问过的追问
+            // 不在已问集合里，兜底就可能重复一个更早的追问。这里改为传 defenseId 并走统一出口。
+            nextQuestion = ensureUniqueNextQuestion(
+                    generateFollowUpQuestion(topicId,
+                            collectAskedQuestions(topicId, assistantCountInHistory, defenseId)),
+                    topicId, defenseId, assistantCountInHistory, null, null);
         }
         if (nextQuestion == null || nextQuestion.trim().isEmpty()) {
             return aiResponse;
@@ -2138,6 +2146,47 @@ public class chatController {
         };
     }
 
+    /**
+     * 【N62 · 2026-10-14】统一出口：保证「交给学生的下一题」绝不与<b>本场已问过的任何一道题</b>重复。
+     *
+     * <p><b>为什么需要统一出口</b>：追问题目有多条来源——模型自拟、题库借题、通用兜底、硬校验补行，
+     * 每条分支各自做去重，必然漏。实测两处漏洞：</p>
+     * <ol>
+     *   <li>追问阶段模型输出重复题 → 调 {@code generateFollowUpQuestion} 重新生成，但重新结果未复核就赋回；</li>
+     *   <li><b>更隐蔽的一处</b>：{@code appendNextQuestionFallback} 调 {@code collectAskedQuestions(..., null)}
+     *       —— defenseId 传 null 时该方法只收集预设题，<b>本场此前问过的追问不在已问集合里</b>，
+     *       于是兜底可能重复一个更早问过的追问。</li>
+     * </ol>
+     *
+     * <p>本方法把所有出口收敛到一处复核：候选与已问集合相似 → 走 {@link #generateFollowUpQuestion}
+     * 重新生成（其内部已含「模型重试 → 题库借题 → 通用追问」四级兜底，且每级都验重）→ 仍不满意则用
+     * 带轮次序号的通用追问强保底。<b>返回值一定不在已问集合里。</b></p>
+     *
+     * @param candidate        候选题目（模型输出 / 题库题 / 兜底题均可）
+     * @param askedPresetCount 已问完的预设题数量（用于收集已问集合）
+     * @return 保证不重复的题目；candidate 为空时原样返回
+     */
+    private String ensureUniqueNextQuestion(String candidate, Integer topicId, Integer defenseId,
+                                           int askedPresetCount, String currentQuestion, String studentAnswer) {
+        if (candidate == null || candidate.trim().isEmpty()) {
+            return candidate;
+        }
+        List<String> asked = collectAskedQuestions(topicId, askedPresetCount, defenseId);
+        if (!isSimilarToAnyQuestion(candidate, asked)) {
+            return candidate;
+        }
+        log.warn("下一题候选与已问题目重复，改走重新生成 - 候选: {}, 已问 {} 道", candidate, asked.size());
+        String regenerated = generateFollowUpQuestion(topicId, asked, currentQuestion, studentAnswer);
+        // generateFollowUpQuestion 的各级兜底已验重；这里再复核一次，确保任何情况下都不把重复题交给学生
+        if (regenerated != null && !regenerated.trim().isEmpty()
+                && !isSimilarToAnyQuestion(regenerated, asked)) {
+            return regenerated;
+        }
+        String generic = buildGenericFollowUp(asked);
+        log.warn("重新生成仍重复或为空，改用强保底追问: {}", generic);
+        return generic;
+    }
+
     private String truncateForPrompt(String text, int maxLength) {
         if (text == null) return "";
         String normalized = text.replaceAll("\\s+", " ").trim();
@@ -2155,7 +2204,10 @@ public class chatController {
 
     /**
      * 收集已问过的题目（2026.9.15 追问去重用）：预设题已问部分（前 askedPresetCount 道）+ 该答辩已登记的追问题。
-     * defenseId 为 null 时只收集预设题（如 appendNextQuestionFallback 路径拿不到 defenseId）。
+     *
+     * <p>【N62 · 2026-10-14】调用方<b>必须尽量传 defenseId</b>：传 null 时只能收集到预设题，
+     * 本场此前的追问不在集合里，去重会漏（{@code appendNextQuestionFallback} 曾因此漏判，已改为传 defenseId）。
+     * 传 null 仅用于确实拿不到场次 id 的场景。</p>
      */
     private List<String> collectAskedQuestions(Integer topicId, int askedPresetCount, Integer defenseId) {
         List<String> asked = new ArrayList<>();
