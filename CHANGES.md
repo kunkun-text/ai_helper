@@ -60,11 +60,13 @@
 - `git status` → 4 modified（文档）+ 66 deleted（清理项），无未跟踪新增。
 - 12 个 Mapper XML ↔ 12 个 Mapper 接口 namespace 全匹配，**无死 XML**；`app.json` 10 个注册页与磁盘一一对应。
 
-### 五、遗留
+### 五、遗留（已挂账 `需求清单-2026-09-15.md` P3，本轮不处理）
 
-1. `utils/request.js` 零引用：或删、或把页面 `wx.request` 迁移到该封装（二选一，需拍板）。
-2. `resources/Mapper/` 三个 XML 命名与接口不匹配（`chatController.xml`→`DefenseStudentQuestionsMapper`、`chatController_1775616568352.xml`→`DefenseAnswersMapper`、`login.xml`→`RegisterMapper`）：功能正常，建议重命名。
-3. `POST /api/reset-password` 与 `ResetController` 的 `/api/auth/reset-password` 功能重复（重置页用的是后者），建议合并。
+| 编号 | 项 | 处置建议 |
+|---|---|---|
+| N57 | `utils/request.js` 零引用（C2 交付物，页面仍直接 `wx.request`） | 或删、或把页面迁移到该封装，待拍板 |
+| N58 | `resources/Mapper/` 三个 XML 命名与接口不匹配（`chatController.xml`→`DefenseStudentQuestionsMapper`、`chatController_1775616568352.xml`→`DefenseAnswersMapper`、`login.xml`→`RegisterMapper`） | 功能正常，建议重命名 |
+| N59 | `POST /api/reset-password` 与 `ResetController` 的 `/api/auth/reset-password` 功能重复 | 重置页用后者，建议合并 |
 
 ---
 
