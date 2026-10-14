@@ -6,7 +6,7 @@
 #   - 本模板文件会被 git 跟踪，供换机器 / 新同学按图索骥
 #
 # 【启动顺序】MySQL(3307) → Redis(6379) → Ollama(11434) → 本服务(8080)
-# 【数据库】需先建好数据库 ai_helper 并导入表结构：mysql -uroot -p < docs/schema.sql（10 张表）
+# 【数据库】需先建好数据库 ai_helper 并导入表结构：mysql -uroot -p < docs/schema.sql（12 张表）
 # 【自检】powershell -ExecutionPolicy Bypass -File .\diagnose.ps1（会按本文件的 jdbc url 解析端口/库名）
 # ==========================================================================
 
