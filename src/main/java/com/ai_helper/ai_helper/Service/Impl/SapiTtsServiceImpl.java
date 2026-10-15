@@ -107,9 +107,11 @@ public class SapiTtsServiceImpl implements TtsService {
             // 播报失败不是致命错误：屏幕上有完整文字，前端静默跳过即可
             log.error("语音合成失败（本次跳过播报） - 文本: {}", content, e);
             return "";
-        } finally {
-            fileLocks.remove(fileName);
         }
+        // 【N73 · 2026-10-15】不再在 finally 里 fileLocks.remove(fileName)：
+        // 线程 A 移除后、线程 B 仍在旧锁上等待时，线程 C computeIfAbsent 会拿到新锁对象，
+        // B/C 对同一目标 wav 并发合成与覆盖写盘，第三方并发读取可能拿到截断文件。
+        // key 为文本 MD5、数量受 300 字上限约束，锁对象常驻的内存开销可控——宁可常驻不可竞态。
     }
 
     /** 真正执行一次合成，返回临时 wav 文件（调用方负责删除） */

@@ -209,15 +209,19 @@ public class WhisperAsrServiceImpl implements AsrService {
         // 排查辅助：记录音频大小与文件头，并保留最近一次上传的原始音频。
         // 背景：小程序在「开发者工具」和「真机」上录出的容器格式可能不同（webm / ogg / mp3 …），
         // 保留现场便于快速定位"识别引擎解不了"的问题。
+        // 【N78 · 2026-10-15】落盘保留现场改为配置开关（app.voice.asr-debug-dump-enabled，默认 false）：
+        // 原实现无条件覆写 ai-helper-asr-last.*，最后一名学生的录音会长期残留在磁盘上。
         String declaredExt = normalizeExt(format);
         String sniffedFormat = sniffFormat(audio);
         log.info("收到录音 - 声明格式: {}, 大小: {} 字节, 文件头: {}, 嗅探格式: {}",
                 declaredExt, audio.length, headHex(audio), sniffedFormat);
-        try {
-            Files.write(Path.of(System.getProperty("java.io.tmpdir"),
-                    "ai-helper-asr-last." + declaredExt), audio);
-        } catch (Exception ignored) {
-            // 仅排查用途，失败不影响主流程
+        if (appProperties.getVoice().isAsrDebugDumpEnabled()) {
+            try {
+                Files.write(Path.of(System.getProperty("java.io.tmpdir"),
+                        "ai-helper-asr-last." + declaredExt), audio);
+            } catch (Exception ignored) {
+                // 仅排查用途，失败不影响主流程
+            }
         }
 
         String ext = normalizeExt(format);

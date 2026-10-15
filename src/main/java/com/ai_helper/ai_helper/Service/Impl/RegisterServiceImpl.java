@@ -45,6 +45,20 @@ public class RegisterServiceImpl implements RegisterService {
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
+    /** 【N77 · 2026-10-15】登录失败锁定：同「账号+IP」连续失败达上限后锁定期内拒绝 */
+    private static final int LOGIN_FAIL_LIMIT = 5;
+
+    /** 失败计数保留时长（秒）：也是锁定的持续窗口 */
+    private static final long LOGIN_LOCK_SECONDS = 600;
+
+    /** 记一次登录失败：计数 +1；首次失败设定 10 分钟窗口，窗口内累计达上限即锁定 */
+    private void recordLoginFailure(String failKey) {
+        Long count = stringRedisTemplate.opsForValue().increment(failKey);
+        if (count != null && count == 1) {
+            stringRedisTemplate.expire(failKey, LOGIN_LOCK_SECONDS, TimeUnit.SECONDS);
+        }
+    }
+
     @Override
     public Result register(UserDto user) {
         // 1. 参数校验
@@ -85,7 +99,7 @@ public class RegisterServiceImpl implements RegisterService {
     }
 
     @Override
-    public Result login(UserDto userDto) {
+    public Result login(UserDto userDto, String clientIp) {
         // 1. 参数校验
         if (userDto.getUserNumber() == null || userDto.getUserNumber().trim().isEmpty() && ("teacher".equals(userDto.getRole()))) {
             return Result.error("工号不能为空");
@@ -97,12 +111,22 @@ public class RegisterServiceImpl implements RegisterService {
             return Result.error("密码不能为空");
         }
 
+        // 【N77 · 2026-10-15】失败锁定检查：同「账号+IP」连续失败达上限后，锁定期内直接拒绝（不查库不校验密码）
+        String failKey = "login:fail:" + userDto.getUserNumber().trim() + ":" + clientIp;
+        String failCount = stringRedisTemplate.opsForValue().get(failKey);
+        if (failCount != null && Integer.parseInt(failCount) >= LOGIN_FAIL_LIMIT) {
+            log.warn("登录失败次数已达上限，拒绝本次尝试 - userNumber: {}, ip: {}", userDto.getUserNumber(), clientIp);
+            return Result.error("失败次数过多，请 10 分钟后再试");
+        }
+
         try {
             // 2. 查询用户是否存在
             UserDto dbUser = registerMapper.selectByUserNumber(userDto.getUserNumber());
 
             if (dbUser == null) {
-                return Result.error("用户不存在");
+                recordLoginFailure(failKey);
+                // 【N77】不回显「用户不存在」——防账号枚举，与密码错误统一文案
+                return Result.error("账号或密码错误");
             }
             if (!dbUser.getRole().equals(userDto.getRole())) {
                 return Result.error("角色不匹配");
@@ -111,8 +135,13 @@ public class RegisterServiceImpl implements RegisterService {
 
             // 3. 校验密码
             if (!passwordEncoder.matches(userDto.getPassword(), dbUser.getPassword())) {
-                return Result.error("密码错误");
+                recordLoginFailure(failKey);
+                // 【N77】「密码错误」与「用户不存在」统一文案，防账号枚举
+                return Result.error("账号或密码错误");
             }
+
+            // 【N77】登录成功清零失败计数
+            stringRedisTemplate.delete(failKey);
 
             // 4. 生成随机 token 并存入 Redis
             //    有效期由 app.auth.token-ttl-minutes 控制：一场答辩可能远超 30 分钟，

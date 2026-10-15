@@ -19,6 +19,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 本地磁盘文件存储实现。
@@ -299,6 +303,38 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
             }
         }
         return IdUtil.simpleUUID() + suffix;
+    }
+
+    @Override
+    public List<String> listFiles(String subDir) {
+        Path dir = resolveSafe(subDir);
+        if (!Files.isDirectory(dir)) {
+            return Collections.emptyList();
+        }
+        // try-with-resources 关闭目录流，防止句柄泄漏；只取普通文件，子目录原样保留
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream.filter(Files::isRegularFile)
+                    .map(p -> subDir + "/" + p.getFileName())
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            log.error("列出子目录文件失败 - {}", dir, e);
+            return Collections.emptyList();
+        }
+    }
+
+    @Override
+    public long lastModified(String relativePath) {
+        String relative = toRelativePath(relativePath);
+        if (relative == null) {
+            return -1;
+        }
+        try {
+            Path target = resolveSafe(relative);
+            return Files.exists(target) ? Files.getLastModifiedTime(target).toMillis() : -1;
+        } catch (IOException e) {
+            log.debug("读取文件最后修改时间失败 - {}", relativePath, e);
+            return -1;
+        }
     }
 
     /**

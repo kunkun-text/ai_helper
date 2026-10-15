@@ -223,3 +223,6 @@ app:
     timeout-seconds: 180
     # 前端单次录音时长上限（秒），超过会自动停止录音
     max-record-seconds: 60
+    # 【N78】排查用：把最近一次录音的原始音频保留到系统临时目录（ai-helper-asr-last.*）。
+    # 默认 false；只在排查「识别引擎解不了某容器格式」时临时打开，否则最后一名学生的录音会一直留在磁盘上。
+    asr-debug-dump-enabled: false

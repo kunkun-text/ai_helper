@@ -138,44 +138,45 @@ public class VoiceController {
             return Result.error("当前识别人数较多，请稍后重试");
         }
 
+        // 【N69 · 2026-10-15】取到许可后，其后所有逻辑（含读上传体失败提前 return）都必须保证 release：
+        // 信号量容量为 1，任何一个分支泄漏一次，语音识别就会永久不可用（直到重启）
         String ext = resolveExt(format, file.getOriginalFilename());
-        byte[] audio;
         try {
-            audio = file.getBytes();
-        } catch (IOException e) {
-            log.error("读取上传录音失败", e);
-            return Result.error("录音上传失败，请重试");
-        } catch (OutOfMemoryError oom) {
-            log.error("读取上传录音内存不足", oom);
-            return Result.error("录音上传失败，请重试");
-        }
+            byte[] audio;
+            try {
+                audio = file.getBytes();
+            } catch (IOException e) {
+                log.error("读取上传录音失败", e);
+                return Result.error("录音上传失败，请重试");
+            } catch (OutOfMemoryError oom) {
+                log.error("读取上传录音内存不足", oom);
+                return Result.error("录音上传失败，请重试");
+            }
 
-        long start = System.currentTimeMillis();
-        String text;
-        try {
-            text = asrService.transcribe(audio, ext);
+            long start = System.currentTimeMillis();
+            String text = asrService.transcribe(audio, ext);
+            long cost = System.currentTimeMillis() - start;
+
+            log.info("语音识别请求完成 - 音频: {} 字节, 格式: {}, 耗时: {} ms, 识别长度: {}",
+                    audio.length, ext, cost, text == null ? 0 : text.length());
+
+            String recognized = text == null ? "" : text.trim();
+            Map<String, Object> data = new HashMap<>();
+            data.put("success", !recognized.isEmpty());
+            data.put("text", recognized);
+
+            // 【F11】识别成功且前端带了题目上下文 → 顺手归档这段原录音（尽力而为，失败不影响本次识别）
+            String voiceUrl = "";
+            if (!recognized.isEmpty() && topicId != null && question != null && !question.isBlank()) {
+                voiceUrl = voiceArchiveService.archive(AuthInterceptor.currentUserNumber(request), topicId, questionId,
+                        question, recognized, audio, ext);
+            }
+            // 前端据此决定是否显示「回放本轮录音」；空串表示本次未归档（缺上下文或归档失败）
+            data.put("voiceUrl", voiceUrl);
+            return Result.success(data);
         } finally {
             ASR_PERMITS.release();
         }
-        long cost = System.currentTimeMillis() - start;
-
-        log.info("语音识别请求完成 - 音频: {} 字节, 格式: {}, 耗时: {} ms, 识别长度: {}",
-                audio.length, ext, cost, text == null ? 0 : text.length());
-
-        String recognized = text == null ? "" : text.trim();
-        Map<String, Object> data = new HashMap<>();
-        data.put("success", !recognized.isEmpty());
-        data.put("text", recognized);
-
-        // 【F11】识别成功且前端带了题目上下文 → 顺手归档这段原录音（尽力而为，失败不影响本次识别）
-        String voiceUrl = "";
-        if (!recognized.isEmpty() && topicId != null && question != null && !question.isBlank()) {
-            voiceUrl = voiceArchiveService.archive(AuthInterceptor.currentUserNumber(request), topicId, questionId,
-                    question, recognized, audio, ext);
-        }
-        // 前端据此决定是否显示「回放本轮录音」；空串表示本次未归档（缺上下文或归档失败）
-        data.put("voiceUrl", voiceUrl);
-        return Result.success(data);
     }
 
     /**

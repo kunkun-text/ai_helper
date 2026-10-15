@@ -421,8 +421,10 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
             return vo;
 
         } catch (Exception e) {
+            // 【N70 · 2026-10-15】事务方法不得吞异常：catch 后返回失败 VO，异常不出方法 → 事务照常提交，
+            // 半截状态（已删空壳、已建记录）被落库。上抛触发回滚，与 saveAiQuestion（N20）同口径
             log.error("开始/继续答辩时发生异常 - topicId: {}, userNumber: {}", topicId, userNumber, e);
-            return vo;
+            throw new BusinessException("开始答辩失败，请稍后重试", e);
         }
     }
 
@@ -653,10 +655,16 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                 // 【N15】审计：结束并汇总。userId/topicId 从答辩记录反查（本方法只有 defenseId）
                 logFinishAudit(defenseId, totalScore);
             } else {
+                // 【N72 · 2026-10-15】未命中行同样是「总分丢失」，必须让调用方感知，不得静默
                 log.warn("⚠️ 答辩总分落库失败，未找到记录 - defenseId: {}", defenseId);
+                throw new BusinessException("答辩收尾失败：未找到答辩记录（defenseId=" + defenseId + "）");
             }
+        } catch (BusinessException be) {
+            throw be;
         } catch (Exception e) {
+            // 【N72 · 2026-10-15】吞异常会让前端/调用方误以为收尾成功，学生总分静默丢失——上抛触发回滚
             log.error("❌ 答辩总分落库时发生异常 - defenseId: {}", defenseId, e);
+            throw new BusinessException("答辩收尾失败，总分未能保存，请重试", e);
         }
     }
 

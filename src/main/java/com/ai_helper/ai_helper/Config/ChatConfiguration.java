@@ -11,8 +11,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,8 +26,8 @@ import java.util.concurrent.TimeUnit;
 public class ChatConfiguration {
 
     @Bean
-    public ChatMemory chatMemory(RedisTemplate<String, Object> redisTemplate) {
-        return new RedisChatMemory(redisTemplate);
+    public ChatMemory chatMemory(RedisTemplate<String, Object> redisTemplate, StringRedisTemplate stringRedisTemplate) {
+        return new RedisChatMemory(redisTemplate, stringRedisTemplate);
     }
     
     /**
@@ -45,6 +48,12 @@ public class ChatConfiguration {
     static class RedisChatMemory implements ChatMemory {
         
         private final RedisTemplate<String, Object> redisTemplate;
+        /**
+         * 【N74 · 2026-10-15】锁的读写专用模板：裸字符串存取。
+         * 此前锁值经 JSON 序列化（存成 "uuid:ts" 带引号），Lua 服务端逐字节比对必然失败；
+         * 换 StringRedisTemplate 后 Lua 才能精确比对锁值。
+         */
+        private final StringRedisTemplate stringRedisTemplate;
         private static final String KEY_PREFIX = "chat:memory:";
         private static final long EXPIRE_MINUTES = 30;
         private static final String LOCK_KEY_PREFIX = "chat:lock:";
@@ -53,8 +62,9 @@ public class ChatConfiguration {
         private static final int LOCK_RETRY_TIMES = 5;
         private static final long LOCK_RETRY_INTERVAL_MILLIS = 50;
         
-        public RedisChatMemory(RedisTemplate<String, Object> redisTemplate) {
+        public RedisChatMemory(RedisTemplate<String, Object> redisTemplate, StringRedisTemplate stringRedisTemplate) {
             this.redisTemplate = redisTemplate;
+            this.stringRedisTemplate = stringRedisTemplate;
         }
         
         @Override
@@ -62,7 +72,7 @@ public class ChatConfiguration {
             String key = KEY_PREFIX + conversationId;
             List<Object> messages = redisTemplate.opsForList().range(key, 0, -1);
             
-            log.info("【Redis读取】从Redis获取原始数据 - conversationId: {}, 原始数量: {}", conversationId, messages != null ? messages.size() : 0);
+            log.debug("【Redis读取】从Redis获取原始数据 - conversationId: {}, 原始数量: {}", conversationId, messages != null ? messages.size() : 0);
             
             if (messages == null || messages.isEmpty()) {
                 return new ArrayList<>();
@@ -70,32 +80,33 @@ public class ChatConfiguration {
             
             List<Message> result = new ArrayList<>();
             for (Object msg : messages) {
-                log.info("【Redis读取】消息类型: {}", msg != null ? msg.getClass().getName() : "null");
+                log.debug("【Redis读取】消息类型: {}", msg != null ? msg.getClass().getName() : "null");
                 
                 if (msg instanceof Map) {
                     Map<?, ?> map = (Map<?, ?>) msg;
-                    log.info("【Redis读取】Map内容: {}", map);
+                    // 【N75 · 2026-10-15】不再整段打印 Map 内容——学生作答/AI 评语落 INFO 日志属敏感信息泄漏+日志膨胀
                     
                     String type = (String) map.get("type");
                     String content = (String) map.get("content");
                     
-                    log.info("【Redis读取】type: {}, content长度: {}", type, content != null ? content.length() : 0);
+                    log.debug("【Redis读取】type: {}, content长度: {}", type, content != null ? content.length() : 0);
                     
                     if ("user".equals(type) && content != null) {
                         result.add(new org.springframework.ai.chat.messages.UserMessage(content));
-                        log.info("【Redis读取】成功转换为用户消息");
+                        log.debug("【Redis读取】成功转换为用户消息");
                     } else if ("assistant".equals(type) && content != null) {
                         result.add(new org.springframework.ai.chat.messages.AssistantMessage(content));
-                        log.info("【Redis读取】成功转换为AI消息");
+                        log.debug("【Redis读取】成功转换为AI消息");
                     } else {
-                        log.warn("【Redis读取】无法识别的消息类型或内容为空 - type: {}, content: {}", type, content);
+                        log.warn("【Redis读取】无法识别的消息类型或内容为空 - type: {}, content长度: {}",
+                                type, content == null ? 0 : content.length());
                     }
                 } else {
                     log.warn("【Redis读取】消息不是Map类型，实际类型: {}", msg != null ? msg.getClass().getName() : "null");
                 }
             }
             
-            log.info("【Redis读取】最终转换后的消息数量: {}", result.size());
+            log.debug("【Redis读取】最终转换后的消息数量: {}", result.size());
             return result;
         }
         
@@ -132,7 +143,7 @@ public class ChatConfiguration {
         /** 取锁成功则写入消息并释放锁；取不到锁返回 false（由调用方决定是否重试） */
         private boolean appendWithLock(String key, String lockKey, String lockValue,
                                        List<Message> messages, boolean firstAttempt) {
-            Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
+            Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
             if (!Boolean.TRUE.equals(locked)) {
                 if (firstAttempt) {
                     log.warn("【Redis锁】未取得锁，进入重试 - lockKey: {}", lockKey);
@@ -169,13 +180,21 @@ public class ChatConfiguration {
                     pushCount, redisTemplate.opsForList().size(key), key);
         }
 
+        /**
+         * 【N74 · 2026-10-15】释放锁改为 Lua 脚本原子「比较 + 删除」。
+         * 旧实现先 GET 再 DEL，两步之间锁可能恰好过期并被其他线程重新持有，
+         * 本线程会误删新持锁者的锁 → 并发 rightPush、会话消息重复（N22 要防的问题复发）。
+         * 锁值走 StringRedisTemplate 裸字符串存取，Lua 服务端逐字节比对才有效。
+         */
+        private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                Long.class);
+
         private void releaseLock(String lockKey, String lockValue) {
-            String currentLockValue = (String) redisTemplate.opsForValue().get(lockKey);
-            if (lockValue.equals(currentLockValue)) {
-                redisTemplate.delete(lockKey);
-            } else {
-                log.warn("【Redis锁】锁已被其他线程持有，不删除 - lockKey: {}, expected: {}, actual: {}",
-                        lockKey, lockValue, currentLockValue);
+            Long released = stringRedisTemplate.execute(UNLOCK_SCRIPT, Collections.singletonList(lockKey), lockValue);
+            if (!Long.valueOf(1L).equals(released)) {
+                log.warn("【Redis锁】锁已被其他线程持有或已过期，未删除 - lockKey: {}, expected: {}",
+                        lockKey, lockValue);
             }
         }
         

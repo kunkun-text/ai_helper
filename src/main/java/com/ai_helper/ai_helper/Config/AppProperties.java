@@ -184,6 +184,14 @@ public class AppProperties {
         private int maxRecordSeconds = 60;
 
         /**
+         * 【N78 · 2026-10-15】是否把最近一次录音的原始音频落盘到临时目录（ai-helper-asr-last.*）。
+         *
+         * <p>排查「识别引擎解不了某容器格式」时临时打开；默认关闭——
+         * 常开会一直覆写残留文件，最后一名学生的录音长期留在磁盘上。</p>
+         */
+        private boolean asrDebugDumpEnabled = false;
+
+        /**
          * 缺失组件时是否**启动后自动下载**（引擎约 15MB + 模型约 487MB + ffmpeg 约 40MB）。
          *
          * <p>默认开启，目的是让新机器 clone 下来「开 Redis + 开 Ollama + 启动后端」即可用语音，

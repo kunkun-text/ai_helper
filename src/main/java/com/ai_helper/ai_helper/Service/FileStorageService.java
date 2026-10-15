@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 
 /**
  * 文件存储抽象层。
@@ -81,4 +82,16 @@ public interface FileStorageService {
      * <p>非本地存储介质可实现为空操作。</p>
      */
     void writeAt(String relativePath, long offset, byte[] data) throws IOException;
+
+    /**
+     * 列出指定子目录下的全部普通文件（不含子目录），返回相对存储路径。
+     * 子目录不存在时返回空列表。【N71 · 2026-10-15】孤儿预分配文件清理用。
+     */
+    List<String> listFiles(String subDir);
+
+    /**
+     * 文件最后修改时间（epoch 毫秒）；文件不存在或读取失败返回 -1。
+     * 【N71 · 2026-10-15】孤儿预分配文件清理用（活会话的文件必有新分片写入，mtime 必新）。
+     */
+    long lastModified(String relativePath);
 }

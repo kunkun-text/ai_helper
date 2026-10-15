@@ -9,5 +9,5 @@ public interface RegisterService {
 
     Result register(UserDto userDto);
 
-    Result login(UserDto userDto);
+    Result login(UserDto userDto, String clientIp);
 }

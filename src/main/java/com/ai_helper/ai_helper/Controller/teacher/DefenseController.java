@@ -106,7 +106,20 @@ public class DefenseController {
     }
 
     @DeleteMapping("/deleteDefenseTopics")
-    public Result<Object> deleteDefenseTopics(@RequestParam Integer topicId) {
+    public Result<Object> deleteDefenseTopics(@RequestParam Integer topicId, HttpServletRequest request) {
+        // 【N68 · 2026-10-15】归属校验：此前任意登录教师传他人 topicId 即可删除他人课题（连带题目），
+        // 与 editDefense 的 A3 校验同类，此处是全库写路径里的孤例；mapper 已有 selectTeacherIdByTopicId 可复用
+        Integer teacherId = resolveCurrentTeacherId(request, null);
+        if (teacherId == null) {
+            return Result.error("登录教师身份解析失败，请重新登录");
+        }
+        Integer ownerTeacherId = defenseTopicsMapper.selectTeacherIdByTopicId(topicId);
+        if (ownerTeacherId == null) {
+            return Result.error("未找到该课题");
+        }
+        if (!ownerTeacherId.equals(teacherId)) {
+            return Result.error("无权删除他人的课题");
+        }
         return defenseTopicsService.deleteDefenseTopics(topicId);
     }
 

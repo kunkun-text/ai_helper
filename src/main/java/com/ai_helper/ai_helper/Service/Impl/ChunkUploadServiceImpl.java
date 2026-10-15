@@ -11,12 +11,18 @@ import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.util.UploadUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +47,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private static final long DEFAULT_CHUNK_SIZE = 5L * 1024 * 1024;
     /** uploadId 合法性校验，避免被构造成奇怪的 Redis key */
     private static final String UPLOAD_ID_PATTERN = "^[a-zA-Z0-9\\-]{8,64}$";
+
+    /** 【N71】清理扫描周期：6 小时；启动后先等 10 分钟（避开启动高峰，也让刚启动时的活会话先稳定） */
+    private static final long CLEANUP_INTERVAL_MS = 6L * 60 * 60 * 1000;
+    private static final long CLEANUP_INITIAL_DELAY_MS = 10L * 60 * 1000;
+    /** 【N71】比会话寿命多留 2 小时余量：防边界误删（init 预分配后、写会话前的瞬间崩溃留下的孤儿，等下一轮再收） */
+    private static final long ORPHAN_AGE_MARGIN_MS = 2L * 60 * 60 * 1000;
 
     private final AppProperties appProperties;
     private final FileStorageService fileStorageService;
@@ -247,6 +259,86 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         fileStorageService.delete(stringValue(session, "relativePath"));
         clearSession(uploadId);
         log.info("已放弃上传 - uploadId: {}, user: {}", uploadId, loginUserNumber);
+    }
+
+    /**
+     * 【N71 · 2026-10-15】定时清理孤儿预分配文件。
+     *
+     * <p>背景：{@code init} 按声明大小预分配磁盘文件（视频上限 500MB），只有 abort/complete 会删它；
+     * 用户中途直接放弃（不调 abort）时，Redis 会话 24h 过期后磁盘文件永久残留，
+     * 反复 init 即可以 500MB/次的速率占满磁盘。判定三条同时满足才删，宁可漏删不可误删：</p>
+     *
+     * <ol>
+     *   <li>文件 mtime 早于「会话寿命 + 余量」——活会话的文件必有新分片写入，mtime 必新；</li>
+     *   <li>不属于任何存活的上传会话（SCAN 会话 key，不用 KEYS 阻塞 Redis）；</li>
+     *   <li>不在库中任何 video_url 引用集合里——complete 之后它就是正式视频，绝不能当孤儿删。</li>
+     * </ol>
+     */
+    @Scheduled(initialDelay = CLEANUP_INITIAL_DELAY_MS, fixedDelay = CLEANUP_INTERVAL_MS)
+    public void cleanupOrphanPreallocFiles() {
+        try {
+            long orphanBefore = System.currentTimeMillis() - SESSION_TTL.toMillis() - ORPHAN_AGE_MARGIN_MS;
+            // ② 存活会话引用的文件集合
+            Set<String> activePaths = scanActiveUploadPaths();
+            // ③ 库中已引用的视频路径集合（complete 之后就是正式视频，绝不能当孤儿删）
+            Set<String> protectedPaths = new HashSet<>();
+            List<String> urls = defenseRecordsMapper.selectAllVideoUrls();
+            if (urls != null) {
+                for (String url : urls) {
+                    String relative = fileStorageService.toRelativePath(url);
+                    if (relative != null && !relative.isEmpty()) {
+                        protectedPaths.add(relative);
+                    }
+                }
+            }
+
+            int removed = 0;
+            for (String path : fileStorageService.listFiles(VIDEO_SUB_DIR)) {
+                if (activePaths.contains(path) || protectedPaths.contains(path)) {
+                    continue;
+                }
+                long mtime = fileStorageService.lastModified(path);
+                if (mtime < 0 || mtime >= orphanBefore) {
+                    // mtime 读不到时视为不可判定，宁可漏删
+                    continue;
+                }
+                if (fileStorageService.delete(path)) {
+                    removed++;
+                    log.info("已清理孤儿预分配文件 - {}", path);
+                }
+            }
+            if (removed > 0) {
+                log.info("孤儿预分配文件清理完成 - 共清理 {} 个", removed);
+            }
+        } catch (Exception e) {
+            // 定时任务绝不外抛异常
+            log.error("孤儿预分配文件清理失败（下轮再试）", e);
+        }
+    }
+
+    /** 【N71】SCAN 出存活上传会话引用的 relativePath 集合（判定②用；不用 KEYS，避免阻塞 Redis） */
+    private Set<String> scanActiveUploadPaths() {
+        ScanOptions options = ScanOptions.scanOptions().match(SESSION_KEY_PREFIX + "*").count(200).build();
+        List<String> keys = stringRedisTemplate.execute((RedisCallback<List<String>>) connection -> {
+            List<String> found = new ArrayList<>();
+            try (Cursor<byte[]> cursor = connection.scan(options)) {
+                while (cursor.hasNext()) {
+                    found.add(new String(cursor.next(), StandardCharsets.UTF_8));
+                }
+            }
+            return found;
+        });
+        Set<String> paths = new HashSet<>();
+        if (keys != null) {
+            for (String key : keys) {
+                Map<Object, Object> session = stringRedisTemplate.opsForHash().entries(key);
+                String path = session.get("relativePath") == null ? "" : String.valueOf(session.get("relativePath"));
+                if (!path.isEmpty()) {
+                    paths.add(path);
+                }
+            }
+        }
+        return paths;
     }
 
     // ==================== 内部工具 ====================

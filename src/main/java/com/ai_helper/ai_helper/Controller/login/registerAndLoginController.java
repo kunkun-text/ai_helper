@@ -4,6 +4,7 @@ import com.ai_helper.ai_helper.Service.RegisterService;
 import com.ai_helper.ai_helper.pojo.dto.UserDto;
 import com.ai_helper.ai_helper.result.Result;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,13 +33,15 @@ public class registerAndLoginController {
     }
 
     @PostMapping("/login/student")
-    public Result login(@Valid @RequestBody UserDto userDto) {
-        return registerService.login(userDto);
+    public Result login(@Valid @RequestBody UserDto userDto, HttpServletRequest request) {
+        // 【N77 · 2026-10-15】传客户端 IP，供「失败次数过多短期锁定」计数
+        return registerService.login(userDto, request.getRemoteAddr());
     }
 
     @PostMapping("/login/teacher")
-    public Result Tlogin(@Valid @RequestBody UserDto userDto) {
-        return registerService.login(userDto);
+    public Result Tlogin(@Valid @RequestBody UserDto userDto, HttpServletRequest request) {
+        // 【N77 · 2026-10-15】传客户端 IP，供「失败次数过多短期锁定」计数
+        return registerService.login(userDto, request.getRemoteAddr());
     }
 
 

@@ -46,12 +46,23 @@ public class PasswordResetServiceImpl implements PasswordResetService {
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
+    /** 【N76】同一邮箱重置邮件发送冷却：60 秒一封，防邮件轰炸 */
+    private static final long RESET_EMAIL_COOLDOWN_SECONDS = 60;
+
     @Override
     public Result sendResetEmail(String email) {
-        // 1. 验证邮箱是否存在
+        // 【N76 · 2026-10-15】发送冷却（先于注册校验）：同一邮箱 60 秒内只发一封
+        Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
+                "password:reset:cooldown:" + email, "1", RESET_EMAIL_COOLDOWN_SECONDS, TimeUnit.SECONDS);
+        if (!Boolean.TRUE.equals(acquired)) {
+            return Result.error("发送过于频繁，请 1 分钟后再试");
+        }
+
+        // 1. 验证邮箱是否存在。【N76】未注册不再回显「该邮箱未注册」——防枚举，统一按已发送口径回复
         UserDto user = passwordResetMapper.selectByEmail(email);
         if (user == null) {
-            return Result.error("该邮箱未注册");
+            log.info("密码重置请求：邮箱未注册（统一文案回复，不向调用方回显） - {}", email);
+            return Result.success("若该邮箱已注册，重置邮件将发送至该邮箱，请查收");
         }
 
         // 2. 生成 token

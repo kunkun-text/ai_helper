@@ -53,6 +53,9 @@ public interface DefenseRecordsMapper {
 
     String getVideoUrlByUserIdAndTopicId(@Param("userId") String userId,@Param("topicId") Long topicId);
 
+    /** 【N71 · 2026-10-15】全量 video_url（孤儿预分配文件清理用：被引用的视频文件绝不能当孤儿删） */
+    List<String> selectAllVideoUrls();
+
     /**
      * 取该用户在该题目下的最新一条答辩记录（不区分状态）。
      * 附件上传/删除用它定位目标记录，避免每次上传都新建一条空壳记录。
