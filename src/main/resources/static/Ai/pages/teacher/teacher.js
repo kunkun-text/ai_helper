@@ -79,7 +79,11 @@ Page({
     radarDims: [], // 【N8】五维雷达图数据（逐轮平均）
     radarText: '', // 【N8】雷达图下方的文字汇总
     importMode: 'append', // 【N10】题库导入方式：append=追加 / replace=覆盖
-    importing: false // 【N10】导入进行中，防重复提交
+    importing: false, // 【N10】导入进行中，防重复提交
+    // 【2026-10-16 · 报告五维评分】基于上传报告的 AI 评析
+    docAnalyzing: false, // 分析进行中（按钮禁用 + 显示进度条）
+    docStage: '', // 当前阶段文案（由后端 stage 下发）
+    docPercent: 0 // 进度百分比（按阶段估算，不假装精确）
   },
 
   onLoad() {
@@ -94,6 +98,16 @@ Page({
     this.setData({
       editedUser: { ...this.data.user }
     });
+  },
+
+  // 【2026-10-16 · 报告五维评分】本页此前没有这两个生命周期钩子，
+  // 评析轮询的定时器必须在离开页面时清掉，否则会一直在后台请求。
+  onHide() {
+    this.stopReportDocPolling();
+  },
+
+  onUnload() {
+    this.stopReportDocPolling();
   },
 
   // 根据搜索条件加载答辩记录
@@ -467,6 +481,12 @@ loadMoreTopics() {
       // 主页面也需要重新加载答辩记录
       this.loadHomeDefenseRecords(true);
     }
+
+    // 【2026-10-16 · 报告五维评分】切后台时轮询会被 onHide 停掉，
+    // 回到前台若详情弹层还开着且任务在跑，就续上进度（否则进度条会一直冻住）。
+    if (this.data.selectedRecord && this.data.docAnalyzing) {
+      this.startReportDocPolling(this.data.selectedRecord.id);
+    }
   },
 
   loadUserInfo() {
@@ -707,7 +727,9 @@ loadMoreTopics() {
   },
 
   closeRecord() {
-    this.setData({ selectedRecord: null });
+    // 【2026-10-16 · 报告五维评分】关弹层必须停轮询，否则会对着已关闭的弹层一直请求
+    this.stopReportDocPolling();
+    this.setData({ selectedRecord: null, docAnalyzing: false, docStage: '', docPercent: 0 });
   },
 
   // 打开题目详情
@@ -953,12 +975,18 @@ loadMoreTopics() {
               aiVideoAnalysis: detailData.aiVideoAnalysis,
               aiReportAnalysis: detailData.aiReportAnalysis,
               aiAllAnalysis: detailData.aiAllAnalysis,
+              // 【2026-10-16 · 报告五维评分】基于**上传的报告文档**的评析（与上面 aiReportAnalysis 不是一回事）
+              reportDocAnalysis: detailData.reportDocAnalysis,
+              reportDocScore: detailData.reportDocScore,
+              analysisSource: detailData.analysisSource,
               topicName: detailData.topicName, // 确保有topicName字段用于WXML显示
               topic: detailData.topicName // 同时保留topic字段以保持与列表结构一致
             };
-            this.setData({ 
-              selectedRecord: feedbackDetail 
+            this.setData({
+              selectedRecord: feedbackDetail
             });
+            // 上次点了分析但没看完（关了弹层/切了后台）→ 重新打开时续上进度
+            this.resumeReportDocIfRunning(recordId);
           } else {
             wx.showToast({
               title: res.data.msg || '获取详情失败',
@@ -981,7 +1009,9 @@ loadMoreTopics() {
   },
 
   closeRecord() {
-    this.setData({ selectedRecord: null });
+    // 【2026-10-16 · 报告五维评分】关弹层必须停轮询，否则会对着已关闭的弹层一直请求
+    this.stopReportDocPolling();
+    this.setData({ selectedRecord: null, docAnalyzing: false, docStage: '', docPercent: 0 });
   },
 
   // 查看回答详情
@@ -1039,6 +1069,204 @@ loadMoreTopics() {
 
   closeAnswers() {
     this.setData({ selectedAnswers: null });
+  },
+
+  // ==================== 【2026-10-16 · 报告五维评分】 ====================
+  // 基于**上传的报告文档**的 AI 评析：教师手动触发 → 轮询进度 → 结果回填 selectedRecord。
+  // 与逐轮答辩链路完全独立，不碰 defense / defense-voice 的 AI 协议解析。
+  //
+  // ⚠️ 改本文件前须知：openAnswerDetail / closeAnswers / closeRecord 在文件里各有**两份重复定义**，
+  //    JS 对象字面量后者覆盖前者（生效的是靠后的那几份）。新增方法务必只定义一次，
+  //    且不要加到文件尾部去（会被同名方法遮蔽）。
+
+  /** 触发评析。幂等：同一份内容未变的报告会直接返回上次结果，不会重复调模型。 */
+  analyzeReportDoc() {
+    if (this.data.docAnalyzing) return; // 防连点
+    const record = this.data.selectedRecord;
+    if (!record || !record.id) return;
+
+    this.setData({ docAnalyzing: true, docStage: '正在提交分析任务…', docPercent: 5 });
+    wx.showLoading({ title: '提交中…' });
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/analyze/${record.id}`,
+      method: 'POST',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (handleUnauthorized(res)) {
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+          return;
+        }
+        if (res.data.code === 1) {
+          const data = res.data.data || {};
+          if (data.status === 'COMPLETED') {
+            // 幂等命中：这份报告之前已评析过且文件没变
+            this.applyReportDocResult(record.id, data.analysis, data.score);
+            this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
+            wx.showToast({ title: '已返回上次评析结果', icon: 'none' });
+          } else {
+            this.setData({ docStage: data.msg || '分析中…', docPercent: 12 });
+            this.startReportDocPolling(record.id);
+          }
+        } else {
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+          // 后端对「没传报告 / PDF 不支持 / 地址无效」都给了明确文案，直接展示
+          wx.showToast({ title: res.data.msg || '提交失败', icon: 'none', duration: 3500 });
+        }
+      },
+      fail: () => {
+        this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+        wx.showToast({ title: '网络错误或服务器无响应', icon: 'none' });
+      },
+      complete: () => {
+        wx.hideLoading();
+      }
+    });
+  },
+
+  /** 启动轮询：3 秒一次，最多 100 次（约 5 分钟）自超时，避免永远转圈 */
+  startReportDocPolling(defenseId) {
+    this.stopReportDocPolling(); // 先清旧 timer，防叠加
+    this._docPollCount = 0;
+    this._docPollTimer = setInterval(() => {
+      this._docPollCount += 1;
+      if (this._docPollCount > 100) {
+        this.stopReportDocPolling();
+        this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+        wx.showToast({ title: '分析耗时较长，已停止刷新，可稍后重新打开查看', icon: 'none', duration: 3500 });
+        return;
+      }
+      this.pollReportDocOnce(defenseId);
+    }, 3000);
+  },
+
+  /** 查询一次状态；拿到终态就停表并把结果写回 */
+  pollReportDocOnce(defenseId) {
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/status/${defenseId}`,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (handleUnauthorized(res)) {
+          this.stopReportDocPolling();
+          return;
+        }
+        if (res.data.code !== 1) return; // 单次失败不打断轮询
+        const data = res.data.data || {};
+        if (data.status === 'COMPLETED') {
+          this.stopReportDocPolling();
+          this.applyReportDocResult(defenseId, data.analysis, data.score);
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
+          wx.showToast({ title: '评析已生成', icon: 'success' });
+        } else if (data.status === 'FAILED') {
+          this.stopReportDocPolling();
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+          wx.showToast({ title: data.msg || '分析失败，可重试', icon: 'none', duration: 3500 });
+        } else if (data.status === 'PROCESSING') {
+          this.setData({
+            docAnalyzing: true,
+            docStage: data.stage || '分析中…',
+            docPercent: this.estimateDocPercent(data.stage)
+          });
+        }
+      },
+      fail: () => { /* 网络抖动不打断轮询，下一轮再试 */ }
+    });
+  },
+
+  stopReportDocPolling() {
+    if (this._docPollTimer) {
+      clearInterval(this._docPollTimer);
+      this._docPollTimer = null;
+    }
+  },
+
+  /** 打开详情时探一次状态：还在跑就续上轮询（切后台回来 / 上次没看完的情况） */
+  resumeReportDocIfRunning(defenseId) {
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/status/${defenseId}`,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (!res.data || res.data.code !== 1) return;
+        const data = res.data.data || {};
+        if (data.status === 'PROCESSING') {
+          this.setData({
+            docAnalyzing: true,
+            docStage: data.stage || '分析中…',
+            docPercent: this.estimateDocPercent(data.stage)
+          });
+          this.startReportDocPolling(defenseId);
+        } else if (data.status === 'COMPLETED' && data.analysis) {
+          // 库里有结果但详情接口没带过来（理论上不会），补一次
+          this.applyReportDocResult(defenseId, data.analysis, data.score);
+        }
+      },
+      fail: () => { /* 探测失败不影响详情展示 */ }
+    });
+  },
+
+  /**
+   * 后端只下发阶段文案，百分比在前端按阶段估算。
+   * 不假装精确：3B 单次调用耗时本身波动很大，做成「确定进度」反而会骗人。
+   */
+  estimateDocPercent(stage) {
+    const s = stage || '';
+    if (s.indexOf('排队') >= 0) return 10;
+    if (s.indexOf('读取') >= 0) return 20;
+    if (s.indexOf('抽取证据') >= 0) {
+      const m = s.match(/(\d+)\s*\/\s*(\d+)/);
+      if (m) {
+        return 25 + Math.round(45 * Number(m[1]) / Math.max(1, Number(m[2])));
+      }
+      return 40;
+    }
+    if (s.indexOf('生成点评') >= 0 || s.indexOf('生成评析') >= 0) return 75;
+    if (s.indexOf('评定分数') >= 0) return 85;
+    if (s.indexOf('校验') >= 0) return 90;
+    if (s.indexOf('完成') >= 0) return 100;
+    return 30;
+  },
+
+  /** 结果写回：弹层用路径式 setData；列表做一次原地更新，让 teal 标签立刻出现 */
+  applyReportDocResult(defenseId, analysis, score) {
+    const updates = {};
+    if (this.data.selectedRecord && analysis) {
+      updates['selectedRecord.reportDocAnalysis'] = analysis;
+      updates['selectedRecord.reportDocScore'] = score;
+      updates['selectedRecord.analysisSource'] = 'report';
+    }
+    const patch = (list) => (list || []).map((it) => (
+      String(it.id) === String(defenseId)
+        ? Object.assign({}, it, { analysisSource: 'report', reportDocScore: score })
+        : it
+    ));
+    if (this.data.homeDefenseRecords && this.data.homeDefenseRecords.length) {
+      updates.homeDefenseRecords = patch(this.data.homeDefenseRecords);
+    }
+    if (this.data.defenseRecords && this.data.defenseRecords.length) {
+      updates.defenseRecords = patch(this.data.defenseRecords);
+    }
+    if (this.data.searchDefenseRecords && this.data.searchDefenseRecords.length) {
+      updates.searchDefenseRecords = patch(this.data.searchDefenseRecords);
+    }
+    if (Object.keys(updates).length) {
+      this.setData(updates);
+    }
   },
 
   // 查看答辩报告文档

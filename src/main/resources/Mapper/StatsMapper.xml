@@ -76,7 +76,12 @@
             dt.topic_name AS topicName,
             dr.score AS score,
             dr.status AS status,
-            dr.defense_date AS defenseTime
+            dr.defense_date AS defenseTime,
+            <!-- 2026-10-16：补报告评析三列。此前只有 DefenseRecordsMapper 的列表查询补了，
+                 按课题导出走的是本查询，漏查会让「按课题导出」这条路丢字段 -->
+            dr.report_doc_score AS reportDocScore,
+            dr.analysis_source AS analysisSource,
+            dr.defense_mode AS defenseMode
         FROM defense_records dr
             JOIN users u ON dr.user_id = u.user_id
             JOIN defense_topics dt ON dr.topic_id = dt.topic_id

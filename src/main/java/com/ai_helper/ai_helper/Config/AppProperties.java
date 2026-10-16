@@ -36,6 +36,9 @@ public class AppProperties {
     /** 评分判分阈值配置（chatController 判分复核链路使用） */
     private Scoring scoring = new Scoring();
 
+    /** 上传报告文档的 AI 评析配置（2026-10-16 · 报告五维评分第一期） */
+    private ReportDoc reportDoc = new ReportDoc();
+
     @Data
     public static class Storage {
         /**
@@ -94,12 +97,21 @@ public class AppProperties {
             return rule;
         }
 
-        /** 答辩报告的默认规则（常见文档格式 + 50MB） */
+        /**
+         * 答辩报告的默认规则（50MB）。
+         *
+         * <p><b>【2026-10-16 · 报告五维评分第一期】白名单收窄为「可自动解析的四种格式」</b>：
+         * 原为 {@code pdf, doc, docx, xls, xlsx, ppt, pptx, txt}，但 PDF 需要引入 PDFBox
+         * （项目全程 {@code mvn -o} 离线编译，本地仓库没有该包），doc/xls/ppt 是需要 POI scratchpad
+         * 的旧二进制格式，四者都**无法在零依赖前提下抽出文本**。
+         * 留在白名单里会导致「能传但分析必然失败」，故直接下架并给明确提示，
+         * 而不是让学生传完才发现拿不到分。</p>
+         */
         static FileRule reportDefaults() {
             FileRule rule = new FileRule();
             rule.setMaxSize(50L * 1024 * 1024);
             rule.setAllowedExts(new ArrayList<>(Arrays.asList(
-                    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt")));
+                    "docx", "pptx", "xlsx", "txt")));
             return rule;
         }
     }
@@ -306,5 +318,101 @@ public class AppProperties {
 
         /** 【路线①】判"错误"档时的最终总分上限（五档表大错×0.5 → 7.5~15，取 15）。 */
         private double checklistErrorFinalCap = 15.0;
+    }
+
+    /**
+     * 上传报告文档的 AI 评析配置（2026-10-16 · 报告五维评分第一期）。
+     *
+     * <p>本功能的输入是**学生上传的报告文档**（docx/pptx/xlsx/txt），不是逐轮问答记录，
+     * 因此与 {@link Scoring} 那一套判分阈值完全独立，互不影响。</p>
+     *
+     * <p>全部是经验值，代码默认值即可运行，application.yml 不配置也能跑。</p>
+     */
+    @Data
+    public static class ReportDoc {
+
+        /** 是否启用本功能。默认关闭——与 {@code error-verdict-enabled} 同款做法：新链路先能一键回退 */
+        private boolean enabled = true;
+
+        // ---------- 文本抽取上限（安全边界，见 DocTextExtractor） ----------
+
+        /** 单个 zip 条目解压后的字节上限（防压缩炸弹） */
+        private long maxEntryBytes = 4L * 1024 * 1024;
+
+        /** 全部条目累计解压字节上限 */
+        private long maxTotalBytes = 40L * 1024 * 1024;
+
+        /** 压缩比上限，超过即判定为压缩炸弹 */
+        private int maxCompressionRatio = 200;
+
+        /** 抽取出的纯文本字数上限，超出截断（不抛异常，避免整场失败） */
+        private int maxChars = 60000;
+
+        // ---------- 分级策略（模型只有 16k 上下文） ----------
+
+        /**
+         * A 档上限：不超过该字数就直接评（超过才走"分段抽证据"）。
+         *
+         * <p><b>2026-10-16 实测由 2500 上调到 10000。</b>原值保守了约 8 倍：实测 5520 字材料
+         * 仅占 3729 tokens，16k 上下文完全装得下，且**直接评的质量明显好于分段抽证据**——
+         * 同一份材料走证据路径时出现「维度错配 / 丢一维 / 把未来展望当创新点」，
+         * 直评则是五维全对。中间层「维度|证据点|原文片段」反而把 3B 搞乱了，
+         * 而它存在的唯一理由是省上下文，故只在真正超长时才启用。</p>
+         *
+         * <p>10000 字 ≈ 6800 tokens，加 system 与输出仍在 16k 内且留有余量。</p>
+         */
+        private int directScoreMaxChars = 10000;
+
+        /** B/C 档的切块字数上限（超过 {@link #directScoreMaxChars} 时按此切块抽证据） */
+        private int chunkMaxChars = 2500;
+
+        /** 最多抽多少块证据。超出部分丢弃并记日志——成本闸门，防止超长报告跑几十分钟 */
+        private int maxChunks = 8;
+
+        /** 证据抽取单次调用的 maxTokens */
+        private int evidenceMaxTokens = 700;
+
+        /** 点评调用（第一次模型调用）的 maxTokens */
+        private int finalMaxTokens = 450;
+
+        /**
+         * 评分调用（第二次模型调用，只依据点评打分）的 maxTokens。
+         *
+         * <p>输出只有一行评分行（十几个 token），取 40 是防模型夹带废话——
+         * 超长截断会让评分行残缺，解析失败会走重试，方向安全。</p>
+         */
+        private int scoreMaxTokens = 40;
+
+        /** 单个分析任务的总耗时预算（秒），超出即中止并置 FAILED（不写库） */
+        private int budgetSeconds = 240;
+
+        // ---------- 任务控制 ----------
+
+        /** 单飞锁 TTL（秒）：进程崩了也能自动过期，不会永久锁死 */
+        private int lockTtlSeconds = 600;
+
+        /** 状态键 TTL（小时） */
+        private int statusTtlHours = 24;
+
+        /** 僵态清理：判定 PROCESSING 超时（秒）；到点仍未完成即置 FAILED */
+        private int staleSeconds = 900;
+
+        /** 成果文本落库时是否附带"基于上传文档"的说明前缀 */
+        private boolean annotateSource = true;
+
+        /**
+         * 是否把抽取出的报告全文落库（{@code defense_records.report_text}）。
+         *
+         * <p><b>用途：评分依据事后复核</b>——学生申诉时能查出"当时模型收到的是哪份内容"。
+         * 此前抽取文本用完即弃（DOC-2 原口径），对一份要当成绩单用的结果来说，
+         * 这是可追溯性的短板，2026-10-16 拍板补上。</p>
+         *
+         * <p>落库时机在**评分之前**：分析失败时恰恰最需要这份证据。</p>
+         *
+         * <p>存储量级：单场最坏约 180KB（{@link #maxChars} 60000 中文字），
+         * 常见报告 3~10KB，千场量级约 3~10MB。注意对应列必须是 MEDIUMTEXT——
+         * TEXT 的 64KB 上限会静默截断。</p>
+         */
+        private boolean storeText = true;
     }
 }

@@ -930,6 +930,10 @@ Page({
             aiVideoAnalysis: detailData.aiVideoAnalysis || '暂无视频分析',
             aiReportAnalysis: detailData.aiReportAnalysis || '暂无报告分析',
             aiAllAnalysis: detailData.aiAllAnalysis || '暂无综合评价',
+            // 【2026-10-16 · 报告五维评分】基于上传报告文档的真实评析（教师端触发后才会有）。
+            // 这里**不给「暂无」占位**：该链路没跑过时整块不显示，与上面几块的语义不同。
+            reportDocAnalysis: detailData.reportDocAnalysis || '',
+            reportDocScore: detailData.reportDocScore,
             feedback: detailData.aiAllAnalysis || '暂无综合评价'
           };
           

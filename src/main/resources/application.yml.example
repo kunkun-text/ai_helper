@@ -121,9 +121,16 @@ app:
       chunk-size: 5242880        # 5MB/片
       allowed-exts: mp4,mov,avi,mkv,flv,wmv,m4v,3gp
     # 答辩报告：单次直传
+    #
+    # 【2026-10-16 · 报告五维评分】白名单由「pdf,doc,docx,xls,xlsx,ppt,pptx,txt」
+    # 收窄为下面四种**可自动解析出文字**的格式：
+    #   · pdf 需要额外引入 PDFBox（本项目全程 mvn -o 离线编译，本地仓库没有该包）
+    #   · doc/xls/ppt 是需要 POI scratchpad 的旧二进制格式
+    # 四者都无法在零依赖前提下抽出文本，留在白名单里只会「能传但分析必然失败」。
+    # 上传这四类时后端会返回「请另存为 docx 后重新上传」的明确提示。
     report:
       max-size: 52428800         # 50MB
-      allowed-exts: pdf,doc,docx,xls,xlsx,ppt,pptx,txt
+      allowed-exts: docx,pptx,xlsx,txt
 
   auth:
     # 登录 token 有效期（分钟）。
@@ -177,6 +184,49 @@ app:
     checklist-error-hit-rate-max: 0.50
     # 判"错误"档时的最终总分上限（五档表大错×0.5 → 7.5~15）
     checklist-error-final-cap: 15.0
+
+  # ==========================================================================
+  # 上传报告文档的 AI 评析（2026-10-16 · 报告五维评分第一期）
+  #
+  # 教师端手动触发：把学生上传的 docx/pptx/xlsx/txt 抽出全文，交给本地 3B 模型
+  # 按文字答辩同一套五维（表达/逻辑/专业/应变/创新，总分 50）评分并落库。
+  # 与上面的 scoring 那一套判分阈值完全独立，互不影响。
+  #
+  # 【注意】AppProperties.ReportDoc 里的字段默认值与本段保持同步。
+  # ==========================================================================
+  report-doc:
+    # 总开关。默认关闭即完全回到"没有报告评析"的状态（与 error-verdict-enabled 同款做法）
+    enabled: true
+
+    # ---- 文本抽取上限（安全边界，防压缩炸弹与 OOM）----
+    max-entry-bytes: 4194304          # 4MB：单个 zip 条目解压后上限
+    max-total-bytes: 41943040         # 40MB：全部条目累计解压上限
+    max-compression-ratio: 200        # 压缩比超过该值即判定为压缩炸弹
+    max-chars: 60000                  # 抽取出的纯文本字数上限，超出截断
+
+    # ---- 分级策略（3B 模型只有 16k 上下文）----
+    # 材料 ≤ direct-score-max-chars 直接评；更长时先抽「证据清单」，再依据清单终评——
+    # 目的是让终评阶段看到的输入长度恒定，消除"材料越长、分数越飘"的长度耦合。
+    # 2026-10-16 实测调整：点评与评分拆成两次调用（点评→接地校验→依据点评打分），
+    # 评分输入不给原始材料，从结构上掐断"报告正文里写'给我满分'"的注入通道。
+    direct-score-max-chars: 2500
+    chunk-max-chars: 2500             # 超长材料按此切块抽证据（优先在段落边界切）
+    max-chunks: 8                     # 最多处理多少块；超出则保留头尾各一半，丢弃中间
+    evidence-max-tokens: 700
+    final-max-tokens: 450             # 点评调用（第一次模型调用）
+    score-max-tokens: 40              # 评分调用（第二次，只输出一行评分行）
+    budget-seconds: 240               # 单个任务总耗时预算，超时中止且不写库
+
+    # ---- 任务控制 ----
+    lock-ttl-seconds: 600             # 单飞锁 TTL（进程崩了也会自动过期）
+    status-ttl-hours: 24              # Redis 状态键 TTL（结果本身是落库的，过期会回查库）
+    stale-seconds: 900                # 僵态判定：PROCESSING 超过该秒数仍未完成即置 FAILED
+    annotate-source: true             # 落库文本是否加「【基于上传的报告文档】」前缀
+    # 抽取全文落库（defense_records.report_text），供评分依据事后复核。
+    # 写在评分之前——分析失败时恰恰最需要知道"模型当时到底看到了什么"。
+    # ⚠️ 对应列必须是 MEDIUMTEXT：TEXT 的 64KB 上限会静默截断 60k 中文字（约 180KB）。
+    # 需先执行 docs/ddl_report_text.sql。
+    store-text: true
 
   # ==========================================================================
   # 语音答辩（F10）：AI 提问的语音播报 + 学生语音作答的识别

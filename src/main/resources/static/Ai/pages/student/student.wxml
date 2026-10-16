@@ -105,7 +105,11 @@
       <view class="card">
         <view class="upload-box">
           <view class="upload-icon">报告</view>
-          <text class="muted">上传答辩报告（PDF / Word 格式）</text>
+          <!-- 【2026-10-16 · 报告五维评分】报告白名单收窄为可自动解析文字的四种格式：
+               PDF 与旧版 .doc/.xls/.ppt 已下架（零依赖抽不出文字，传了也拿不到评析）。
+               上传这几类时后端会返回「请另存为 docx 后重新上传」的明确提示。 -->
+          <text class="muted">上传答辩报告（Word / PPT / Excel / TXT 格式）</text>
+          <text class="muted">支持 docx / pptx / xlsx / txt；PDF 请先另存为 docx</text>
 
           <button class="outline-btn" bindtap="selectReport" disabled="{{isReportUploading}}">
             {{hasUploadedReport ? '重新上传报告' : '选择报告，开始上传'}}
@@ -340,6 +344,18 @@
             <text class="label">AI综合评价</text>
             <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
               <text class="value feedback">{{selectedRecord.aiAllAnalysis}}</text>
+            </scroll-view>
+          </view>
+
+          <!-- 【2026-10-16 · 报告五维评分】基于**上传的报告文档**的真实评析。
+               与上面的「AI报告分析」不是一回事：那块是答辩收尾时模型凭空写的，
+               本块是后端读取上传文档的文字后按五维评分得到的。
+               由教师端触发；未生成时不显示（不是"暂无"，而是这条链路还没跑过）。 -->
+          <view class="form-item" wx:if="{{selectedRecord.reportDocAnalysis}}">
+            <text class="label">报告 AI 评析（基于上传的文件）</text>
+            <text class="g-tag g-tag-doc">基于上传的报告文档</text>
+            <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
+              <text class="value feedback">{{selectedRecord.reportDocAnalysis}}</text>
             </scroll-view>
           </view>
           <view class="detail-actions" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">

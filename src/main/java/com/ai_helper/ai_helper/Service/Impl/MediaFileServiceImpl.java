@@ -155,9 +155,7 @@ public class MediaFileServiceImpl implements MediaFileService {
 
         String ext = UploadUtils.extensionOf(file.getOriginalFilename());
         if (!rule.getAllowedExts().contains(ext)) {
-            throw new BusinessException("不支持的文件格式"
-                    + (ext.isEmpty() ? "" : "（." + ext + "）")
-                    + "，仅支持：" + String.join(" / ", rule.getAllowedExts()));
+            throw new BusinessException(describeUnsupportedExt(kind, ext, rule));
         }
         if (file.getSize() > rule.getMaxSize()) {
             throw new BusinessException(kind.getLabel() + "过大：" + UploadUtils.readableSize(file.getSize())
@@ -178,6 +176,25 @@ public class MediaFileServiceImpl implements MediaFileService {
         } catch (Exception e) {
             log.warn("文件头校验读取失败（放行由后续解析兜底） - file: {}", file.getOriginalFilename());
         }
+    }
+
+    /**
+     * 格式不支持的提示文案。
+     *
+     * <p>【2026-10-16 · 报告五维评分】报告白名单收窄为 docx/pptx/xlsx/txt 之后，
+     * 学生手上的 PDF 与旧版 .doc/.xls/.ppt 会被拒。这两类格式**不是本系统用不了**，
+     * 而是「零依赖前提下抽不出文字」，所以给一句**可操作**的指引（另存为），
+     * 而不是干巴巴列一遍白名单——否则学生只会对着同一个文件反复重试。</p>
+     */
+    private String describeUnsupportedExt(MediaKind kind, String ext, AppProperties.FileRule rule) {
+        if (kind == MediaKind.REPORT
+                && ("pdf".equals(ext) || "doc".equals(ext) || "xls".equals(ext) || "ppt".equals(ext))) {
+            return "暂不支持 ." + ext + " 格式的报告，请在 Word / PPT / Excel 里"
+                    + "「另存为」docx / pptx / xlsx 后重新上传（系统需要读取文档文字来自动评分）";
+        }
+        return "不支持的文件格式"
+                + (ext.isEmpty() ? "" : "（." + ext + "）")
+                + "，仅支持：" + String.join(" / ", rule.getAllowedExts());
     }
 
     /** PDF 魔数：%PDF */

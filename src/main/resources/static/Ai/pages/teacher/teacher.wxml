@@ -67,7 +67,7 @@
           bindrefresherrefresh="onDefenseRecordsRefresh"
           style="max-height: 450rpx;">
           <block wx:for="{{defenseRecords}}" wx:key="id">
-            <view class="record-item" data-id="{{item.id}}">
+            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : ''}}" data-id="{{item.id}}">
               <view class="record-avatar">AI</view>
               <view class="record-body">
                 <view class="record-row">
@@ -79,6 +79,10 @@
               </view>
               <view class="record-score">
                 <text class="score">{{item.score}}分</text>
+                <!-- 【2026-10-16 · 报告五维评分】沿用同一容器，用 teal 标签 + 左侧色条
+                     刻意强调「这条评析基于上传的文件」，与普通答辩记录区分开。
+                     判据用 analysisSource 而不是分数：0 分（报告极差）也要能显示。 -->
+                <text wx:if="{{item.analysisSource === 'report'}}" class="g-tag g-tag-doc">报告评析 {{item.reportDocScore}}分</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -133,7 +137,7 @@
         style="height: 900rpx;">
         <view class="record-list full">
           <block wx:for="{{defenseRecords}}" wx:key="id">
-            <view class="record-item" data-id="{{item.id}}">
+            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : ''}}" data-id="{{item.id}}">
               <view class="record-avatar">AI</view>
               <view class="record-body">
                 <view class="record-row">
@@ -145,6 +149,10 @@
               </view>
               <view class="record-score">
                 <text class="score">{{item.score}}分</text>
+                <!-- 【2026-10-16 · 报告五维评分】沿用同一容器，用 teal 标签 + 左侧色条
+                     刻意强调「这条评析基于上传的文件」，与普通答辩记录区分开。
+                     判据用 analysisSource 而不是分数：0 分（报告极差）也要能显示。 -->
+                <text wx:if="{{item.analysisSource === 'report'}}" class="g-tag g-tag-doc">报告评析 {{item.reportDocScore}}分</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -444,7 +452,28 @@
           <text class="label">答辩报告</text>
           <text class="value">文档地址无效或未上传</text>
         </view>
-        
+
+        <!-- 【2026-10-16 · 报告五维评分】基于**上传的报告文档**的 AI 评析。
+             紧贴报告文件本身放置：教师能看到"正在分析的是这份材料"。
+             与下面几块「AI 视频分析 / AI 报告分析」是两回事——那几块是答辩收尾时
+             模型凭空写的，本块是真实读取文档文字后的评分。 -->
+        <view class="form-item" wx:if="{{selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc'}}">
+          <text class="label">报告 AI 评析（基于上传的文件）</text>
+          <button class="primary-btn" bindtap="analyzeReportDoc" disabled="{{docAnalyzing}}">
+            {{docAnalyzing ? docStage : (selectedRecord.reportDocAnalysis ? '重新生成评析' : 'AI 评分（基于报告）')}}
+          </button>
+          <view wx:if="{{docAnalyzing}}" class="g-bar" style="margin-top: 16rpx;">
+            <view class="g-bar-inner" style="width: {{docPercent}}%;"></view>
+          </view>
+          <text wx:if="{{docAnalyzing}}" class="muted">{{docStage}}</text>
+          <view wx:if="{{selectedRecord.reportDocAnalysis}}" class="doc-analysis-box">
+            <text class="g-tag g-tag-doc">基于上传的报告文档</text>
+            <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
+              <text class="value feedback">{{selectedRecord.reportDocAnalysis}}</text>
+            </scroll-view>
+          </view>
+        </view>
+
         <!-- AI分析结果 -->
         <view class="form-item" wx:if="{{selectedRecord.aiVideoAnalysis}}">
           <text class="label">AI视频分析</text>

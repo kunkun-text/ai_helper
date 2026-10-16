@@ -386,6 +386,22 @@
   margin-bottom: 16rpx;
 }
 
+/* 【2026-10-16 · 报告五维评分】该场次已有「基于上传报告」的 AI 评析。
+   只加修饰类，不动上面的 .record-item 基础规则——避免影响其余记录的既有外观。
+   色值走全局变量（app.wxss 的 page{}），带回退值以防变量未定义。 */
+.record-item.doc-analyzed {
+  background: var(--g-accent-bg, #e0f2f1);
+  border-left: 6rpx solid var(--g-accent, #00897b);
+}
+
+/* 【2026-10-16】弹层里报告评析结果的容器：标签 + 可滚动正文 */
+.doc-analysis-box {
+  margin-top: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
 .record-avatar {
   width: 72rpx;
   height: 72rpx;

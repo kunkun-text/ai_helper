@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Controller.teacher;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.util.CsvUtils;
+import com.ai_helper.ai_helper.util.DocScoreParser;
 import com.ai_helper.ai_helper.interceptor.RequireRole;
 import com.ai_helper.ai_helper.mapper.StatsMapper;
 import com.ai_helper.ai_helper.pojo.enums.UserRole;
@@ -83,7 +84,10 @@ public class ExportController {
         // UTF-8 BOM：让 Excel 正确识别中文
         writer.write('\ufeff');
         // 行分隔符固定 CRLF（writer.println 随服务器平台变化，Linux 上会是 LF）
-        writer.write("答辩ID,学生姓名,学号,课题,得分,状态,答辩时间\r\n");
+        // 【2026-10-16】末尾追加「报告评析得分/等级」两列。**追加而非插入**——
+        // 已有教师可能按列序做二次处理，插在中间会错位。等级算法与报告评析的落库文本同源
+        // （都走 DocScoreParser.gradeLevel），保证导出与界面看到的档位一致。
+        writer.write("答辩ID,学生姓名,学号,课题,得分,状态,答辩时间,报告评析得分,报告评析等级\r\n");
         for (DefenseRecordsVo vo : list) {
             writer.write(String.join(",",
                     csv(vo.getDefenseRecordId()),
@@ -92,7 +96,9 @@ public class ExportController {
                     csv(vo.getTopicName()),
                     csv(vo.getScore()),
                     csv(statusText(vo.getStatus())),
-                    csv(vo.getDefenseTime() == null ? "" : vo.getDefenseTime().toString())));
+                    csv(vo.getDefenseTime() == null ? "" : vo.getDefenseTime().toString()),
+                    csv(vo.getReportDocScore()),
+                    csv(reportDocLevel(vo))));
             writer.write("\r\n");
         }
         writer.flush();
@@ -159,5 +165,21 @@ public class ExportController {
             case "graded" -> "已评分";
             default -> status;
         };
+    }
+
+    /**
+     * 报告评析等级（2026-10-16）。
+     *
+     * <p>复用 {@link DocScoreParser#gradeLevel}，与报告评析落库文本、界面显示的档位**同源**——
+     * 避免"导出的等级"和"页面上看到的等级"不一致。</p>
+     *
+     * <p>未做过报告评析的场次返回空串（不臆造 0 分，0 分有明确含义：跑题/无可评内容）。</p>
+     */
+    private static String reportDocLevel(DefenseRecordsVo vo) {
+        Double score = vo.getReportDocScore();
+        if (score == null) {
+            return "";
+        }
+        return DocScoreParser.gradeLevel(score);
     }
 }

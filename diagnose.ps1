@@ -244,6 +244,29 @@ if ($mysqlOk -and $mysqlExePath) {
                 -Fix "执行 docs/ddl_system_feedback.sql（含该索引）"
         }
 
+        # 【2026-10-16 · 报告五维评分】defense_records 新增 4 列。
+        # 本项是**加列不是加表**，所以上面的 12 张表清单不变；但教师端答辩记录列表的
+        # 查询会读 analysis_source / report_doc_score，缺列会让整个列表报 Unknown column。
+        $colArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
+                     "-P", "$MysqlPort", "-N", "-B", "-e",
+                     "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='$MysqlDatabase' AND TABLE_NAME='defense_records' AND COLUMN_NAME IN ('report_doc_analysis','report_text','report_doc_score','defense_mode','analysis_source');")
+        $colRaw = & $mysqlExePath @colArgs 2>&1
+        $colCount = @($colRaw | Where-Object { "$_" -match '^\s*\d+\s*$' } | Select-Object -First 1) -join ""
+        $colOk = ($colCount -eq "5")
+        # report_text 单独提示：它是可追溯用的，缺了不报错也不影响评分，只是学生申诉时查不到依据
+        $textArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
+                      "-P", "$MysqlPort", "-N", "-B", "-e",
+                      "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='$MysqlDatabase' AND TABLE_NAME='defense_records' AND COLUMN_NAME='report_text';")
+        $textType = @((& $mysqlExePath @textArgs 2>&1) | Where-Object { "$_" -match '^\s*\w+\s*$' } | Select-Object -First 1) -join ""
+        if ($textType) { $textType = $textType.Trim() }
+        $textTypeOk = ($textType -eq "mediumtext")
+        Write-Check -Name "答辩记录扩展列（报告评析 report_doc_analysis / report_text / report_doc_score / defense_mode / analysis_source）" -Ok $colOk `
+            -Detail $(if ($colOk) { "5 列齐全" } else { "已有 $colCount / 5 列" }) `
+            -Fix "存量库执行（只需一次）：mysql -uroot -p $MysqlDatabase < docs/ddl_report_doc_analysis.sql 与 docs/ddl_report_text.sql"
+        Write-Check -Name "报告全文列类型为 MEDIUMTEXT（TEXT 的 64KB 上限会静默截断 60k 中文字）" -Ok $textTypeOk `
+            -Detail $(if ($textType) { "当前类型：$textType" } else { "列不存在" }) `
+            -Fix "ALTER TABLE defense_records MODIFY report_text MEDIUMTEXT NULL;"
+
         $scoreArgs = @("-u", $MysqlUser, "--password=$MysqlPassword", "-h", $MysqlHost,
                        "-P", "$MysqlPort", "-N", "-B", "-e",
                        "SELECT COUNT(*) FROM $MysqlDatabase.defense_score_record;")

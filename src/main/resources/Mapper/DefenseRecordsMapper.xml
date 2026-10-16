@@ -53,6 +53,9 @@
             dt.topic_name AS topicName,
             dr.score AS score,
             dr.status AS status,
+            dr.report_doc_score AS reportDocScore,
+            dr.analysis_source AS analysisSource,
+            dr.defense_mode AS defenseMode,
             dr.defense_date AS defenseTime
         FROM
             defense_records dr
@@ -77,7 +80,11 @@
             dr.report_url as defenseReportUrl,
             dr.video_analysis as aiVideoAnalysis,
             dr.report_analysis as aiReportAnalysis,
-            dr.feedback as aiAllAnalysis
+            dr.feedback as aiAllAnalysis,
+            dr.report_doc_analysis as reportDocAnalysis,
+            dr.report_doc_score as reportDocScore,
+            dr.analysis_source as analysisSource,
+            dr.defense_mode as defenseMode
         from
             defense_records dr
                 join users on dr.user_id = users.user_id
@@ -121,6 +128,9 @@
             dt.topic_name as topicName,
             dr.score,
             dr.status,
+            dr.report_doc_score as reportDocScore,
+            dr.analysis_source as analysisSource,
+            dr.defense_mode as defenseMode,
             dr.created_at as defenseTime
         from    defense_records dr
                     left join users u on u.user_id = dr.user_id
@@ -300,5 +310,47 @@
           AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = defense_records.defense_id)
           AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = defense_records.defense_id)
     </delete>
+
+    <!-- ========== 上传报告文档的 AI 评析（2026-10-16 · 报告五维评分第一期） ========== -->
+
+    <!-- 触发分析前的上下文：存在性 / 报告地址 / 既有结果（幂等）/ 课题名（喂 prompt） -->
+    <select id="selectReportDocTarget" resultType="java.util.HashMap">
+        SELECT
+            dr.defense_id          AS defenseId,
+            dr.report_url          AS reportUrl,
+            dr.report_doc_analysis AS reportDocAnalysis,
+            dr.report_doc_score    AS reportDocScore,
+            dr.analysis_source     AS analysisSource,
+            dt.topic_name          AS topicName
+        FROM defense_records dr
+                 LEFT JOIN defense_topics dt ON dt.topic_id = dr.topic_id
+        WHERE dr.defense_id = #{defenseId}
+    </select>
+
+    <!-- 只写这三个新列 + updated_at。
+         feedback / video_analysis / report_analysis / score 与本功能无关，一行都不能碰，
+         否则会覆盖逐轮答辩链路的数据（那三者由 insertAiFeedback / updateFinalResult 负责）。 -->
+    <update id="updateReportDocAnalysis">
+        UPDATE defense_records
+        SET report_doc_analysis = #{analysis},
+            report_doc_score    = #{score},
+            analysis_source     = #{source},
+            updated_at          = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!--
+      2026-10-16：把抽取出的报告全文落库（供评分依据复核）。
+
+      单独一个方法而不是并进 updateReportDocAnalysis，是为了**让它在评分之前就写**——
+      分析失败（解析不出五维、超时）时，恰恰最需要知道"模型当时到底看到了什么"，
+      而那时 updateReportDocAnalysis 根本不会被调用。
+    -->
+    <update id="updateReportText">
+        UPDATE defense_records
+        SET report_text = #{text},
+            updated_at  = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
 
 </mapper>

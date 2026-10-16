@@ -106,4 +106,34 @@ public interface DefenseRecordsMapper {
     int updateFinalResult(@Param("defenseId") Integer defenseId,
                           @Param("score") java.math.BigDecimal score,
                           @Param("summary") String summary);
+
+    /**
+     * 【2026-10-16 · 报告五维评分】取某场答辩的「上传报告评析」上下文。
+     *
+     * <p>返回 report_url / report_doc_analysis / report_doc_score / analysis_source / topic_name，
+     * 供触发分析前做存在性、格式与幂等判定，并给评分 prompt 提供课题名。</p>
+     */
+    java.util.Map<String, Object> selectReportDocTarget(@Param("defenseId") Integer defenseId);
+
+    /**
+     * 【2026-10-16 · 报告全文落库】写入抽取出的报告全文，供评分依据事后复核。
+     *
+     * <p><b>为什么单独一个方法、且在评分之前调用：</b>分析失败（解析不出五维 / 超时）时，
+     * 恰恰最需要知道"模型当时到底看到了什么"，而那时 {@link #updateReportDocAnalysis} 不会被调用。
+     * 只 set {@code report_text} + {@code updated_at}，不碰任何其它列。</p>
+     *
+     * @param text 抽取并归一化后的全文（上限由 {@code app.report-doc.max-chars} 截断）
+     */
+    int updateReportText(@Param("defenseId") Integer defenseId, @Param("text") String text);
+
+    /**
+     * 【2026-10-16 · 报告五维评分】写入基于上传报告文档的 AI 评析结果。
+     *
+     * <p><b>只 set 这三个新列 + updated_at</b>：feedback / video_analysis / report_analysis /
+     * score（答辩总分）与本功能无关，一行都不能碰——否则会覆盖既有链路的数据。</p>
+     */
+    int updateReportDocAnalysis(@Param("defenseId") Integer defenseId,
+                                @Param("analysis") String analysis,
+                                @Param("score") java.math.BigDecimal score,
+                                @Param("source") String source);
 }
