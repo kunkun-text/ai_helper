@@ -900,6 +900,11 @@ public class chatController {
                     String comment = (String) scores.getOrDefault("comment",
                             extractFeedbackFromResponse(aiResponse));
 
+                    // 【2026-10-19 · 方案A】本次是否经过「错误确认/错误扣分」分支：
+                    // 复核确认错误、半分档、要点核验压分。只有 false 时，才允许把
+                    // 「正文无错误措辞 + 模型自附（有明显回答错误）」当作显示噪声撤掉。
+                    boolean errorVerified = false;
+
                     // 【切题判定兜底 · 2026-09-17】点评以 [跑题] 开头时，无条件把五维分数强制归零。
                     // 为什么不依赖模型自觉：提示词里早就写了"答非所问必须给低分"，但实测 3B 模型对一段
                     // 与题目无关的 513 字文字仍连续给出 28~36 分。于是改为——让模型只回答"切题/跑题"这个
@@ -973,6 +978,7 @@ public class chatController {
                                     boolean recheckWrongMarked = isWrongAnswerMarkedInResponse(rescored)
                                             || (comment != null && comment.contains(WRONG_ANSWER_NOTE));
                                     if (recheckWrongMarked) {
+                                        errorVerified = true;
                                         if (newTotal < scoring().getWrongAnswerHalfScoreMaxTotal()) {
                                             scores = applyWrongAnswerHalfScore(scores);
                                             if (comment != null && !comment.contains(WRONG_ANSWER_NOTE)) {
@@ -1043,6 +1049,7 @@ public class chatController {
                                 log.warn("N45阈值复核异常，维持原判: {}", n45Ex.getMessage());
                             }
                             if (wrongConfirmed) {
+                                errorVerified = true;
                                 log.info("N45阈值触发但复核确认[错误]，改按半分计 - defenseId: {}, 原总分: {} → {}",
                                         defenseId, wrongModelTotal, scores != null ? applyWrongAnswerHalfScore(scores).get("totalScore") : "?");
                                 scores = applyWrongAnswerHalfScore(scores);
@@ -1059,6 +1066,7 @@ public class chatController {
                                         scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId, wrongModelTotal);
                             }
                         } else {
+                            errorVerified = true;
                             log.info("检测到明显回答错误，按半分计 - defenseId: {}, 原总分: {}",
                                     defenseId, wrongModelTotal);
                             scores = applyWrongAnswerHalfScore(scores);
@@ -1133,6 +1141,7 @@ public class chatController {
                             String rescored = runRecheck(completePrompt, RecheckType.WRONG_ANSWER,
                                     currentQuestion, userInput);
                             if (rescored != null && isWrongAnswerMarkedInResponse(rescored)) {
+                                errorVerified = true;
                                 scores = applyWrongAnswerHalfScore(scores);
                                 Object rc = scorePersistenceService.parseScoresFromResponse(rescored).get("comment");
                                 String recheckComment = (rc instanceof String s) ? s : "";
@@ -1198,6 +1207,7 @@ public class chatController {
                                 log.warn("要点核验判定与本题无关，强制五维归零 - defenseId: {}, 原总分: {}, 核验输出: {}",
                                         defenseId, ckPreTotal, ck.getRaw());
                             } else if (ck.getHitRate() >= 0 && ck.getHitRate() < scoring().getChecklistErrorHitRateMax()) {
+                                errorVerified = true;
                                 double cap = scoring().getChecklistErrorFinalCap();
                                 Map<String, Object> ckCapped = capScoresToMax(scores, cap);
                                 log.warn("要点核验判为「错误」档（命中率 {} < {}），压至 ≤ {} - defenseId: {}, 原总分: {} → {}",
@@ -1219,13 +1229,25 @@ public class chatController {
                     // （实测 defenseId=342 第 1/6 轮：全对答案被标该注，学生端可见）。
                     // 标注必须与分数同源；不一致时宁可不标 —— 上面各分支（复核确认[错误]/要点核验压分/
                     // 无关归零）都已经在真正扣分时补回标注。
+                    //
+                    // 【2026-10-19 · 方案A】新增第二条撤标条件：正文没有任何具体错误措辞、且本次
+                    // 没有经过任何错误确认/扣分分支时，后缀只是 3B 自行附加的显示噪声——
+                    // 不再受 32 分阈值限制（实测 defenseId=359 第 2/4 轮：正面点评 24/30 分却带该后缀）。
                     Object finalTotalObj = scores.get("totalScore");
-                    if (finalTotalObj instanceof Number finalTotalNum
-                            && finalTotalNum.doubleValue() >= scoring().getWrongAnswerHalfScoreMaxTotal()) {
-                        String fixedComment = stripWrongAnswerNote(comment);
-                        if (fixedComment != null && !fixedComment.equals(comment)) {
-                            log.warn("点评带错误标注但总分 {} 已达正常档（≥ {}），已撤掉标注 - defenseId: {}",
-                                    finalTotalNum.doubleValue(), scoring().getWrongAnswerHalfScoreMaxTotal(), defenseId);
+                    String fixedComment = stripWrongAnswerNote(comment);
+                    if (fixedComment != null && !fixedComment.equals(comment)) {
+                        Double finalTotal = finalTotalObj instanceof Number n ? n.doubleValue() : null;
+                        double normalThreshold = scoring().getWrongAnswerHalfScoreMaxTotal();
+                        boolean hasErrorCue = containsErrorCue(fixedComment);
+                        if (shouldStripWrongAnswerNote(comment, finalTotal, errorVerified, hasErrorCue, normalThreshold)) {
+                            boolean normalScore = finalTotal != null && finalTotal >= normalThreshold;
+                            if (normalScore) {
+                                log.warn("点评带错误标注但总分 {} 已达正常档（≥ {}），已撤掉标注 - defenseId: {}",
+                                        finalTotal, normalThreshold, defenseId);
+                            } else {
+                                log.warn("点评正文无具体错误措辞且未触发错误扣分，撤掉模型自行附加的错误标注 - defenseId: {}, 总分: {}",
+                                        defenseId, finalTotal);
+                            }
                             comment = fixedComment;
                         }
                     }
@@ -3424,6 +3446,37 @@ public class chatController {
         return cleaned.isEmpty()
                 ? "回答已按本轮内容评分，未发现需要额外提示的错误。"
                 : cleaned;
+    }
+
+    /**
+     * 【2026-10-19 · 方案A】是否应撤掉「（有明显回答错误）」标注（纯函数，便于单测）。
+     *
+     * <p>两个撤标条件（满足其一）：</p>
+     * <ol>
+     *   <li><b>正常档</b>：最终总分 ≥ 阈值（原 N64 口径）；</li>
+     *   <li><b>模型自附后缀</b>：本次没有经过任何错误确认/扣分分支（{@code errorVerified=false}），
+     *       且点评正文没有具体错误措辞（{@code hasErrorCue=false}）——
+     *       实测 defenseId=359 第 2/4 轮：正面点评 24/30 分却带该后缀，属显示噪声。</li>
+     * </ol>
+     *
+     * <p>真错误（正文有「说反/应为/有误」等措辞）或已触发错误扣分/复核确认的轮次，
+     * 即使分数不高也保留标注，避免“撤标后分数仍被压低”的二次矛盾。</p>
+     *
+     * @param comment       原始点评（含/不含标注均可）
+     * @param totalScore    服务端最终总分，可为 null
+     * @param errorVerified 本次是否经过错误确认/扣分分支
+     * @param hasErrorCue   去掉标注后的正文是否含具体错误措辞
+     * @param normalThreshold N64 正常档阈值（默认 32）
+     * @return true = 应撤掉标注
+     */
+    static boolean shouldStripWrongAnswerNote(String comment, Double totalScore, boolean errorVerified,
+                                              boolean hasErrorCue, double normalThreshold) {
+        if (comment == null || !comment.contains(WRONG_ANSWER_NOTE)) {
+            return false;
+        }
+        boolean normalScore = totalScore != null && totalScore >= normalThreshold;
+        boolean autoSuffixOnly = !errorVerified && !hasErrorCue;
+        return normalScore || autoSuffixOnly;
     }
 
     /** 归一化学生回答/题目文本，用于长度判定与复制粘贴比对：转小写、去空白、标点、符号、Markdown 标记 */

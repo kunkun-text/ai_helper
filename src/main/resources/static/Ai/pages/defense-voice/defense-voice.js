@@ -922,9 +922,27 @@ Page({
     let sum = 0;
     for (let i = 0; i < 5; i++) sum += dims[i];
     result.score = hasScore ? sum : null;
-    result.totalScore = result.score;
+    // 【2026-10-19】普通轮不设置 totalScore；只有最终总结消息才设置，
+    // 避免完成弹窗把最后一轮分数当总成绩，也避免每条消息重复渲染“总得分”。
+    result.totalScore = null;
     result.evaluation = hasScore ? dims.map((v, i) => `${dimLabels[i]}:${v}`).join(' ') : '';
     result.displayText = comment || result.evaluation;
+
+    if (result.summary) {
+      const markedTotal = this.extractTotalScore(text);
+      let total = markedTotal;
+      if (total === null) {
+        let m = result.summary.match(/总分\s*[:：]?\s*(\d+(?:\.\d+)?)\s*\/\s*50/);
+        if (!m) m = result.summary.match(/(\d+(?:\.\d+)?)\s*\/\s*50/);
+        if (m) total = parseFloat(m[1]);
+      }
+      result.totalScore = total;
+      // 总结消息只展示总平均分，不再展示最后一轮的五维与分数
+      result.score = null;
+      result.evaluation = '';
+      result.displayText = comment || ''; // 避免把已清空的五维串留在气泡正文里
+    }
+
     if (result.question) this.markQuestionNumber(result);
     return result;
   },

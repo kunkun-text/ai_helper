@@ -133,7 +133,7 @@
       </view>
       <scroll-view class="finish-body" scroll-y="true">
         <view wx:if="{{lastAiMessage && lastAiMessage.totalScore !== null}}" class="finish-total-score">
-          <text class="finish-score-label">总得分</text>
+          <text class="finish-score-label">总平均得分</text>
           <text class="finish-score-value">{{lastAiMessage.totalScore}}</text>
           <text class="finish-score-unit">分</text>
         </view>

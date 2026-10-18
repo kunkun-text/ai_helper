@@ -359,11 +359,33 @@ Page({
     for (let i = 0; i < 5; i++) sum += dims[i];
     // 展示总分一律 = 五维之和，保证"加起来对得上总分"
     result.score = hasScore ? sum : null;
-    result.totalScore = result.score;
+    // 【2026-10-19】普通轮不设置 totalScore；只有最终总结消息才设置。
+    // 旧实现无条件 totalScore = score，导致：
+    //   ① 每条消息都多渲染一个“总得分”（与本轮分数重复）；
+    //   ② 总结消息里的评分行仍是最后一轮分数，完成弹窗把最后一轮当成了总成绩。
+    result.totalScore = null;
     // 无评分行的回复（如开场白）不展示五维评价，避免渲染出"表达:0 逻辑:0…"的全 0 区块
     result.evaluation = hasScore ? dims.map((v, i) => `${dimLabels[i]}:${v}`).join(' ') : '';
     // 气泡只显示点评（自然语言），评分/下一题走下方结构化区块，避免重复
     result.displayText = comment || result.evaluation;
+
+    // 最终总结：总平均分由后端汇总后写在总结文本里（如「总分17.5/50」）。
+    // 以总结文本为准；解析不到时保留 null，宁可不显示也不拿最后一轮分数冒充总分。
+    if (result.summary) {
+      const markedTotal = this.extractTotalScore(text);
+      let total = markedTotal;
+      if (total === null) {
+        let m = result.summary.match(/总分\s*[:：]?\s*(\d+(?:\.\d+)?)\s*\/\s*50/);
+        if (!m) m = result.summary.match(/(\d+(?:\.\d+)?)\s*\/\s*50/);
+        if (m) total = parseFloat(m[1]);
+      }
+      result.totalScore = total;
+      // 总结消息只展示总平均分，不再展示最后一轮的五维与分数
+      result.score = null;
+      result.evaluation = '';
+      result.displayText = comment || ''; // 避免把已清空的五维串留在气泡正文里
+    }
+
     if (result.question) this.markQuestionNumber(result);
     return result;
   },
