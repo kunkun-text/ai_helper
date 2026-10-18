@@ -78,11 +78,11 @@
                 <text class="record-date">{{item.defenseTime}}</text>
               </view>
               <view class="record-score">
-                <text class="score">{{item.score}}分</text>
-                <!-- 【2026-10-16 · 报告五维评分】沿用同一容器，用 teal 标签 + 左侧色条
-                     刻意强调「这条评析基于上传的文件」，与普通答辩记录区分开。
-                     判据用 analysisSource 而不是分数：0 分（报告极差）也要能显示。 -->
-                <text wx:if="{{item.analysisSource === 'report'}}" class="g-tag g-tag-doc">报告评析 {{item.reportDocScore}}分</text>
+                <!-- 【2026-10-18】报告评析场次没有逐轮总分（0/NULL）时，主分数显示报告评析分，
+                     并用小标签说明来源；有逐轮总分时仍显示答辩总分，报告分放 teal 标签。 -->
+                <text wx:if="{{item.scoreKind === 'report'}}" class="score-kind">报告评析</text>
+                <text class="score">{{item.displayScore}}分</text>
+                <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -148,11 +148,11 @@
                 <text class="record-date">{{item.defenseTime}}</text>
               </view>
               <view class="record-score">
-                <text class="score">{{item.score}}分</text>
-                <!-- 【2026-10-16 · 报告五维评分】沿用同一容器，用 teal 标签 + 左侧色条
-                     刻意强调「这条评析基于上传的文件」，与普通答辩记录区分开。
-                     判据用 analysisSource 而不是分数：0 分（报告极差）也要能显示。 -->
-                <text wx:if="{{item.analysisSource === 'report'}}" class="g-tag g-tag-doc">报告评析 {{item.reportDocScore}}分</text>
+                <!-- 【2026-10-18】报告评析场次没有逐轮总分（0/NULL）时，主分数显示报告评析分，
+                     并用小标签说明来源；有逐轮总分时仍显示答辩总分，报告分放 teal 标签。 -->
+                <text wx:if="{{item.scoreKind === 'report'}}" class="score-kind">报告评析</text>
+                <text class="score">{{item.displayScore}}分</text>
+                <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -453,26 +453,29 @@
           <text class="value">文档地址无效或未上传</text>
         </view>
 
-        <!-- 【2026-10-16 · 报告五维评分】基于**上传的报告文档**的 AI 评析。
-             紧贴报告文件本身放置：教师能看到"正在分析的是这份材料"。
-             与下面几块「AI 视频分析 / AI 报告分析」是两回事——那几块是答辩收尾时
-             模型凭空写的，本块是真实读取文档文字后的评分。 -->
+        <!-- 【2026-10-18】AI 对整份报告的综合评价（基于上传的文件，约 400~700 字）。
+             打开本弹层时若「有报告但缺总评」会自动提交生成任务并轮询；
+             这里按 长文 / 生成中 / 失败 三态展示，不留空白。 -->
         <view class="form-item" wx:if="{{selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc'}}">
-          <text class="label">报告 AI 评析（基于上传的文件）</text>
-          <button class="primary-btn" bindtap="analyzeReportDoc" disabled="{{docAnalyzing}}">
-            {{docAnalyzing ? docStage : (selectedRecord.reportDocAnalysis ? '重新生成评析' : 'AI 评分（基于报告）')}}
-          </button>
-          <view wx:if="{{docAnalyzing}}" class="g-bar" style="margin-top: 16rpx;">
-            <view class="g-bar-inner" style="width: {{docPercent}}%;"></view>
+          <text class="label">报告 AI 综合评价（基于上传的文件）</text>
+          <view wx:if="{{selectedRecord.reportDocSummary}}" class="doc-summary-box">
+            <text class="doc-summary-text">{{selectedRecord.reportDocSummary}}</text>
           </view>
-          <text wx:if="{{docAnalyzing}}" class="muted">{{docStage}}</text>
-          <view wx:if="{{selectedRecord.reportDocAnalysis}}" class="doc-analysis-box">
-            <text class="g-tag g-tag-doc">基于上传的报告文档</text>
-            <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
-              <text class="value feedback">{{selectedRecord.reportDocAnalysis}}</text>
-            </scroll-view>
+          <!-- 【2026-10-18】打开弹层时若缺总评会自动提交生成任务；这里展示进度 -->
+          <view wx:elif="{{feedbackSummaryGenerating}}" class="doc-summary-loading">
+            <view class="g-bar">
+              <view class="g-bar-inner" style="width: 60%;"></view>
+            </view>
+            <text class="muted">{{feedbackSummaryStage || '正在生成综合评价…'}}</text>
           </view>
+          <text wx:elif="{{feedbackSummaryError}}" class="muted">{{feedbackSummaryError}}</text>
+          <text wx:else class="muted">该报告还没有生成综合评价。请到「查看回答详情」里生成报告评析后再查看。</text>
         </view>
+
+        <!-- 【2026-10-18】基于上传报告文档的 AI 评析已迁到「回答详情」弹层：
+             报告评析场次通常没有逐轮作答，「查看回答详情」此前是空白，
+             而「查看反馈」里却放着报告评析——现在统一到回答详情，
+             并紧贴评析提供「查看文档」入口，教师可同屏对照。 -->
 
         <!-- AI分析结果 -->
         <view class="form-item" wx:if="{{selectedRecord.aiVideoAnalysis}}">
@@ -507,6 +510,52 @@
         <text class="modal-close" bindtap="closeAnswers">×</text>
       </view>
       <scroll-view class="modal-body" scroll-y="true">
+        <!-- 【2026-10-18 · 报告五维评分】基于上传报告文档的 AI 评析（从「查看反馈」迁入）。
+             本弹层是教师核对「AI 看到了什么」的地方；报告评析场次没有逐轮作答，
+             若无本区块就是一片空白。五维拆成独立小卡片，形态对齐文字答辩「每题一条评语」。 -->
+        <view wx:if="{{answerDocInfo && (answerDocInfo.defenseReportUrl || answerDocInfo.reportDocAnalysis)}}" class="form-item">
+          <text class="label">报告 AI 评析（基于上传的文件）</text>
+          <view class="doc-actions">
+            <button
+              wx:if="{{answerDocInfo.defenseReportUrl && answerDocInfo.defenseReportUrl !== 'abc'}}"
+              class="outline-btn"
+              bindtap="viewDefenseReport"
+              data-url="{{answerDocInfo.defenseReportUrl}}">查看文档</button>
+            <button
+              class="primary-btn"
+              bindtap="analyzeReportDoc"
+              disabled="{{docAnalyzing}}">
+              {{docAnalyzing ? docStage : (answerDocInfo.reportDocAnalysis ? '重新生成评析' : 'AI 评分（基于报告）')}}
+            </button>
+          </view>
+          <view wx:if="{{docAnalyzing}}" class="g-bar" style="margin-top: 16rpx;">
+            <view class="g-bar-inner" style="width: {{docPercent}}%;"></view>
+          </view>
+          <text wx:if="{{docAnalyzing}}" class="muted">{{docStage}}</text>
+
+          <!-- 成绩单抬头：总分 / 等级 / 服务端警告（跑题、接地失败） -->
+          <view wx:if="{{answerDocSummary}}" class="doc-score-summary">
+            <text class="doc-total">总分 {{answerDocSummary.total}}/50</text>
+            <text wx:if="{{answerDocSummary.grade}}" class="g-tag g-tag-doc">等级 {{answerDocSummary.grade}}</text>
+            <view wx:for="{{answerDocSummary.warnings}}" wx:key="*this" class="doc-warn">⚠️ {{item}}</view>
+          </view>
+
+          <!-- 五维小卡片：每维一条短评；⚠️ = 该维点评自认缺失、分数已被服务端压低 -->
+          <block wx:if="{{answerDocDims.length > 0}}">
+            <view wx:for="{{answerDocDims}}" wx:key="name" class="doc-dim-item">
+              <view class="doc-dim-head">
+                <text class="doc-dim-name">{{item.missing ? '⚠️ ' : ''}}{{item.name}}</text>
+                <text class="doc-dim-score">{{item.score}} 分</text>
+              </view>
+              <text class="doc-dim-comment">{{item.comment}}</text>
+            </view>
+          </block>
+          <!-- 格式漂移兜底：解析不出五维时展示原文，绝不静默丢内容 -->
+          <scroll-view wx:if="{{answerDocDims.length === 0 && answerDocRaw}}" class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
+            <text class="value feedback">{{answerDocRaw}}</text>
+          </scroll-view>
+        </view>
+
         <!-- 【N8】逐轮五维明细 + 五维雷达图（逐轮平均） -->
         <view wx:if="{{scoreDetailLines.length > 0}}" class="form-item">
           <text class="label">逐轮五维评分</text>

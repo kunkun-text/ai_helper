@@ -136,4 +136,13 @@ public interface DefenseRecordsMapper {
                                 @Param("analysis") String analysis,
                                 @Param("score") java.math.BigDecimal score,
                                 @Param("source") String source);
+
+    /**
+     * 【2026-10-18 · 报告综合评价】写入基于报告全文的整体评价（约 400~700 字）。
+     *
+     * <p>与 {@link #updateReportDocAnalysis} 分开：综合评价是**附加项**，
+     * 生成或落库失败都不能影响五维成绩单——成绩单才是评分的主口径。</p>
+     */
+    int updateReportDocSummary(@Param("defenseId") Integer defenseId,
+                               @Param("summary") String summary);
 }

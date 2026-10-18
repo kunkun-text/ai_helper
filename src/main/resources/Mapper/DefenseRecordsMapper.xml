@@ -82,6 +82,7 @@
             dr.report_analysis as aiReportAnalysis,
             dr.feedback as aiAllAnalysis,
             dr.report_doc_analysis as reportDocAnalysis,
+            dr.report_doc_summary as reportDocSummary,
             dr.report_doc_score as reportDocScore,
             dr.analysis_source as analysisSource,
             dr.defense_mode as defenseMode
@@ -350,6 +351,15 @@
         UPDATE defense_records
         SET report_text = #{text},
             updated_at  = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-18】报告综合评价：单独一个 UPDATE，只写 report_doc_summary。
+         它是附加项——生成/落库失败不影响五维成绩单（见 ReportDocAnalysisServiceImpl）。 -->
+    <update id="updateReportDocSummary">
+        UPDATE defense_records
+        SET report_doc_summary = #{summary},
+            updated_at         = NOW()
         WHERE defense_id = #{defenseId}
     </update>
 

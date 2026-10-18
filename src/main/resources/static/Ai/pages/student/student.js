@@ -67,7 +67,8 @@ Page({
     transcriptionRecordId: null,
     transcriptionStatus: null,
 
-    // 附件所属的答辩题目（学生可切换，默认取题目列表第一项）
+    // 【2026-10-18】答辩题目选择：唯一选题入口——下一轮答辩、题目描述、文字/语音答辩、附件归属共用
+    // 默认取题目列表第一项；学生选过后从本地缓存恢复（找不到则回退到最新题目）
     uploadTopicIndex: 0,
     uploadTopicName: '',
 
@@ -345,7 +346,8 @@ Page({
     this._statusRefreshing = true;
     setTimeout(() => { this._statusRefreshing = false; }, 300);
 
-    const topic = topics[this.data.uploadTopicIndex] || topics[0];
+    const topic = this.currentDefenseTopic();
+    if (!topic) return;
     const topicId = topic.topicId || topic.id;
     const token = this.data.token;
 
@@ -374,9 +376,16 @@ Page({
     const index = Number(e.detail.value) || 0;
     const topics = this.data.defenseTopics || [];
     const topic = topics[index];
+    if (!topic) return;
+    const topicId = topic.topicId || topic.id;
     this.setData({
       uploadTopicIndex: index,
-      uploadTopicName: topic ? topic.topicName : '',
+      uploadTopicName: topic.topicName,
+      // 【2026-10-18】唯一选题入口：下一轮答辩容器跟着 picker 同步更新
+      nextDefense: {
+        topic: topic.topicName,
+        date: topic.defenseTime || '未设置'
+      },
       isUploading: false,
       uploadStatus: 'idle',
       uploadProgress: 0,
@@ -385,13 +394,20 @@ Page({
       reportStatus: 'idle',
       reportUploadProgress: 0
     });
+    // 记住选择：下次进入页面恢复（题目不存在时回退到最新题目）
+    wx.setStorageSync('student:selectedTopicId', topicId);
     this.refreshUploadStatus();
+  },
+
+  /** 【2026-10-18】当前选中的答辩题目：下一轮答辩/题目描述/答辩入口/附件共用这一来源 */
+  currentDefenseTopic() {
+    const topics = this.data.defenseTopics || [];
+    return topics[this.data.uploadTopicIndex] || topics[0] || null;
   },
 
   /** 当前选中的答辩题目 ID */
   currentUploadTopicId() {
-    const topics = this.data.defenseTopics || [];
-    const topic = topics[this.data.uploadTopicIndex] || topics[0];
+    const topic = this.currentDefenseTopic();
     return topic ? (topic.topicId || topic.id) : null;
   },
 
@@ -535,23 +551,24 @@ Page({
           const page = res.data.data || {};
           const topics = page.list || [];
           
-          // 更新所有答辩题目列表
-          this.setData({
-            defenseTopics: topics
-          });
-          
-          // 如果有题目，设置下一轮答辩为第一个（最新的），并初始化附件所属题目
-          if (topics.length > 0) {
-            const latestTopic = topics[0];
-            this.setData({
-              nextDefense: {
-                topic: latestTopic.topicName,
-                date: latestTopic.defenseTime
-              },
-              uploadTopicIndex: 0,
-              uploadTopicName: latestTopic.topicName
-            });
+          // 【2026-10-18】恢复上次选中的题目；没选过/已不存在时回退到最新题目（topics[0]）
+          let selectedIndex = 0;
+          const storedTopicId = wx.getStorageSync('student:selectedTopicId');
+          if (storedTopicId) {
+            const found = topics.findIndex((t) => String(t.topicId || t.id) === String(storedTopicId));
+            if (found >= 0) selectedIndex = found;
           }
+          const selected = topics[selectedIndex];
+          const patch = { defenseTopics: topics };
+          if (selected) {
+            patch.nextDefense = {
+              topic: selected.topicName,
+              date: selected.defenseTime || '未设置'
+            };
+            patch.uploadTopicIndex = selectedIndex;
+            patch.uploadTopicName = selected.topicName;
+          }
+          this.setData(patch);
         } else {
           wx.showToast({
             title: res.data.msg || '获取答辩题目失败',
@@ -585,7 +602,8 @@ Page({
       return;
     }
 
-    const topic = defenseTopics[0];
+    // 【2026-10-18】使用学生当前选中的题目，而不是固定 topics[0]
+    const topic = this.currentDefenseTopic();
     const topicId = topic.topicId || topic.id;
     const topicName = topic.topicName;
 
@@ -612,7 +630,8 @@ Page({
       return;
     }
 
-    const topic = defenseTopics[0];
+    // 【2026-10-18】使用学生当前选中的题目，而不是固定 topics[0]
+    const topic = this.currentDefenseTopic();
     const topicId = topic.topicId || topic.id;
     const topicName = topic.topicName;
 
@@ -641,10 +660,9 @@ Page({
     const config = require('../../utils/config.js');
     const token = this.data.token;
     
-    // 先尝试从已加载的defenseTopics中找到对应的描述
-    const topics = this.data.defenseTopics;
-    if (topics.length > 0) {
-      const currentTopic = topics[0]; // 第一个就是最新的
+    // 【2026-10-18】使用当前选中的题目，而不是固定 topics[0]
+    const currentTopic = this.currentDefenseTopic();
+    if (currentTopic) {
       this.setData({
         currentTopicDescription: currentTopic.topicDescription || '暂无题目描述',
         showTopicDescription: true
@@ -1299,10 +1317,11 @@ Page({
       return;
     }
 
-    // 检查是否已经上传过视频（基于当前答辩题目）
+    // 检查是否已经上传过视频（基于当前**选中的**答辩题目）
     let hasExistingVideo = false;
-    if (this.data.defenseRecords && this.data.defenseTopics.length > 0) {
-      const currentTopicId = this.data.defenseTopics[0].topicId || this.data.defenseTopics[0].id;
+    const currentTopic = this.currentDefenseTopic();
+    if (this.data.defenseRecords && currentTopic) {
+      const currentTopicId = currentTopic.topicId || currentTopic.id;
       // 检查答辩记录中是否有对应当前题目的视频
       const existingRecord = this.data.defenseRecords.find(record => {
         // 这里需要根据实际的数据结构来判断
@@ -1679,6 +1698,8 @@ Page({
         if (res.confirm) {
           // 【C1】统一退出：清 token/userInfo/userName/userRole 及历史遗留 user/role
           auth.clearLogin();
+          // 【2026-10-18】退出时清掉“上次选中的答辩题目”，避免换账号后沿用上一个人的选择
+          wx.removeStorageSync('student:selectedTopicId');
           // 跳转到登录页面
           wx.redirectTo({
             url: '/pages/login/login'

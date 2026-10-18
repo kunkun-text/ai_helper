@@ -383,6 +383,18 @@ public class AppProperties {
          */
         private int scoreMaxTokens = 40;
 
+        /**
+         * 综合评价调用（第三次模型调用）的 maxTokens。
+         *
+         * <p>2026-10-18 新增：五维成绩单偏"逐项打分"，教师还需要一段整体评价。
+         * 目标正文约 400~700 字，取 800 留足余量；输出是自然语言，不走严格解析，
+         * 失败只记日志、不影响五维成绩单落库。</p>
+         */
+        private int summaryMaxTokens = 800;
+
+        /** 综合评价落库/展示的字符上限（防模型跑飞；纯自然语言，超长截断不影响评分） */
+        private int summaryMaxChars = 2000;
+
         /** 单个分析任务的总耗时预算（秒），超出即中止并置 FAILED（不写库） */
         private int budgetSeconds = 240;
 

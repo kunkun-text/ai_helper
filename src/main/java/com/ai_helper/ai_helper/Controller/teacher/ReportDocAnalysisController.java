@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -49,8 +50,10 @@ public class ReportDocAnalysisController {
      * {@code Result.error}，HTTP 仍是 200（与全站口径一致）。</p>
      */
     @PostMapping("/analyze/{defenseId}")
-    public Result<Map<String, Object>> analyze(@PathVariable Integer defenseId) {
-        return Result.success(reportDocAnalysisService.trigger(defenseId));
+    public Result<Map<String, Object>> analyze(
+            @PathVariable Integer defenseId,
+            @RequestParam(value = "force", defaultValue = "false") boolean force) {
+        return Result.success(reportDocAnalysisService.trigger(defenseId, force));
     }
 
     /**

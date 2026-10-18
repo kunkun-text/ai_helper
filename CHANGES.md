@@ -11,6 +11,7 @@
 
 | 想看什么 | 跳到 |
 |---|---|
+| **教师端报告评析入口迁移 + 五维卡片化（2026-10-18）** | [2026-10-18](#2026-10-18) |
 | **报告文档 AI 五维评分第一期（2026-10-16）** | [2026-10-16](#2026-10-16) |
 | 审查整改批次H：N68~N78（2026-10-15） | [2026-10-15](#2026-10-15) |
 | N63/N64 复验 + N65 分母口径实验与回滚（2026-10-15） | [2026-10-15](#2026-10-15) |
@@ -24,6 +25,156 @@
 | 事务/鉴权/续答加固 | [2026-09-28 核心加固](#2026-09-28) |
 | 语音答辩 | [F10 语音答辩](#f10-语音答辩) |
 | 历史改动（9月） | [2026-09 改动归档](#2026-09-改动归档) |
+
+---
+
+# 2026-10-18
+
+## 教师端：报告 AI 评析迁入「回答详情」+ 五维卡片化
+
+> 改动日期：10.18。**状态：`node --check` 通过，待真机验证。仅教师端小程序（wxml/js/wxss），无后端与数据库改动。**
+
+### 一、问题背景（实锤）
+
+| # | 事实 | 后果 |
+|---|---|---|
+| 1 | 「查看回答详情」只请求 `/teacher/defense/questions/{id}`（逐轮作答），而报告评析场次没有作答 | 图1 弹层「回答详情」一片空白 |
+| 2 | 报告评析放在「查看反馈」打开的「答辩详情」弹层里 | 「查看回答详情」与「查看反馈」语义错位；核对评析要看错弹层 |
+| 3 | 评析是一整段文本，五维评语混在文本流里 | 不如文字答辩「每题一条评语」直观 |
+
+### 二、改动内容
+
+| 文件 | 改动 |
+|---|---|
+| `pages/teacher/teacher.wxml` | ①「答辩详情」弹层**移除**报告评析整块（触发按钮/进度条/结果）；②「回答详情」弹层顶部**新增**报告评析区：查看文档 + 触发/重新生成 + 进度条 + 总分/等级/警告 + **五维独立小卡片** + 解析失败时原文兜底 |
+| `pages/teacher/teacher.js` | ① 新增 `answerDocInfo` / `answerDocDims` / `answerDocSummary` / `answerDocRaw` 状态；② 新增 `parseReportDocAnalysis()` 解析成绩单文本；③ `openAnswerDetail` 并行拉取 `DetailRecords`（报告地址 + 已生成评析）并接回 `resumeReportDocIfRunning`；④ `analyzeReportDoc` / `applyReportDocResult` 改读写 `answerDocInfo`；⑤ 关闭回答详情时停轮询、清状态；⑥ 换记录用请求序号丢弃迟到响应（防串台）；⑦ `openFeedbackDetail` 不再续接评析轮询；⑧ `closeRecord` 不再干预评析轮询 |
+| `pages/teacher/teacher.wxss` | 新增 `.doc-actions` / `.doc-score-summary` / `.doc-dim-item` 等样式；移除已无引用的 `.doc-analysis-box` |
+
+**口径（用户逐项确认）**：查看反馈只移走评析块，其余（学生信息/视频/查看文档/旧版 AI 分析）保留；查看文档在回答详情也放一份；五维拆成独立小卡片。
+
+### 三、验证
+
+- `node --check pages/teacher/teacher.js` → 通过。
+- 未做真机实测。
+
+### 四、待实测清单
+
+1. 已评析场次打开「回答详情」：五维卡片、总分/等级、⚠️ 缺失标记正常；
+2. 未评析场次：显示「AI 评分（基于报告）」，触发后进度条 → 结果原地刷新；
+3. 「查看文档」从回答详情可正常下载/打开；
+4. 关闭弹层、切后台后轮询确实停止（网络面板可验证）；
+5. 「查看反馈」弹层不再出现「报告 AI 评析」块，其余内容不变。
+
+## 报告 AI 综合评价（第三段输出，同日续）
+
+> 触发：用户反馈——评析入口迁走后「查看反馈」太空，希望看到 AI 对整份报告的**综合评价**，比原评分卡那段更长、更详细。
+> **状态：`mvn -o clean compile` EXIT 0；`mvn -o clean test` 61/61 通过；`node --check` 通过。DDL 未执行，待实测。**
+
+### 一、已拍板口径
+
+| 决策点 | 结论 |
+|---|---|
+| 生成方式 | 与五维评析**同一次任务**新增第三次模型调用，不单独放按钮 |
+| 存储 | 新增列 `report_doc_summary`，不拼进 `report_doc_analysis` 成绩单文本 |
+| 空态 | **打开「查看反馈」时自动补齐**：有报告但缺总评 → 先探状态，已在跑就接上轮询，否则自动触发一次（旧场次带 `force` 重跑）；同一场次本页面生命周期内只自动触发一次，失败显示可读提示 |
+| 失败口径 | 综合评价是附加项：生成/落库失败只记日志，任务仍 COMPLETED，五维成绩单不受影响 |
+
+### 二、链路
+
+```
+抽文本 → 点评（调用A，喂材料）→ 评分（调用B，只喂点评）→ 成绩单落库
+                                                            ↓
+                                   综合评价（调用C：课题 + 成绩单 + 材料）
+                                                            ↓
+                                             report_doc_summary 落库
+```
+
+- 调用C 输出固定五个小标题：`【选题与目标】` / `【方案与实现】` / `【论证与表达】` / `【不足与建议】` / `【总体结论】`，全文约 400~700 字。
+- 长报告时调用C 收到的是「证据清单」（与点评同源），不是全文；短报告直接是原文。
+- **force 重跑**：前端按钮「重新生成评析」改发 `POST .../analyze/{id}?force=true`，跳过指纹幂等真正重跑——这也是给 10-18 之前生成、还没有总评的旧场次补总评的唯一入口。
+- 新增配置：`app.report-doc.summary-max-tokens`（默认 800）、`summary-max-chars`（默认 2000）。
+
+### 三、改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `docs/ddl_report_doc_summary.sql` | **新增**：`ALTER TABLE defense_records ADD COLUMN report_doc_summary TEXT` |
+| `docs/schema.sql` | `defense_records` 建表补 `report_doc_summary` |
+| `diagnose.ps1` | 扩展列检查 5 → **6 列**，提示补执行新 DDL |
+| `application.yml.example` | 新增 `summary-max-tokens` / `summary-max-chars`；顺带修正遗留的 `direct-score-max-chars: 2500` → `10000`（与 10-16 实测口径一致） |
+| `Config/AppProperties.java` | `ReportDoc` 新增两个配置项 |
+| `mapper/DefenseRecordsMapper.java` + `Mapper/DefenseRecordsMapper.xml` | 新增 `updateReportDocSummary`；详情查询与触发上下文 SELECT 补 `report_doc_summary` |
+| `pojo/vo/DetailRecordsVo.java` | 新增 `reportDocSummary` |
+| `Service/ReportDocAnalysisService.java` + `Impl/ReportDocAnalysisServiceImpl.java` | 新增 `SUMMARY_SYSTEM` 提示词、`generateSummary` / `normalizeSummary` / `persistSummary`；`trigger` 增加 `force` 参数 |
+| `Controller/teacher/ReportDocAnalysisController.java` | `POST /analyze/{id}` 增加可选 `force` 参数 |
+| `pages/teacher/teacher.wxml` | 「查看反馈」新增「报告 AI 综合评价」块：长文 / 自动生成进度 / 失败提示三态 |
+| `pages/teacher/teacher.js` | `openFeedbackDetail` 映射 `reportDocSummary`，缺总评时自动探状态并触发（`ensureFeedbackSummary` + 独立轮询）；「重新生成评析」发送 `force=true`；进度映射补「生成综合评价」；错误提示前先关 loading，修复 showLoading/hideLoading 配对告警；换记录/关弹层用请求序号丢弃迟到回调 |
+| `pages/teacher/teacher.wxss` | 新增 `.doc-summary-box` / `.doc-summary-text` / `.doc-summary-loading` |
+
+### 四、⚠️ 发布顺序硬约束
+
+`getDetailRecords` 与 `selectReportDocTarget` 都会读 `report_doc_summary`。
+**未执行 DDL 就发代码，教师端「查看反馈」会报 `Unknown column 'dr.report_doc_summary'`，触发评析也会失败。**
+
+```bash
+mysql -uroot -p ai_helper < docs/ddl_report_doc_summary.sql   # 只需执行一次
+powershell -ExecutionPolicy Bypass -File .\diagnose.ps1        # 应显示 6 列齐全
+```
+
+### 五、待实测清单
+
+1. 任意有报告的场次打开「查看反馈」：缺总评时自动出现「正在生成综合评价」进度，完成后长文自动刷新；
+2. 旧场次（`347`/`348` 等）同样自动补齐（后台带 `force` 重跑，分数可能小幅变化）；
+3. 总评内容与报告材料一致，五维成绩单不受影响；
+4. 同一场次重复打开不会无限重跑；生成失败时显示可读提示；
+5. 生成过程中关闭弹层/切后台 → 轮询停止；模型不可用时评析仍能完成（总评失败只记日志）。
+
+### 六、实测（2026-10-18 22:45）
+
+- 新生成一份 3278 字 docx（《AI答辩辅助系统设计与实现》），经**真实上传接口**提交，记录 `defenseId=351`（实测学生 `t20261016s` / 课题 34），落盘文件 `答辩报告_1240307_report_test_20261018_6368ee.docx`。
+- 触发评析（`force=true`）→ 状态依次 `PROCESSING`（评定分数 → **生成综合评价**）→ `COMPLETED`，全程约 **15 秒**。
+- 落库结果：`report_doc_score=39.00`，成绩单 460 字，**综合评价 977 字**（五段完整），`analysis_source=report`；`DetailRecords` 正常返回 `reportDocSummary`。
+- `diagnose.ps1 -SkipInferenceTest`：扩展列 **6/6 齐全**。
+- 备注：提示词目标 400~700 字，3B 实际输出 977 字（未触达 `summary-max-chars=2000` 上限，内容完整）；如需更短可调小 `summary-max-tokens`。
+
+## 教师端分数展示 + 学生端自主选题（同日第四轮）
+
+> **状态：`node --check` 两端通过，待真机实测。仅前端改动，无后端/数据库改动。**
+
+### 一、教师端：报告评析场次主分数显示错误（0 分 vs 39 分）
+
+**问题**：报告评析场次没有逐轮作答，`score` 为 0/NULL，而 `report_doc_score` 有值（如 39）。列表仍把主分数渲染成 `0分`，与「报告评析 39分」标签自相矛盾；且列表映射此前**没有带上 `analysisSource` / `reportDocScore`**，刷新后 teal 标签还会消失。
+
+| 改动 | 说明 |
+|---|---|
+| `teacher.js` 新增 `mapDefenseRecord()` | 两个列表数据源（首页 / 搜索）统一映射；保留 `analysisSource` / `reportDocScore`；有逐轮总分时主分数用逐轮总分，否则用报告评析分并标 `scoreKind=report` |
+| `teacher.wxml` 两处列表 | 主分数改渲染 `displayScore`；报告评析场次上方加「报告评析」小标签；teal 标签文案改 `docTagText`（主分数已是报告分时显示「基于报告」，避免数字重复） |
+| `teacher.wxss` | 新增 `.score-kind` |
+| `applyReportDocResult` | 评析完成后同步更新 `displayScore` / `scoreKind` / `docTagText`，列表即时变色改分 |
+
+### 二、学生端：自主选题（唯一选题入口）
+
+**问题**：「附件所属题目」picker 只影响附件归属；「下一轮答辩」容器、题目描述、文字/语音答辩按钮都固定取 `defenseTopics[0]`，学生切换题目后两者不一致。
+
+| 改动 | 说明 |
+|---|---|
+| `student.wxml` | 「附件所属题目」改为「答辩题目」，加提示「选择后，下一轮答辩与附件归属同步更新」 |
+| `student.js` `onUploadTopicChange` | 切换后同步更新 `nextDefense`（题目/时间）并 `wx.setStorageSync('student:selectedTopicId')` |
+| 新增 `currentDefenseTopic()` | 下一轮答辩、题目描述、文字答辩、语音答辩、附件归属统一取当前选中题目 |
+| `loadDefenseTopics` | 恢复上次选择；题目不存在时回退 `topics[0]` |
+| `selectVideo` | 已有视频检查也改为看当前选中题目 |
+| `logout` | 清掉 `student:selectedTopicId`，避免换账号沿用上一个人的选择 |
+
+### 三、涉及文件
+
+`pages/teacher/teacher.js` / `.wxml` / `.wxss`；`pages/student/student.js` / `.wxml`。
+
+### 四、验证与待实测
+
+- `node --check pages/teacher/teacher.js`、`node --check pages/student/student.js` → 通过。
+- 教师端：报告评析场次主分数显示报告分并带「报告评析」标签；有逐轮总分时仍显示答辩总分 + teal 报告分标签；下拉刷新后标签不丢。
+- 学生端：切换「答辩题目」→ 下一轮答辩题目/时间、题目描述、文字/语音答辩目标题目、附件归属同步变化；退出重登后恢复上次选择。
+- 新记录 `351` 需要**下拉刷新**教师记录列表才会出现（接口已返回，页面数据是加载时快照）。
 
 ---
 

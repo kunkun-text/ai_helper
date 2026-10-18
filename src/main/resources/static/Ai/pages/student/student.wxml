@@ -45,9 +45,9 @@
         </view>
       </view>
 
-      <!-- 附件所属答辩题目：视频与报告共用（原先两处都硬编码取题目列表第一项，会挂错题目） -->
+      <!-- 【2026-10-18】唯一选题入口：下一轮答辩、题目描述、文字/语音答辩与附件归属共用这一选择 -->
       <view class="card topic-picker-card">
-        <text class="picker-label">附件所属题目</text>
+        <text class="picker-label">答辩题目</text>
         <picker mode="selector" range="{{defenseTopics}}" range-key="topicName"
                 value="{{uploadTopicIndex}}" bindchange="onUploadTopicChange">
           <view class="picker-value">
@@ -55,6 +55,7 @@
             <text class="picker-arrow">›</text>
           </view>
         </picker>
+        <text class="muted" style="margin-top: 12rpx; display: block;">选择后，「下一轮答辩」与附件归属同步更新</text>
       </view>
 
       <view class="card">

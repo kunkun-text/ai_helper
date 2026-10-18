@@ -18,11 +18,13 @@ public interface ReportDocAnalysisService {
      * <p>同步完成前置校验（场次存在 / 已上传报告 / 格式可解析 / 未在分析中），
      * 随后提交到专用线程池异步执行，**接口立即返回**。</p>
      *
-     * <p>幂等：同一份未变更的报告已分析过 → 直接返回上次结果，不重复调模型。</p>
+     * <p>幂等：同一份未变更的报告已分析过 → 直接返回上次结果，不重复调模型。
+     * {@code force=true} 时跳过幂等检查，强制重跑（教师点「重新生成评析」；
+     * 也用于给 2026-10-18 之前生成、还没有综合评价的旧场次补总评）。</p>
      *
      * @return {@code {status, score, analysis, msg}}；status 取值见 {@link #status}
      */
-    Map<String, Object> trigger(Integer defenseId);
+    Map<String, Object> trigger(Integer defenseId, boolean force);
 
     /**
      * 查询评析状态与结果（前端轮询用）。

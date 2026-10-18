@@ -81,9 +81,18 @@ Page({
     importMode: 'append', // 【N10】题库导入方式：append=追加 / replace=覆盖
     importing: false, // 【N10】导入进行中，防重复提交
     // 【2026-10-16 · 报告五维评分】基于上传报告的 AI 评析
+    // 评析区已从「查看反馈」迁到「回答详情」，数据挂在本组状态上（不再读写 selectedRecord）
+    answerDocInfo: null, // 该场次的报告信息：id / defenseReportUrl / reportDocAnalysis / reportDocScore / analysisSource
+    answerDocDims: [], // 解析后的五维小卡片：[{ name, score, comment, missing }]
+    answerDocSummary: null, // 解析后的总分/等级/警告：{ total, grade, warnings }
+    answerDocRaw: '', // 解析失败时的原文兜底（保证内容不丢）
     docAnalyzing: false, // 分析进行中（按钮禁用 + 显示进度条）
     docStage: '', // 当前阶段文案（由后端 stage 下发）
-    docPercent: 0 // 进度百分比（按阶段估算，不假装精确）
+    docPercent: 0, // 进度百分比（按阶段估算，不假装精确）
+    // 【2026-10-18】查看反馈：报告存在但没有综合评价时自动补齐
+    feedbackSummaryGenerating: false, // 自动生成/等待中
+    feedbackSummaryStage: '', // 当前阶段文案
+    feedbackSummaryError: '' // 自动生成失败时的可读提示
   },
 
   onLoad() {
@@ -104,10 +113,56 @@ Page({
   // 评析轮询的定时器必须在离开页面时清掉，否则会一直在后台请求。
   onHide() {
     this.stopReportDocPolling();
+    this.stopFeedbackSummaryPolling();
   },
 
   onUnload() {
     this.stopReportDocPolling();
+    this.stopFeedbackSummaryPolling();
+  },
+
+  /**
+   * 【2026-10-18】教师记录列表统一的展示映射。
+   *
+   * <p>报告评析场次通常没有逐轮作答，`score` 为 0/NULL，但 `report_doc_score` 有值。
+   * 此前映射没有带上 `analysisSource` / `reportDocScore`，刷新后还会丢掉 teal 标签。
+   * 这里统一：</p>
+   * <ul>
+   *   <li>有逐轮总分（>0）→ 主分数显示逐轮总分，报告分作为标签；</li>
+   *   <li>没有逐轮总分但有报告评析分 → 主分数显示报告分，并标「报告评析」。</li>
+   * </ul>
+   */
+  mapDefenseRecord(record) {
+    const rawScore = record.score != null && record.score !== 'null' ? parseFloat(record.score) : 0;
+    const scoreValue = isNaN(rawScore) ? 0 : rawScore;
+    const rawDoc = record.reportDocScore != null && record.reportDocScore !== 'null'
+      ? Number(record.reportDocScore) : null;
+    const docScore = (rawDoc !== null && !isNaN(rawDoc)) ? rawDoc : null;
+    const analysisSource = record.analysisSource || '';
+    const hasReport = analysisSource === 'report' && docScore !== null;
+    const primaryIsReport = hasReport && !(scoreValue > 0);
+
+    const defenseTime = record.defenseTime || '暂无时间';
+    const date = record.defenseTime ? String(record.defenseTime).split(' ')[0] : '暂无日期';
+
+    return {
+      id: String(record.defenseRecordId),
+      studentName: (record.userName || '').trim(),
+      studentId: record.userNumber || '未知学号',
+      topic: record.topicName || '未设置题目',
+      score: scoreValue,
+      reportDocScore: docScore,
+      analysisSource: analysisSource,
+      // 列表主分数与标签
+      displayScore: primaryIsReport ? docScore : scoreValue,
+      scoreKind: primaryIsReport ? 'report' : 'defense',
+      docTagText: hasReport ? (primaryIsReport ? '基于报告' : ('报告评析 ' + docScore + '分')) : '',
+      date: date,
+      defenseTime: defenseTime,
+      feedback: scoreValue > 0
+        ? `本次答辩得分：${scoreValue}分。`
+        : (hasReport ? `报告评析得分：${docScore}分。` : '暂无评分数据')
+    };
   },
 
   // 根据搜索条件加载答辩记录
@@ -150,20 +205,7 @@ Page({
         if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const response = res.data.data;
-          const newData = response.list.map(record => {
-            // 只展示库中真实分，不再用 ×0.9/×1.1 伪造「AI评分/教师评分」
-            const scoreValue = record.score != null && record.score !== 'null' ? parseFloat(record.score) : 0;
-            return {
-              id: record.defenseRecordId.toString(),
-              studentName: record.userName.trim(),
-              studentId: record.userNumber,
-              topic: record.topicName,
-              score: scoreValue,
-              date: record.defenseTime.split(' ')[0],
-              defenseTime: record.defenseTime,
-              feedback: scoreValue > 0 ? `本次答辩得分：${scoreValue}分。` : '暂无评分数据'
-            };
-          });
+          const newData = response.list.map(record => this.mapDefenseRecord(record));
 
           let updatedRecords = [];
           if (isRefresh) {
@@ -250,27 +292,7 @@ Page({
         if (handleUnauthorized(res)) { return; }
         if (res.data.code === 1) {
           const response = res.data.data;
-          const newData = response.list.map(record => {
-            // 处理分数：如果为null或空字符串，设置为0，否则转换为数字
-            const scoreValue = record.score && record.score !== 'null' ? parseFloat(record.score) : 0;
-            
-            // 处理时间：如果为null，设置默认值
-            const defenseTime = record.defenseTime || '暂无时间';
-            const date = record.defenseTime ? record.defenseTime.split(' ')[0] : '暂无日期';
-            
-            return {
-              id: record.defenseRecordId.toString(),
-              studentName: (record.userName || '').trim(),
-              studentId: record.userNumber || '未知学号',
-              topic: record.topicName || '未设置题目',
-              score: scoreValue,
-              date: date,
-              defenseTime: defenseTime,
-              feedback: scoreValue > 0
-                ? `本次答辩得分：${scoreValue}分。`
-                : '暂无评分数据'
-            };
-          });
+          const newData = response.list.map(record => this.mapDefenseRecord(record));
 
           let updatedRecords = [];
           if (isRefresh) {
@@ -727,9 +749,15 @@ loadMoreTopics() {
   },
 
   closeRecord() {
-    // 【2026-10-16 · 报告五维评分】关弹层必须停轮询，否则会对着已关闭的弹层一直请求
-    this.stopReportDocPolling();
-    this.setData({ selectedRecord: null, docAnalyzing: false, docStage: '', docPercent: 0 });
+    // 【2026-10-18】关闭弹层：停掉综合评价轮询并失效在途回调，避免关掉后还在改状态
+    this._feedbackSeq = (this._feedbackSeq || 0) + 1;
+    this.stopFeedbackSummaryPolling();
+    this.setData({
+      selectedRecord: null,
+      feedbackSummaryGenerating: false,
+      feedbackSummaryStage: '',
+      feedbackSummaryError: ''
+    });
   },
 
   // 打开题目详情
@@ -942,11 +970,25 @@ loadMoreTopics() {
     }
     
     if (record) {
+      // 【2026-10-18】请求序号：快速切换记录/关弹层后，先发的回调不能覆盖后一场
+      const feedbackSeq = (this._feedbackSeq || 0) + 1;
+      this._feedbackSeq = feedbackSeq;
+      // 换记录先清掉上一条的总评生成状态
+      this.setData({ feedbackSummaryGenerating: false, feedbackSummaryStage: '', feedbackSummaryError: '' });
       // 显示加载提示
       wx.showLoading({
         title: '加载详情中...'
       });
-      
+      // 【2026-10-18】showToast 会自动关闭 loading；若之后 complete 再 hideLoading
+      // 微信会告警「showLoading 与 hideLoading 必须配对使用」。用幂等关闭兜住。
+      let loadingClosed = false;
+      const closeLoading = () => {
+        if (!loadingClosed) {
+          loadingClosed = true;
+          wx.hideLoading();
+        }
+      };
+
       // 调用API获取详细的反馈信息
       const token = wx.getStorageSync('token');
       // 使用全局配置的服务器地址
@@ -959,35 +1001,14 @@ loadMoreTopics() {
           'Authorization': token ? 'Bearer ' + token : ''
         },
         success: (res) => {
-          if (handleUnauthorized(res)) { return; }
+          if (handleUnauthorized(res)) { closeLoading(); return; }
+          if (this._feedbackSeq !== feedbackSeq) return; // 已切走，丢弃迟到响应
           if (res.data.code === 1) {
-            const detailData = res.data.data;
-            // 构建完整的反馈详情对象，确保包含topicName字段以匹配WXML期望的字段名
-            const feedbackDetail = {
-              id: detailData.defenseId.toString(),
-              studentName: detailData.studentName.trim(),
-              studentNumber: detailData.studentNumber,
-              score: detailData.score,
-              defenseTime: detailData.defenseTime,
-              // 库中现在存的是 /files/xxx 这样的相对路径，需补上服务器地址才能播放/下载
-              defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl),
-              defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl),
-              aiVideoAnalysis: detailData.aiVideoAnalysis,
-              aiReportAnalysis: detailData.aiReportAnalysis,
-              aiAllAnalysis: detailData.aiAllAnalysis,
-              // 【2026-10-16 · 报告五维评分】基于**上传的报告文档**的评析（与上面 aiReportAnalysis 不是一回事）
-              reportDocAnalysis: detailData.reportDocAnalysis,
-              reportDocScore: detailData.reportDocScore,
-              analysisSource: detailData.analysisSource,
-              topicName: detailData.topicName, // 确保有topicName字段用于WXML显示
-              topic: detailData.topicName // 同时保留topic字段以保持与列表结构一致
-            };
-            this.setData({
-              selectedRecord: feedbackDetail
-            });
-            // 上次点了分析但没看完（关了弹层/切了后台）→ 重新打开时续上进度
-            this.resumeReportDocIfRunning(recordId);
+            const feedbackDetail = this.applyFeedbackDetail(res.data.data);
+            // 【2026-10-18】有报告但没有综合评价 → 自动补齐（后台生成，界面显示进度）
+            this.ensureFeedbackSummary(recordId, feedbackDetail, feedbackSeq);
           } else {
+            closeLoading();
             wx.showToast({
               title: res.data.msg || '获取详情失败',
               icon: 'error'
@@ -996,22 +1017,238 @@ loadMoreTopics() {
         },
         fail: (error) => {
           console.error('获取反馈详情失败:', error);
+          closeLoading();
           wx.showToast({
             title: '网络错误或服务器无响应',
             icon: 'error'
           });
         },
         complete: () => {
-          wx.hideLoading();
+          closeLoading();
         }
       });
     }
   },
 
+  /** 【2026-10-18】把 DetailRecords 返回体映射成弹层可用的 selectedRecord */
+  applyFeedbackDetail(detailData) {
+    const feedbackDetail = {
+      id: String(detailData.defenseId),
+      studentName: (detailData.studentName || '').trim(),
+      studentNumber: detailData.studentNumber,
+      score: detailData.score,
+      defenseTime: detailData.defenseTime,
+      // 库中存的是 /files/xxx 相对路径，需补上服务器地址才能播放/下载
+      defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl),
+      defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl),
+      aiVideoAnalysis: detailData.aiVideoAnalysis,
+      aiReportAnalysis: detailData.aiReportAnalysis,
+      aiAllAnalysis: detailData.aiAllAnalysis,
+      reportDocAnalysis: detailData.reportDocAnalysis,
+      reportDocSummary: detailData.reportDocSummary,
+      reportDocScore: detailData.reportDocScore,
+      analysisSource: detailData.analysisSource,
+      topicName: detailData.topicName,
+      topic: detailData.topicName
+    };
+    this.setData({ selectedRecord: feedbackDetail });
+    return feedbackDetail;
+  },
+
+  // ============ 查看反馈：综合评价自动补齐（2026-10-18） ============
+  // 口径：打开弹层时若「有报告但无总评」→ 先探状态；已在跑就接上轮询，否则自动触发一次。
+  // 旧场次（10-18 之前生成的）没有总评 → 带 force 重跑；同一场次本页面生命周期内只自动触发一次。
+
+  ensureFeedbackSummary(defenseId, detail, seq) {
+    if (!detail || !detail.defenseReportUrl || detail.defenseReportUrl === 'abc') return;
+    if (detail.reportDocSummary) return;
+    this._feedbackAutoTried = this._feedbackAutoTried || {};
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    const header = {
+      'Content-Type': 'application/json',
+      'Authorization': token ? 'Bearer ' + token : ''
+    };
+
+    // 先探一次状态：避免已有任务在跑时重复触发
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/status/${defenseId}`,
+      method: 'GET',
+      header,
+      success: (res) => {
+        if (this._feedbackSeq !== seq) return;
+        if (handleUnauthorized(res)) return;
+        const data = (res.data && res.data.code === 1) ? (res.data.data || {}) : {};
+        if (data.status === 'PROCESSING') {
+          this.setData({
+            feedbackSummaryGenerating: true,
+            feedbackSummaryStage: data.stage || '正在生成综合评价…',
+            feedbackSummaryError: ''
+          });
+          this.startFeedbackSummaryPolling(defenseId, seq);
+          return;
+        }
+        // 同一场次只自动触发一次，失败后不无限重试（避免每次打开都重跑模型）
+        if (this._feedbackAutoTried[defenseId]) {
+          this.setData({ feedbackSummaryGenerating: false, feedbackSummaryError: '综合评价尚未生成，可稍后重试' });
+          return;
+        }
+        this._feedbackAutoTried[defenseId] = true;
+        this.setData({
+          feedbackSummaryGenerating: true,
+          feedbackSummaryStage: '正在提交综合评价任务…',
+          feedbackSummaryError: ''
+        });
+        wx.request({
+          url: `${serverUrl}/teacher/defense/reportDoc/analyze/${defenseId}${detail.reportDocAnalysis ? '?force=true' : ''}`,
+          method: 'POST',
+          header,
+          success: (trigRes) => {
+            if (this._feedbackSeq !== seq) return;
+            if (handleUnauthorized(trigRes)) {
+              this.setData({ feedbackSummaryGenerating: false });
+              return;
+            }
+            const body = trigRes.data || {};
+            if (body.code !== 1) {
+              this.setData({
+                feedbackSummaryGenerating: false,
+                feedbackSummaryError: body.msg || '综合评价生成失败，可稍后重试'
+              });
+              return;
+            }
+            const d = body.data || {};
+            if (d.status === 'COMPLETED') {
+              this.setData({ feedbackSummaryStage: '正在读取综合评价…' });
+              this.refreshFeedbackSummaryDetail(defenseId, seq);
+            } else {
+              this.setData({ feedbackSummaryStage: d.msg || '正在生成综合评价…' });
+              this.startFeedbackSummaryPolling(defenseId, seq);
+            }
+          },
+          fail: () => {
+            if (this._feedbackSeq !== seq) return;
+            this.setData({
+              feedbackSummaryGenerating: false,
+              feedbackSummaryError: '网络错误，综合评价未生成，可稍后重试'
+            });
+          }
+        });
+      },
+      fail: () => {
+        if (this._feedbackSeq !== seq) return;
+        this.setData({
+          feedbackSummaryGenerating: false,
+          feedbackSummaryError: '无法确认综合评价状态，请稍后重试'
+        });
+      }
+    });
+  },
+
+  startFeedbackSummaryPolling(defenseId, seq) {
+    this.stopFeedbackSummaryPolling();
+    this._feedbackPollCount = 0;
+    this._feedbackPollTimer = setInterval(() => {
+      if (this._feedbackSeq !== seq) {
+        this.stopFeedbackSummaryPolling();
+        return;
+      }
+      this._feedbackPollCount += 1;
+      if (this._feedbackPollCount > 100) { // 约 5 分钟，避免永远转圈
+        this.stopFeedbackSummaryPolling();
+        this.setData({ feedbackSummaryGenerating: false, feedbackSummaryError: '综合评价生成耗时较长，请稍后重新打开查看' });
+        return;
+      }
+      this.pollFeedbackSummaryOnce(defenseId, seq);
+    }, 3000);
+  },
+
+  pollFeedbackSummaryOnce(defenseId, seq) {
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/status/${defenseId}`,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (this._feedbackSeq !== seq) return;
+        if (handleUnauthorized(res)) { this.stopFeedbackSummaryPolling(); return; }
+        if (!res.data || res.data.code !== 1) return;
+        const data = res.data.data || {};
+        if (data.status === 'COMPLETED') {
+          this.stopFeedbackSummaryPolling();
+          this.setData({ feedbackSummaryStage: '正在读取综合评价…' });
+          this.refreshFeedbackSummaryDetail(defenseId, seq);
+        } else if (data.status === 'FAILED') {
+          this.stopFeedbackSummaryPolling();
+          this.setData({
+            feedbackSummaryGenerating: false,
+            feedbackSummaryError: data.msg || '综合评价生成失败，可稍后重试'
+          });
+        } else if (data.status === 'PROCESSING') {
+          this.setData({ feedbackSummaryGenerating: true, feedbackSummaryStage: data.stage || '正在生成综合评价…' });
+        }
+      },
+      fail: () => { /* 网络抖动不打断轮询，下一轮再试 */ }
+    });
+  },
+
+  refreshFeedbackSummaryDetail(defenseId, seq) {
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    wx.request({
+      url: `${serverUrl}/teacher/defense/DetailRecords/${defenseId}`,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (this._feedbackSeq !== seq) return;
+        if (handleUnauthorized(res)) {
+          this.setData({ feedbackSummaryGenerating: false });
+          return;
+        }
+        const body = res.data || {};
+        if (body.code !== 1 || !body.data) {
+          this.setData({ feedbackSummaryGenerating: false, feedbackSummaryError: '综合评价已生成，但读取失败，请重新打开查看' });
+          return;
+        }
+        const fd = this.applyFeedbackDetail(body.data);
+        this.setData({ feedbackSummaryGenerating: false, feedbackSummaryStage: '', feedbackSummaryError: '' });
+        if (fd.reportDocSummary) {
+          wx.showToast({ title: '综合评价已生成', icon: 'success' });
+        } else {
+          this.setData({ feedbackSummaryError: '综合评价生成完成，但未返回内容，请稍后重试' });
+        }
+      },
+      fail: () => {
+        if (this._feedbackSeq !== seq) return;
+        this.setData({ feedbackSummaryGenerating: false, feedbackSummaryError: '综合评价已生成，但读取失败，请重新打开查看' });
+      }
+    });
+  },
+
+  stopFeedbackSummaryPolling() {
+    if (this._feedbackPollTimer) {
+      clearInterval(this._feedbackPollTimer);
+      this._feedbackPollTimer = null;
+    }
+  },
+
   closeRecord() {
-    // 【2026-10-16 · 报告五维评分】关弹层必须停轮询，否则会对着已关闭的弹层一直请求
-    this.stopReportDocPolling();
-    this.setData({ selectedRecord: null, docAnalyzing: false, docStage: '', docPercent: 0 });
+    // 【2026-10-18】关闭弹层：停掉综合评价轮询并失效在途回调，避免关掉后还在改状态
+    this._feedbackSeq = (this._feedbackSeq || 0) + 1;
+    this.stopFeedbackSummaryPolling();
+    this.setData({
+      selectedRecord: null,
+      feedbackSummaryGenerating: false,
+      feedbackSummaryStage: '',
+      feedbackSummaryError: ''
+    });
   },
 
   // 查看回答详情
@@ -1072,25 +1309,86 @@ loadMoreTopics() {
   },
 
   // ==================== 【2026-10-16 · 报告五维评分】 ====================
-  // 基于**上传的报告文档**的 AI 评析：教师手动触发 → 轮询进度 → 结果回填 selectedRecord。
+  // 基于**上传的报告文档**的 AI 评析：教师手动触发 → 轮询进度 → 结果回填 answerDocInfo。
   // 与逐轮答辩链路完全独立，不碰 defense / defense-voice 的 AI 协议解析。
   //
   // ⚠️ 改本文件前须知：openAnswerDetail / closeAnswers / closeRecord 在文件里各有**两份重复定义**，
   //    JS 对象字面量后者覆盖前者（生效的是靠后的那几份）。新增方法务必只定义一次，
   //    且不要加到文件尾部去（会被同名方法遮蔽）。
 
+  /**
+   * 解析成绩单文本 → 五维小卡片。
+   * 后端格式（见 ReportDocAnalysisServiceImpl#buildAnalysisText）：
+   *   总分：36/50　等级：优秀
+   *   表达（6分）：…
+   *   ⚠️ 应变（3分）：材料未涉及…
+   * 解析失败时返回空 dims，由 answerDocRaw 原文兜底，保证内容不丢。
+   */
+  parseReportDocAnalysis(text) {
+    const raw = text || '';
+    const dims = [];
+    const warnings = [];
+    let total = '';
+    let grade = '';
+    if (!raw) {
+      return { summary: null, dims, raw };
+    }
+    const totalMatch = raw.match(/总分\s*[:：]\s*(\d+(?:\.\d+)?)\s*\/\s*50[\s　]*等级\s*[:：]\s*(\S+)/);
+    if (totalMatch) {
+      total = totalMatch[1];
+      grade = totalMatch[2];
+    }
+    raw.split(/\r?\n/).forEach((line) => {
+      const t = (line || '').trim();
+      if (!t) return;
+      const dimMatch = t.match(/^(⚠️\s*)?(表达|逻辑|专业|应变|创新)\s*[（(]\s*(\d+(?:\.\d+)?)\s*分\s*[）)]\s*[:：]\s*(.*)$/);
+      if (dimMatch) {
+        dims.push({
+          name: dimMatch[2],
+          score: dimMatch[3],
+          comment: dimMatch[4] || '（模型未给出该维度点评）',
+          missing: !!dimMatch[1]
+        });
+        return;
+      }
+      // 其余 ⚠️ 行（跑题/接地提示）作为成绩单顶部警告；标题行忽略
+      if (t.indexOf('⚠️') === 0) {
+        warnings.push(t.replace(/^⚠️\s*/, ''));
+      }
+    });
+    return {
+      summary: (total || grade) ? { total, grade, warnings } : null,
+      dims,
+      raw
+    };
+  },
+
   /** 触发评析。幂等：同一份内容未变的报告会直接返回上次结果，不会重复调模型。 */
   analyzeReportDoc() {
     if (this.data.docAnalyzing) return; // 防连点
-    const record = this.data.selectedRecord;
-    if (!record || !record.id) return;
+    const record = this.data.answerDocInfo;
+    if (!record || !record.id) {
+      wx.showToast({ title: '未找到该场次的报告信息', icon: 'none' });
+      return;
+    }
 
     this.setData({ docAnalyzing: true, docStage: '正在提交分析任务…', docPercent: 5 });
     wx.showLoading({ title: '提交中…' });
+    // 【2026-10-18】与 showToast 的自动关闭配对，避免 hideLoading 告警
+    let loadingClosed = false;
+    const closeLoading = () => {
+      if (!loadingClosed) {
+        loadingClosed = true;
+        wx.hideLoading();
+      }
+    };
     const serverUrl = config.getBaseUrl();
     const token = wx.getStorageSync('token');
+    // 【2026-10-18】已有结果时按钮是「重新生成评析」→ force 跳过幂等，真正重跑
+    // （也是给 10-18 之前生成、还没有综合评价的旧场次补总评的唯一入口）
+    const force = !!record.reportDocAnalysis;
     wx.request({
-      url: `${serverUrl}/teacher/defense/reportDoc/analyze/${record.id}`,
+      url: `${serverUrl}/teacher/defense/reportDoc/analyze/${record.id}${force ? '?force=true' : ''}`,
       method: 'POST',
       header: {
         'Content-Type': 'application/json',
@@ -1098,6 +1396,7 @@ loadMoreTopics() {
       },
       success: (res) => {
         if (handleUnauthorized(res)) {
+          closeLoading();
           this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
           return;
         }
@@ -1107,6 +1406,7 @@ loadMoreTopics() {
             // 幂等命中：这份报告之前已评析过且文件没变
             this.applyReportDocResult(record.id, data.analysis, data.score);
             this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
+            closeLoading();
             wx.showToast({ title: '已返回上次评析结果', icon: 'none' });
           } else {
             this.setData({ docStage: data.msg || '分析中…', docPercent: 12 });
@@ -1115,15 +1415,17 @@ loadMoreTopics() {
         } else {
           this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
           // 后端对「没传报告 / PDF 不支持 / 地址无效」都给了明确文案，直接展示
+          closeLoading();
           wx.showToast({ title: res.data.msg || '提交失败', icon: 'none', duration: 3500 });
         }
       },
       fail: () => {
         this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+        closeLoading();
         wx.showToast({ title: '网络错误或服务器无响应', icon: 'none' });
       },
       complete: () => {
-        wx.hideLoading();
+        closeLoading();
       }
     });
   },
@@ -1238,23 +1540,36 @@ loadMoreTopics() {
     if (s.indexOf('生成点评') >= 0 || s.indexOf('生成评析') >= 0) return 75;
     if (s.indexOf('评定分数') >= 0) return 85;
     if (s.indexOf('校验') >= 0) return 90;
+    if (s.indexOf('综合评价') >= 0 || s.indexOf('总体评价') >= 0) return 95;
     if (s.indexOf('完成') >= 0) return 100;
     return 30;
   },
 
-  /** 结果写回：弹层用路径式 setData；列表做一次原地更新，让 teal 标签立刻出现 */
+  /** 结果写回：回答详情用路径式 setData；列表做一次原地更新，让 teal 标签立刻出现 */
   applyReportDocResult(defenseId, analysis, score) {
     const updates = {};
-    if (this.data.selectedRecord && analysis) {
-      updates['selectedRecord.reportDocAnalysis'] = analysis;
-      updates['selectedRecord.reportDocScore'] = score;
-      updates['selectedRecord.analysisSource'] = 'report';
+    if (this.data.answerDocInfo && String(this.data.answerDocInfo.id) === String(defenseId) && analysis) {
+      const parsed = this.parseReportDocAnalysis(analysis);
+      updates['answerDocInfo.reportDocAnalysis'] = analysis;
+      updates['answerDocInfo.reportDocScore'] = score;
+      updates['answerDocInfo.analysisSource'] = 'report';
+      updates.answerDocDims = parsed.dims;
+      updates.answerDocSummary = parsed.summary;
+      updates.answerDocRaw = parsed.raw;
     }
-    const patch = (list) => (list || []).map((it) => (
-      String(it.id) === String(defenseId)
-        ? Object.assign({}, it, { analysisSource: 'report', reportDocScore: score })
-        : it
-    ));
+    const patch = (list) => (list || []).map((it) => {
+      if (String(it.id) !== String(defenseId)) return it;
+      const rawDoc = Number(score);
+      const docNum = isNaN(rawDoc) ? null : rawDoc;
+      const primaryIsReport = !(Number(it.score) > 0) && docNum !== null;
+      return Object.assign({}, it, {
+        analysisSource: 'report',
+        reportDocScore: docNum,
+        displayScore: primaryIsReport ? docNum : it.displayScore,
+        scoreKind: primaryIsReport ? 'report' : it.scoreKind,
+        docTagText: primaryIsReport ? '基于报告' : ('报告评析 ' + docNum + '分')
+      });
+    });
     if (this.data.homeDefenseRecords && this.data.homeDefenseRecords.length) {
       updates.homeDefenseRecords = patch(this.data.homeDefenseRecords);
     }
@@ -1771,11 +2086,70 @@ loadMoreTopics() {
     wx.showLoading({
       title: '加载回答详情中...'
     });
-    
+    // 【2026-10-18】showToast 会自动关闭 loading，之后 complete 再 hideLoading 会告警；
+    // 用幂等关闭兜住（两个并行请求都会走到这里）。
+    let loadingClosed = false;
+    const closeLoading = () => {
+      if (!loadingClosed) {
+        loadingClosed = true;
+        wx.hideLoading();
+      }
+    };
+
     // 调用API获取回答详情
     const token = wx.getStorageSync('token');
     // 使用全局配置的服务器地址
     const serverUrl = config.getBaseUrl();
+
+    // 【2026-10-18】报告评析区已迁入本弹层：先清空旧状态，避免换记录时显示上一条
+    this.stopReportDocPolling();
+    // 请求序号：快速切换记录时，先发的请求晚到也不能覆盖后一场的数据
+    const detailReqSeq = (this._answerDocSeq || 0) + 1;
+    this._answerDocSeq = detailReqSeq;
+    this.setData({
+      answerDocInfo: null,
+      answerDocDims: [],
+      answerDocSummary: null,
+      answerDocRaw: '',
+      docAnalyzing: false,
+      docStage: '',
+      docPercent: 0
+    });
+
+    // 拉取该场次详情：报告地址 + 已生成的报告评析。
+    // 与逐轮回答请求相互独立——报告评析场次没有作答，但这里仍要能出内容。
+    wx.request({
+      url: `${serverUrl}/teacher/defense/DetailRecords/${defenseId}`,
+      method: 'GET',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (detailRes) => {
+        if (handleUnauthorized(detailRes)) { closeLoading(); return; }
+        if (this._answerDocSeq !== detailReqSeq) return; // 已切到别的场次，丢弃迟到响应
+        const body = detailRes && detailRes.data;
+        if (!body || body.code !== 1 || !body.data) return;
+        const detail = body.data;
+        const parsed = this.parseReportDocAnalysis(detail.reportDocAnalysis);
+        this.setData({
+          answerDocInfo: {
+            id: String(detail.defenseId),
+            defenseReportUrl: detail.defenseReportUrl ? uploader.resolveFileUrl(detail.defenseReportUrl) : '',
+            reportDocAnalysis: detail.reportDocAnalysis,
+            reportDocScore: detail.reportDocScore,
+            analysisSource: detail.analysisSource
+          },
+          answerDocDims: parsed.dims,
+          answerDocSummary: parsed.summary,
+          answerDocRaw: parsed.raw
+        });
+        // 上次点了分析但没看完（关了弹层/切了后台）→ 重新打开时续上进度
+        this.resumeReportDocIfRunning(defenseId);
+      },
+      fail: () => { /* 报告信息拉取失败不影响逐轮回答展示 */ }
+    });
+
     wx.request({
       url: `${serverUrl}/teacher/defense/questions/${defenseId}`,
       method: 'GET',
@@ -1784,7 +2158,7 @@ loadMoreTopics() {
         'Authorization': token ? 'Bearer ' + token : ''
       },
       success: (res) => {
-        if (handleUnauthorized(res)) { return; }
+        if (handleUnauthorized(res)) { closeLoading(); return; }
         if (res.data.code === 1) {
           const answers = res.data.data;
           // 处理数据，添加必要的字段用于显示
@@ -1880,6 +2254,7 @@ loadMoreTopics() {
             }
           });
         } else {
+          closeLoading();
           wx.showToast({
             title: res.data.msg || '获取回答详情失败',
             icon: 'error'
@@ -1888,25 +2263,36 @@ loadMoreTopics() {
       },
       fail: (error) => {
         console.error('获取回答详情失败:', error);
+        closeLoading();
         wx.showToast({
           title: '网络错误或服务器无响应',
           icon: 'error'
         });
       },
       complete: () => {
-        wx.hideLoading();
+        closeLoading();
       }
     });
   },
 
   closeAnswers() {
+    // 【2026-10-18】评析轮询随本弹层关闭而停止，否则会对已关闭的弹层一直请求
+    this._answerDocSeq = (this._answerDocSeq || 0) + 1; // 关闭后丢弃在途的详情响应
+    this.stopReportDocPolling();
     this.setData({
       selectedAnswers: null,
       voiceRecords: [],
       auditLogs: [],
       scoreDetailLines: [],
       radarDims: [],
-      radarText: ''
+      radarText: '',
+      answerDocInfo: null,
+      answerDocDims: [],
+      answerDocSummary: null,
+      answerDocRaw: '',
+      docAnalyzing: false,
+      docStage: '',
+      docPercent: 0
     });
   },
 
