@@ -7,10 +7,11 @@
 
 ```bat
 cd /d "f:\杂七杂八\ai"
-"D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o -q compile
+"D:\maven\apache-maven-3.8.1\bin\mvn.cmd" -o -q clean compile
 ```
 
 - `-o` 离线（依赖已在本机仓库）；`-q` 静默，**以退出码 0 为准**（成功时 stdout 为空是正常的）。
+- **必须带 `clean`**：2026-10-16 实测踩坑——`ExportController` 里 `Double` 传 `BigDecimal` 是编译错误，不带 `clean` 的增量编译却报 `EXIT 0`（IDE 预编译产物干扰 mtime），`clean compile` 才暴露。跑测试同理 `-o clean test`。
 - 启动后端：`"D:\maven\apache-maven-3.8.1\bin\mvn.cmd" spring-boot:run`（端口 8080）。
 - 换机器：maven/JDK 路径不同（部署手册装的机器是 `D:\tools\maven\apache-maven-3.9.9\bin\mvn.cmd` + `D:\tools\jdk17`），先问用户或看 CLAUDE.md。
 - 报"找不到符号 XXX"但文件明明存在 → 先删 `target` 全量重编（历史教训：内存不足时 mvn 被杀留下残缺 class）。
@@ -28,7 +29,7 @@ node --check pages/xxx/xxx.js
 ```powershell
 powershell -ExecutionPolicy Bypass -File diagnose.ps1
 ```
-覆盖：物理内存、MySQL 连通+11 表齐全、Redis（带密码 PING）、Ollama 服务/模型/显存、GPU+端口、环境变量、推理速度。默认值自动读本机 `application.yml`。
+覆盖：物理内存、MySQL 连通+**12 张必需表**齐全（含 `defense_rubric`）、Redis（带密码 PING）、Ollama 服务/模型/显存、GPU+端口、环境变量、推理速度。默认值自动读本机 `application.yml`。
 
 ## 4. 直查 MySQL（root/123456 @3306/ai_helper）
 
@@ -73,7 +74,7 @@ curl -i http://localhost:8080/teacher/stats/overview -H "Authorization: Bearer %
 ## 四、遗留与待实测清单
 ```
 
-同步义务：严重改动 → CHANGES.md 详细条目 + CLAUDE.md 第八节状态行；需求变更 → `需求清单-2026-09-15.md` 挂账编号（N/F 系列）。
+同步义务：严重改动 → CHANGES.md 详细条目 + `CLAUDE.md`「当前进度」表状态行；新阶段任务 → `新阶段路线图-2026-10-15.md` 的「条目状态 + §2 总表 + §9 更新日志」三处；需求变更 → `需求清单-2026-09-15.md` 挂账编号（N/F 系列）。
 
 ## 7. Git 约定
 

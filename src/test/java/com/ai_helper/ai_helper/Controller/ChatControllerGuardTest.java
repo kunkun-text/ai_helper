@@ -3,6 +3,8 @@ package com.ai_helper.ai_helper.Controller;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -61,5 +63,48 @@ class ChatControllerGuardTest {
     void noSuffixNeverStrips() {
         assertFalse(chatController.shouldStripWrongAnswerNote("回答正确。", 38.0, false, false, 32.0));
         assertFalse(chatController.shouldStripWrongAnswerNote(null, 0.0, false, false, 32.0));
+    }
+
+    // ==================== N79 · 追问串题闸门（2026-10-19） ====================
+
+    @Test
+    void followUpRejectsTopicMetaQuestions() {
+        // 实测 362 第 10 轮：模型反过来向学生索要课题背景
+        assertFalse(chatController.isAcceptableFollowUp("请提供课题名称、核心方案的技术栈与架构信息"));
+        // 实测 362 第 7~9 轮：空指代，放在任何课题下都成立
+        assertFalse(chatController.isAcceptableFollowUp("请说明该课题核心方案的关键实现细节？"));
+        assertFalse(chatController.isAcceptableFollowUp("请分析该课题核心方案的性能瓶颈？"));
+    }
+
+    @Test
+    void followUpAcceptsTopicSpecificQuestions() {
+        assertTrue(chatController.isAcceptableFollowUp("如何具体实现CombineTextInputFormat合并小文件？"));
+        assertTrue(chatController.isAcceptableFollowUp("HDFS 中 NameNode 与 DataNode 如何协作？"));
+    }
+
+    @Test
+    void followUpRejectsEmptyAndTooShort() {
+        assertFalse(chatController.isAcceptableFollowUp(null));
+        assertFalse(chatController.isAcceptableFollowUp("   "));
+        assertFalse(chatController.isAcceptableFollowUp("继续？"));
+    }
+
+    // ==================== 逻辑隔离 · 会话/课题一致性（2026-10-19） ====================
+
+    @Test
+    void sessionTopicMustMatchRequest() {
+        assertNull(chatController.sessionIdTopicMismatch("user_12408060102_topic_28", "12408060102", 28));
+        // 会话属于课题 27，却拿它来答课题 28 → 必须拦
+        assertNotNull(chatController.sessionIdTopicMismatch("user_12408060102_topic_27", "12408060102", 28));
+        // 会话属于别人 → 也拦
+        assertNotNull(chatController.sessionIdTopicMismatch("user_20230001_topic_28", "12408060102", 28));
+    }
+
+    @Test
+    void sessionTopicCheckSkipsUnknownFormat() {
+        // 自定义会话名 / 缺 topicId：不拦截，交给后续逻辑
+        assertNull(chatController.sessionIdTopicMismatch("custom_session", "12408060102", 28));
+        assertNull(chatController.sessionIdTopicMismatch("user_12408060102_topic_28", "12408060102", null));
+        assertNull(chatController.sessionIdTopicMismatch(null, "12408060102", 28));
     }
 }

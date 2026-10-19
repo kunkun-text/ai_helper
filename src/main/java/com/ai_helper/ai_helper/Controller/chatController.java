@@ -124,6 +124,66 @@ public class chatController {
     private static final String WRONG_ANSWER_NOTE = "（有明显回答错误）";
 
     /**
+     * 【N79 · 2026-10-19】追问禁用特征：向学生索要课题背景，或用「该课题 / 这套方案」这类空指代。
+     *
+     * <p>命中即判为"串题/空题"并拒绝该候选。实测 defenseId=362 第 7~10 轮：
+     * 「请说明该课题核心方案的关键实现细节？」「请提供课题名称、核心方案的技术栈与架构信息」
+     * ——放在任何课题下都成立，等于把 A 课题的题混进 B 课题。</p>
+     */
+    private static final String[] FOLLOW_UP_REJECT_PATTERNS = {
+            "请提供课题", "课题名称", "课题简介", "技术栈与架构", "该课题"
+    };
+
+    /**
+     * 【N79 · 2026-10-19】追问可用性判定（纯函数，便于回归测试）。
+     *
+     * <p>拒绝三类：空/过短、向学生索要课题背景、使用与课题无关的空指代。
+     * 宁可让调用方走"题库借题 / 复述原题"兜底，也不把空题交给学生。</p>
+     */
+    static boolean isAcceptableFollowUp(String question) {
+        if (question == null) return false;
+        String q = question.trim();
+        if (q.length() < 8) return false;
+        for (String bad : FOLLOW_UP_REJECT_PATTERNS) {
+            if (q.contains(bad)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 【逻辑隔离 · 2026-10-19】校验 sessionId 内嵌的用户/课题号与本次请求是否一致（纯函数）。
+     *
+     * <p>约定格式 {@code user_<学号>_topic_<课题号>}（前端 `defense.js` 与后端默认值都按此生成）。
+     * 不一致时必须拒绝，否则同一条 Redis 会话会被另一个课题复用，
+     * A 课题的记忆、题目、答案就会落到 B 课题——正是用户说的"A 的内容跑到 B"。
+     * 不符合约定格式（自定义 sessionId）时返回 null，不拦截。</p>
+     */
+    static String sessionIdTopicMismatch(String sessionId, String userId, Integer topicId) {
+        if (sessionId == null || userId == null || userId.isEmpty() || topicId == null) {
+            return null;
+        }
+        String prefix = "user_" + userId + "_topic_";
+        if (!sessionId.startsWith(prefix)) {
+            // 不是自己的会话：符合系统约定格式（user_<学号>_topic_<数字>）直接拒绝；
+            // 自定义会话名（如 topic_28_时间戳）不在此约定内，交给后续逻辑。
+            if (sessionId.matches("user_.+_topic_\\d+")) {
+                return "会话不属于当前登录用户";
+            }
+            return null;
+        }
+        String tail = sessionId.substring(prefix.length());
+        try {
+            int sidTopic = Integer.parseInt(tail);
+            if (sidTopic != topicId.intValue()) {
+                return "会话属于课题 " + sidTopic + "，当前请求课题 " + topicId;
+            }
+        } catch (NumberFormatException ignored) {
+            // 后缀不是数字（自定义会话名），不在本约定内
+        }
+        return null;
+    }
+
+    /**
      * 【N61 · 2026-10-14】考官身份与硬约束（system 消息）。
      *
      * <p><b>为什么单独拆成 system 而不是继续塞在 user 里</b>：</p>
@@ -264,6 +324,15 @@ public class chatController {
             } else {
                 sessionId = "topic_" + topicId + "_" + System.currentTimeMillis();
             }
+        }
+
+        // 【逻辑隔离 · 2026-10-19】会话自带的用户/课题必须与本次请求一致，否则拒绝：
+        // 防止同一条 Redis 会话被另一个课题复用（A 课题的记忆与答案落到 B 课题）。
+        String sessionMismatch = sessionIdTopicMismatch(sessionId, userId, topicId);
+        if (sessionMismatch != null) {
+            log.warn("会话与课题不匹配，拒绝请求 - sessionId: {}, userId: {}, topicId: {}",
+                    sessionId, userId, topicId);
+            return Flux.just("会话与课题不匹配：" + sessionMismatch + "，请返回答辩列表重新进入。");
         }
 
         final String finalSessionId = sessionId;
@@ -441,6 +510,11 @@ public class chatController {
             return Map.of("success", false, "message", "登录身份与请求用户不一致，请重新登录");
         }
         userId = loginUser;
+        // 【逻辑隔离 · 2026-10-19】清空/新建也必须校验会话归属，避免用 A 课题的 sessionId 清 B 课题
+        String sessionMismatch = sessionIdTopicMismatch(sessionId, userId, topicId);
+        if (sessionMismatch != null) {
+            return Map.of("success", false, "message", "会话与课题不匹配：" + sessionMismatch);
+        }
         // 【2026-09-28 回归修复】默认 false = 从第 1 题开始；只有前端弹窗里用户选了
         // 「继续作答」才传 resume=true（弹窗数据来自 /chat/resume-info）。
         boolean wantResume = Boolean.TRUE.equals(body.get("resume"))
@@ -1930,19 +2004,19 @@ public class chatController {
             int currentRound = answeredCount + 1;
             int qi = currentRound - 1;
             boolean inPresetPhase = qi >= 0 && qi < existingQuestionCount;
-            // 本轮已是最后一轮（第 existingQuestionCount + EXTRA_QUESTION_LIMIT 次作答）→ 本题0分后直接收尾总结
-            boolean lastRound = currentRound >= existingQuestionCount + EXTRA_QUESTION_LIMIT;
-
-            // 先确定下一题：预设题未问完 → 题库取下一题；未到最后一轮 → 模型生成追问；否则收尾。
-            // 旧实现的 quotaRemains 基于 countExtraQuestions（DB 追问题条数虚高≈2倍），会导致提前收尾。
+            // 先确定下一题。
+            // 【N79 · 2026-10-19】放弃/敷衍作答时**不再生成新追问**：
+            //   ① 预设阶段 → 直接进下一道预设题（保证 5 道预设题覆盖完整）；
+            //   ② 追问阶段 → 直接收尾。
+            // 实测 defenseId=362（同类还有 361）：连续「我不会」时旧实现每轮都调
+            // generateFollowUpQuestion(topicId, asked)，且**不传当前题与学生回答**，
+            // 3B 只能凭课题名硬猜，产出「该课题核心方案的关键实现细节？」
+            // 「请提供课题名称、核心方案的技术栈与架构信息」这类与课题无关的空题——
+            // 即用户反馈的"串题"。放弃作答没有可追问的内容，生成新题只会制造空题。
             boolean terminal = false;
             String nextQuestion = null;
             if (inPresetPhase && qi + 1 < existingQuestionCount) {
                 nextQuestion = fetchPresetQuestionText(topicId, qi + 1);
-            } else if (!lastRound) {
-                nextQuestion = generateFollowUpQuestion(topicId,
-                        // 【2026-10-10】currentRound 即本次作答序号；已问集合含当前题（同 :1195 修复）
-                        collectAskedQuestions(topicId, currentRound, defenseId));
             } else {
                 terminal = true;
             }
@@ -2083,6 +2157,11 @@ public class chatController {
             }
             pb.append("\n");
         }
+        // 【N79 · 2026-10-19】把"不许串题"写进 prompt：3B 在缺少当前题时会转而向学生索要课题背景，
+        // 或在题面里用「该课题」这类空指代，生成的题放到任何课题下都成立（defenseId=362 实测）。
+        pb.append("【硬性约束】① 你已掌握课题信息，严禁向学生索要课题名称、技术栈、架构或背景；")
+                .append("② 严禁使用「该课题」「这套方案」这类空指代，必须点名本课题中的具体技术对象（如 HDFS、MapReduce、PM2.5）；")
+                .append("③ 问题必须落在本课题范围内，不得扩展到其他课程或课题。\n");
         pb.append("请基于学生刚才回答中最薄弱或最含糊的一点追问，优先追问实现细节、方案取舍、边界条件、性能瓶颈或异常处理。")
                 .append("禁止泛泛提问‘不足与改进方向’，禁止重复已问主题。只输出一个新问题，30字以内，以？结尾，不要输出解释。\n");
 
@@ -2099,20 +2178,22 @@ public class chatController {
                         .content();
                 String question = cleanNextQuestion(resp);
                 if (question != null && !question.isEmpty()
-                        && !isSimilarToAnyQuestion(question, excludeQuestions)) {
+                        && !isSimilarToAnyQuestion(question, excludeQuestions)
+                        && isAcceptableFollowUp(question)) {
                     return question;
                 }
-                log.warn("追问生成与已问题目相似或为空（第{}次尝试），重试", attempt + 1);
-                pb.append("上一候选问题因重复或为空已被拒绝，请换一个不同考点继续生成。\n");
+                log.warn("追问候选被拒绝（重复/为空/向学生索要课题信息或空指代） - 候选: {}（第{}次尝试）",
+                        question, attempt + 1);
+                pb.append("上一候选问题因重复、为空或脱离本课题已被拒绝，请换一个不同考点继续生成。\n");
             }
         } catch (Exception e) {
             log.warn("模型生成追问失败，使用兜底问题: {}", e.getMessage());
         }
 
-        String[] fallbacks = buildFollowUpFallbacks(currentQuestion, studentAnswer);
-        // 兜底题按固定顺序取第一个不相似项，避免随机性影响 N7 复现
+        String[] fallbacks = buildFollowUpFallbacks(currentQuestion, studentAnswer, topicName, presetQuestions);
+        // 兜底题按固定顺序取第一个不相似且不串题的项，避免随机性影响 N7 复现
         for (String f : fallbacks) {
-            if (!isSimilarToAnyQuestion(f, excludeQuestions)) {
+            if (!isSimilarToAnyQuestion(f, excludeQuestions) && isAcceptableFollowUp(f)) {
                 return f;
             }
         }
@@ -2184,13 +2265,24 @@ public class chatController {
         return "请补充说明你在本课题中的第 " + roundNo + " 个技术要点及其实践情况？";
     }
 
-    private String[] buildFollowUpFallbacks(String currentQuestion, String studentAnswer) {
+    private String[] buildFollowUpFallbacks(String currentQuestion, String studentAnswer,
+                                            String topicName, List<DefenseQuestions> presetQuestions) {
         String focus = extractFirstKeyword(studentAnswer);
         if (focus.isEmpty()) {
             focus = extractFirstKeyword(currentQuestion);
         }
+        // 【N79 · 2026-10-19】学生答案/当前题都抽不到技术词时（典型：连续「我不会」），
+        // 依次退到「本题库第一道题」和「课题名」找锚点（两者都含 Hadoop/MapReduce 这类实词）。
+        if (focus.isEmpty() && presetQuestions != null && !presetQuestions.isEmpty()) {
+            focus = extractFirstKeyword(presetQuestions.get(0).getQuestion());
+        }
         if (focus.isEmpty()) {
-            focus = "该课题核心方案";
+            focus = extractFirstKeyword(topicName);
+        }
+        // 仍然没有锚点就返回空数组，交给「题库借题 → 通用追问」兜底。
+        // 旧实现在这里硬拼「该课题核心方案」，产出的题放在任何课题下都成立，正是"串题"来源。
+        if (focus.isEmpty()) {
+            return new String[0];
         }
         return new String[] {
                 "请说明" + focus + "的关键实现细节？",
@@ -2226,14 +2318,23 @@ public class chatController {
             return candidate;
         }
         List<String> asked = collectAskedQuestions(topicId, askedPresetCount, defenseId);
-        if (!isSimilarToAnyQuestion(candidate, asked)) {
+        boolean acceptable = isAcceptableFollowUp(candidate);
+        if (!isSimilarToAnyQuestion(candidate, asked) && acceptable) {
             return candidate;
         }
-        log.warn("下一题候选与已问题目重复，改走重新生成 - 候选: {}, 已问 {} 道", candidate, asked.size());
+        // 【N79 · 2026-10-19】模型自拟的「下一题」同样要过串题闸门：
+        // defenseId=362 第 9 轮（学生粘贴了一段长文本、不算放弃）就是模型自己问出
+        // 「请提供课题名称、核心方案的技术栈与架构信息」——只在放弃分支拦截不够。
+        if (!acceptable) {
+            log.warn("下一题候选属空题/索要课题信息（串题），改走重新生成 - 候选: {}", candidate);
+        } else {
+            log.warn("下一题候选与已问题目重复，改走重新生成 - 候选: {}, 已问 {} 道", candidate, asked.size());
+        }
         String regenerated = generateFollowUpQuestion(topicId, asked, currentQuestion, studentAnswer);
-        // generateFollowUpQuestion 的各级兜底已验重；这里再复核一次，确保任何情况下都不把重复题交给学生
+        // generateFollowUpQuestion 的各级兜底已验重；这里再复核一次，确保任何情况下都不把重复题/空题交给学生
         if (regenerated != null && !regenerated.trim().isEmpty()
-                && !isSimilarToAnyQuestion(regenerated, asked)) {
+                && !isSimilarToAnyQuestion(regenerated, asked)
+                && isAcceptableFollowUp(regenerated)) {
             return regenerated;
         }
         String generic = buildGenericFollowUp(asked);

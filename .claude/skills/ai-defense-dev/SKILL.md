@@ -46,7 +46,7 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 4. 等用户人工审核，不要自己觉得"没问题"就继续
 
 ### ⑥ 文档与交付
-- **严重改动必须更新 `CHANGES.md`**（格式模板见 `references/toolbox.md` §6），CLAUDE.md 第八节同步状态。
+- **严重改动必须更新 `CHANGES.md`**（格式模板见 `references/toolbox.md` §6），并同步 `CLAUDE.md` 的「当前进度」表（已完成/待开发/待拍板三张）。
 - **commit / push 必须用户明确要求才做**；推送前核对文档与代码一致。
 
 ## 工具调用速查
