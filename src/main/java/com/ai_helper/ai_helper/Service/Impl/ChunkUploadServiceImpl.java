@@ -62,12 +62,26 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final VideoProcessingService videoProcessingService;
 
     @Override
-    public Map<String, Object> init(String loginUserNumber, Integer topicId, String originalFileName, long fileSize) {
+    public Map<String, Object> init(String loginUserNumber, Integer topicId, Integer defenseId,
+                                    String originalFileName, long fileSize) {
         if (loginUserNumber == null || loginUserNumber.trim().isEmpty()) {
             throw new BusinessException("登录状态已失效，请重新登录");
         }
         if (topicId == null) {
             throw new BusinessException("请先选择对应的答辩题目");
+        }
+        // 【VID-0 · 2026-10-20】答辩页上传必须绑定本场记录：
+        // 原来只按 topicId 取「最新一条」，同一课题二次答辩时会写到别的场次上。
+        Integer boundDefenseId = null;
+        if (defenseId != null) {
+            String ownerUserId = defenseRecordsMapper.getUserIdByUserNumber(loginUserNumber.trim());
+            if (ownerUserId == null) {
+                throw new BusinessException("未找到对应的用户信息");
+            }
+            if (defenseRecordsMapper.countOwnedDefenseRecord(defenseId, ownerUserId) <= 0) {
+                throw new BusinessException("该答辩记录不属于当前账号，无法绑定视频");
+            }
+            boundDefenseId = defenseId;
         }
 
         AppProperties.FileRule rule = appProperties.getUpload().getVideo();
@@ -111,12 +125,15 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         session.put("fileSize", String.valueOf(fileSize));
         session.put("chunkSize", String.valueOf(chunkSize));
         session.put("totalParts", String.valueOf(totalParts));
+        // 空串表示"未绑定"（Redis Hash 不接受 null 值）
+        session.put("defenseId", boundDefenseId == null ? "" : String.valueOf(boundDefenseId));
         session.put("createdAt", String.valueOf(System.currentTimeMillis()));
         stringRedisTemplate.opsForHash().putAll(SESSION_KEY_PREFIX + uploadId, session);
         stringRedisTemplate.expire(SESSION_KEY_PREFIX + uploadId, SESSION_TTL);
 
-        log.info("分片上传初始化 - uploadId: {}, user: {}, topicId: {}, 大小: {}, 分片数: {}",
-                uploadId, loginUserNumber, topicId, UploadUtils.readableSize(fileSize), totalParts);
+        log.info("分片上传初始化 - uploadId: {}, user: {}, topicId: {}, defenseId: {}, 大小: {}, 分片数: {}",
+                uploadId, loginUserNumber, topicId, boundDefenseId,
+                UploadUtils.readableSize(fileSize), totalParts);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("uploadId", uploadId);
@@ -219,7 +236,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (internalUserId == null) {
             throw new BusinessException("未找到对应的用户信息");
         }
-        Integer defenseId = defenseRecordsService.getOrCreateLatestDefenseRecord(topicId, user, true);
+        // 【VID-0】init 时绑定过本场记录就写它（已校验归属）；没绑定才回落「最新一条」
+        Integer defenseId = intOrNull(session, "defenseId");
+        if (defenseId == null) {
+            defenseId = defenseRecordsService.getOrCreateLatestDefenseRecord(topicId, user, true);
+        }
         if (defenseId == null) {
             throw new BusinessException("无法定位答辩记录，请先在该题目下开始答辩");
         }
@@ -400,5 +421,18 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     private int intValue(Map<Object, Object> session, String key) {
         return (int) longValue(session, key);
+    }
+
+    /** 可空整数：空串/缺失返回 null，脏数据按缺失处理（不能抛异常，否则老会话续传会直接失败） */
+    private Integer intOrNull(Map<Object, Object> session, String key) {
+        String raw = stringValue(session, key).trim();
+        if (raw.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

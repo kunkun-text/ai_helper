@@ -133,6 +133,134 @@ page {
   color: var(--g-accent, #00897b);
 }
 
+/* 【VID-4 · 2026-10-20】标注「该场次已上传答辩视频」（可点开详情做视频 AI 评分）。
+   红系与报告评析的 teal 明确区分；两者同时存在时报告绿为主、视频红作补充标签。 */
+.g-tag-video {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+/* ================= 评分表成绩单（2026-10-20） =================
+   放在 app.wxss 而不是各页 wxss：学生端与教师端的「评分表」必须长得一样、
+   算得一样（数据源 defense_score_record，口径对齐报告评析）。
+   色值沿用上面的 teal 强调色，与 .g-tag-doc 一致。 */
+
+.sc-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 12rpx;
+}
+
+.sc-total {
+  font-size: 52rpx;
+  font-weight: 700;
+  color: var(--g-accent, #00897b);
+  line-height: 1.1;
+}
+
+.sc-total-max {
+  font-size: 24rpx;
+  color: #9ca3af;
+}
+
+.sc-total-note {
+  font-size: 22rpx;
+  color: #9ca3af;
+}
+
+/* 五维平均：一行五格，窄屏也不换行挤压 */
+.sc-dims {
+  display: flex;
+  gap: 8rpx;
+  margin-top: 16rpx;
+}
+
+.sc-dim {
+  flex: 1;
+  background: #f7f9fb;
+  border-radius: 10rpx;
+  padding: 12rpx 4rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.sc-dim-name {
+  font-size: 20rpx;
+  color: #6b7280;
+}
+
+.sc-dim-score {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.sc-tip {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 20rpx;
+  color: #9ca3af;
+  line-height: 1.6;
+}
+
+/* 逐轮卡片 */
+.sc-round {
+  margin-top: 12rpx;
+  padding: 16rpx 20rpx;
+  background: #f7f9fb;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.sc-round-head {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.sc-round-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.sc-round-total {
+  font-size: 24rpx;
+  color: var(--g-accent, #00897b);
+  font-weight: 600;
+}
+
+.sc-round-dims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.sc-round-dim {
+  font-size: 20rpx;
+  color: #4b5563;
+  background: #ffffff;
+  border: 1rpx solid #e5e7eb;
+  border-radius: 8rpx;
+  padding: 2rpx 10rpx;
+}
+
+.sc-round-comment {
+  font-size: 24rpx;
+  color: #374151;
+  line-height: 1.7;
+}
+
+.sc-muted {
+  color: #9ca3af;
+}
+
 /* ---------------- 数据统计卡（教师端总览） ---------------- */
 .g-stats {
   display: flex;

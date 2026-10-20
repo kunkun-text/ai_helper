@@ -272,6 +272,7 @@ function materializeLocalPath(filePath) {
  * @param options.fileSize       文件总字节数
  * @param options.token          登录 token
  * @param options.uploadId       传入则续传该次上传（跳过 init，先查已收分片）
+ * @param options.defenseId      可选，绑定到指定答辩记录（答辩页上传用；不传按该生该题最新一条）
  * @param options.onProgress     进度回调 (percent)
  * @param options.onStage        阶段回调 ('init' | 'uploading' | 'merging')
  * @return Promise，成功得到 { videoUrl, processingId, fileSize, totalParts, uploadId }
@@ -340,11 +341,17 @@ function uploadVideo(options) {
       });
     }
     notify(0, 'init');
+    // 【VID-0 · 2026-10-20】defenseId 可选：答辩页传本场记录，合并时直接写这条；
+    // 不传则后端仍按「该生该题最新一条」处理（学生详情页保持原行为）。
+    const initData = { fileName: fileName, fileSize: fileSize, topicId: topicId };
+    if (options.defenseId) {
+      initData.defenseId = options.defenseId;
+    }
     return request({
       url: getBaseUrl() + '/api/video/init',
       method: 'POST',
       header: formHeader(token),
-      data: { fileName: fileName, fileSize: fileSize, topicId: topicId }
+      data: initData
     }).then(function (data) {
       const info = data || {};
       uploadId = info.uploadId;

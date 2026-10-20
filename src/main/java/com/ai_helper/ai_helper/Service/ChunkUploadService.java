@@ -17,11 +17,14 @@ public interface ChunkUploadService {
      *
      * @param loginUserNumber  登录态中的学号（不信任前端传参）
      * @param topicId          所属答辩题目
+     * @param defenseId        本场答辩记录 ID（可空）；非空时会校验归属，合并时**优先**写这条记录，
+     *                         避免答辩页上传被「最新一条记录」的隐式约定写到别的场次上
      * @param originalFileName 原始文件名（用于取扩展名与展示）
      * @param fileSize         文件总字节数
      * @return uploadId / chunkSize / totalParts / receivedParts
      */
-    Map<String, Object> init(String loginUserNumber, Integer topicId, String originalFileName, long fileSize);
+    Map<String, Object> init(String loginUserNumber, Integer topicId, Integer defenseId,
+                             String originalFileName, long fileSize);
 
     /**
      * 上传一个分片。

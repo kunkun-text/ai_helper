@@ -25,6 +25,82 @@
   transition: width 0.4s ease;
 }
 
+/* ======== 【VID-0】答辩视频上传条 ========
+   常驻但只占一行高，避免挤压聊天区；上传中展开进度，失败展开原因 + 重试。 */
+.video-bar {
+  flex-shrink: 0;
+  background: #ffffff;
+  border-bottom: 1rpx solid #eef2f7;
+  padding: 16rpx 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.video-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.video-bar-label {
+  font-size: 26rpx;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.video-bar-state {
+  font-size: 24rpx;
+  color: #9ca3af;
+}
+
+.video-bar-state.state-done {
+  color: #16a34a;
+}
+
+.video-bar-body {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.video-bar-hint {
+  flex: 1;
+  font-size: 22rpx;
+  color: #9ca3af;
+}
+
+.video-bar-progress {
+  flex: 1;
+}
+
+.video-bar-stage {
+  font-size: 22rpx;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.video-bar-error {
+  flex: 1;
+  font-size: 22rpx;
+  color: #dc2626;
+  line-height: 1.5;
+}
+
+.video-bar-action {
+  font-size: 24rpx;
+  color: #1677ff;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: #eef5ff;
+  white-space: nowrap;
+}
+
+.video-bar-action.danger {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
 /* ======== Header ======== */
 .header {
   height: 120rpx;

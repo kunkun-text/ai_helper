@@ -20,6 +20,36 @@
           style="width: {{totalRounds ? (questionCount * 100 / totalRounds) : 0}}%"></view>
   </view>
 
+  <!-- 【VID-0 · 2026-10-20】答辩视频（可选）：上传不阻塞答题，失败可续传；
+       绑定本场 defenseId，教师端/详情页可直接回放。 -->
+  <view class="video-bar">
+    <view class="video-bar-head">
+      <text class="video-bar-label">答辩视频</text>
+      <text class="video-bar-state {{hasVideo ? 'state-done' : ''}}">{{hasVideo ? '已上传' : '未上传（可选）'}}</text>
+    </view>
+
+    <!-- 上传中：进度 + 取消 -->
+    <view wx:if="{{isUploading}}" class="video-bar-body">
+      <progress class="video-bar-progress" percent="{{uploadProgress}}" stroke-width="4"
+                activeColor="#1677ff" backgroundColor="#e5e7eb" />
+      <text class="video-bar-stage">{{uploadStageText}} {{uploadProgress}}%</text>
+      <text class="video-bar-action danger" catchtap="cancelDefenseVideoUpload">取消</text>
+    </view>
+
+    <!-- 失败：原因 + 重试（有原文件参数则续传） -->
+    <view wx:elif="{{uploadError}}" class="video-bar-body">
+      <text class="video-bar-error">{{uploadError}}</text>
+      <text class="video-bar-action" catchtap="retryDefenseVideoUpload">重试</text>
+    </view>
+
+    <!-- 空闲：预览 / 上传（或重传） -->
+    <view wx:else class="video-bar-body">
+      <text class="video-bar-hint">答辩录屏或现场拍摄，上传后可回放</text>
+      <text wx:if="{{hasVideo}}" class="video-bar-action" catchtap="previewDefenseVideo">预览</text>
+      <text class="video-bar-action" catchtap="chooseDefenseVideo">{{hasVideo ? '重传' : '上传'}}</text>
+    </view>
+  </view>
+
   <!-- 消息列表 -->
   <scroll-view class="msg-list" scroll-y="true" scroll-into-view="{{scrollToId}}" scroll-with-animation="true"
     upper-threshold="50" bindscrolltoupper="onScrollToTop">

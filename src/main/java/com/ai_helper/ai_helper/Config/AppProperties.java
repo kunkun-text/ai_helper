@@ -39,6 +39,9 @@ public class AppProperties {
     /** 上传报告文档的 AI 评析配置（2026-10-16 · 报告五维评分第一期） */
     private ReportDoc reportDoc = new ReportDoc();
 
+    /** 答辩视频的 AI 评分配置（2026-10-20 · VID 系列：听声识别 → 五维成绩单） */
+    private VideoAnalysis videoAnalysis = new VideoAnalysis();
+
     @Data
     public static class Storage {
         /**
@@ -333,6 +336,69 @@ public class AppProperties {
      *
      * <p>全部是经验值，代码默认值即可运行，application.yml 不配置也能跑。</p>
      */
+    /**
+     * 答辩视频的 AI 评分（2026-10-20）。
+     *
+     * <p><b>只做听声识别：</b>用户明确视频是答辩现场回答的录音录像，不需要压缩、
+     * 不需要画面分析，所以链路是「ffmpeg 抽音轨 → whisper 转写 → 五维点评 → 五维评分」，
+     * 全程 CPU，长视频（≤10 分钟）可以整段跑完，不分段。</p>
+     */
+    @Data
+    public static class VideoAnalysis {
+
+        /** 是否启用。默认开启，可一键关掉退回「只有上传没有评分」 */
+        private boolean enabled = true;
+
+        /** 转写文本最长保留字数（超出截断，避免 16k 上下文被撑爆；10 分钟口语约 1500~2500 字，正常碰不到） */
+        private int maxChars = 20000;
+
+        /** 点评调用 maxTokens（六行，每行 40 字，留足余量） */
+        private int commentsMaxTokens = 600;
+
+        /** 评分调用 maxTokens（只输出一行） */
+        private int scoreMaxTokens = 100;
+
+        /**
+         * 单场分析总预算（秒）。超时直接失败并把原因写给学生/教师。
+         *
+         * <p>8G 低功耗机 whisper-small 约 1~3 倍实时：10 分钟音频最坏 30 分钟，
+         * 因此默认 1800 秒。压得过低会让长视频必然失败。</p>
+         */
+        private int budgetSeconds = 1800;
+
+        /** 任务锁 TTL（秒），略大于预算，防止进程崩溃后永久锁死 */
+        private int lockTtlSeconds = 2400;
+
+        /** ffmpeg 抽音轨超时（秒）。10 分钟视频抽 16k 单声道 wav 通常几秒内完成 */
+        private int ffmpegTimeoutSeconds = 600;
+
+        /**
+         * 口语场景下「缺失维」的最低分（2026-10-20）。
+         *
+         * <p>视频是口语，学生大概率讲了但没讲到点上，或 whisper 把术语听错；
+         * 按报告口径压到 0~4 会被 3B 打成 0~2 分，实测一场 2 分钟视频直接 4/50「无效」。
+         * 这里只把自认缺失的维度抬到该下限，跑题闸门仍在其后执行（跑题照样归零）。</p>
+         */
+        private double oralMissingFloor = 3.0;
+
+        /**
+         * 视频转写专用的 whisper 提示词（不影响 60 秒录音识别）。空串 = 不加提示词。
+         *
+         * <p><b>2026-10-20 三种提示词实测对比（同一段 2 分 08 秒视频）：</b>
+         * <ul>
+         *   <li>不加提示词：203 字，被听成「文字打变 / 云打变」；</li>
+         *   <li><b>长术语表</b>（把答辩/评分/教师端等词全列上）：**反而更差**——152 字，
+         *       句子被切碎，还冒出 {@code (字幕:小小小)} 这种噪声。whisper 的 initial prompt
+         *       是"假装前面已经说过这段话"，太长会被当成正文续写；</li>
+         *   <li><b>短句</b>（当前默认）：213 字，「教师端」「视频录像」被纠正，
+         *       但「文字答辩」仍旧听成「文字打变」。</li>
+         * </ul>
+         * 结论：短句略优、长表有害，故默认用短句。真要治同音字，靠 whisper 提示词收益有限，
+         * 更有效的是换 medium 模型（4 倍算力）或后处理纠错词表。</p>
+         */
+        private String asrPrompt = "这是一场学生答辩的现场讲解，主要介绍系统功能与实现情况。";
+    }
+
     @Data
     public static class ReportDoc {
 

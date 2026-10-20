@@ -394,6 +394,14 @@
   border-left: 6rpx solid var(--g-accent, #00897b);
 }
 
+/* 【VID-4 · 2026-10-20】该场次已上传答辩视频：浅红底色 + 左侧红条。
+   只在没有报告评析时生效（wxml 里已保证 doc-analyzed 优先），
+   两条链路同时存在时绿色为主、红色只体现在右上角标签上。 */
+.record-item.has-video {
+  background: #fdecea;
+  border-left: 6rpx solid #c0392b;
+}
+
 /* 【2026-10-18】回答详情里的报告评析区（从「查看反馈」迁入） */
 .doc-actions {
   display: flex;

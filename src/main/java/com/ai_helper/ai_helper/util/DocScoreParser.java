@@ -218,7 +218,11 @@ public final class DocScoreParser {
     private static final String[] MISSING_MARKERS = {
             "未涉及", "未提及", "未给出", "未展开", "未说明", "未讨论", "未见",
             "缺少", "缺失", "缺乏", "只有笼统", "笼统描述", "无创新", "无明显",
-            "没有给出", "没有具体", "材料未"
+            "没有给出", "没有具体", "材料未",
+            // 【2026-10-20】补「没有 X」这一族：3B 在视频点评里高频使用
+            // （实测原话「应变: 没有提到应对技术问题或风险的措施」），
+            // 原词表只认「未 X」，导致该维既没被压低、也没被口语下限兜住。
+            "未提到", "没有提到", "没提到", "未体现", "没有体现", "未交代", "没有交代"
     };
 
     /** 被判定为"该维缺失"时，分数上限（对齐文字答辩第四档「可怜分」的上界 4 分） */
@@ -279,6 +283,38 @@ public final class DocScoreParser {
                     out[i] = Math.min(out[i], MISSING_DIM_MAX);
                     break;
                 }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 【2026-10-20 · 视频答辩专用】给"缺失维"抬下限。
+     *
+     * <p><b>为什么只有视频需要：</b>报告是书面材料，一维确实可以完全没写；
+     * 而答辩视频是**口语**——学生大概率讲了，只是没讲到点上，或者 whisper 把术语听错了。
+     * 按报告口径把这种维度压到 0~4，再用 3B 打分（它往往直接给 0~2），
+     * 实测一场 2 分钟视频直接掉到 4/50「无效」，明显过严。</p>
+     *
+     * <p><b>只抬下限、不抬上限：</b>分数仍然由模型给，这里只把"自认缺失"的维度兜到
+     * {@code floor}（默认 3），不会把 0 分硬拉成及格。跑题闸门在调用侧**之后**执行，
+     * 所以"讲的是另一个系统"依然归零，不会被这条规则救回来。</p>
+     *
+     * <p>纯函数，不修改入参。</p>
+     *
+     * @param dims        已经过 {@link #applyMissingGuards} 的五维分数
+     * @param commentsRaw 点评原始输出
+     * @param floor       口语场景下缺失维的最低分（建议 3）
+     * @return 抬过下限的新数组
+     */
+    public static double[] applyOralMissingFloor(double[] dims, String commentsRaw, double floor) {
+        if (dims == null || dims.length == 0) {
+            return new double[0];
+        }
+        double[] out = dims.clone();
+        for (int i = 0; i < out.length && i < DIMENSIONS.length; i++) {
+            if (isMissingDimension(commentsRaw, DIMENSIONS[i]) && out[i] < floor) {
+                out[i] = floor;
             }
         }
         return out;

@@ -256,7 +256,8 @@ public class WhisperAsrServiceImpl implements AsrService {
                 log.info("录音已是 wav（{} 字节），直接交给识别引擎", audio.length);
             }
 
-            return runWhisper(inputForEngine, outputPrefix);
+            return runWhisper(inputForEngine, outputPrefix,
+                    appProperties.getVoice().getTimeoutSeconds(), null);
         } catch (IOException e) {
             // 【F2】IO 细节（临时文件路径等）只记日志，前端给固定文案
             log.error("语音识别 IO 异常", e);
@@ -269,6 +270,83 @@ public class WhisperAsrServiceImpl implements AsrService {
             deleteQuietly(wavFile);
             deleteQuietly(txtFile);
         }
+    }
+
+    @Override
+    public String transcribeMediaFile(Path mediaFile, long timeoutSeconds) {
+        return transcribeMediaFile(mediaFile, timeoutSeconds, null);
+    }
+
+    @Override
+    public String transcribeMediaFile(Path mediaFile, long timeoutSeconds, String initialPrompt) {
+        if (!available()) {
+            throw new BusinessException("语音识别不可用：" + unavailableReason);
+        }
+        if (mediaFile == null || !Files.isRegularFile(mediaFile)) {
+            throw new BusinessException("视频文件不存在或不可读");
+        }
+        if (ffmpegPath == null) {
+            throw new BusinessException("未找到 ffmpeg，无法从视频中提取音轨（可在 app.voice.ffmpeg-exe 指定路径）");
+        }
+
+        Path workDir = tempDir();
+        Path wav = null;
+        Path outputPrefix = workDir.resolve("asr-video-" + System.nanoTime());
+        Path txtFile = Path.of(outputPrefix + ".txt");
+        long start = System.currentTimeMillis();
+        try {
+            // 只抽音轨：-vn 丢掉画面。用户明确视频是答辩现场回答，只需听声识别，
+            // 不做压缩、不做抽帧/画面分析，因此这里不产生任何视频中间文件。
+            wav = extractAudioTrack(mediaFile, workDir, timeoutSeconds);
+            log.info("视频音轨已提取 - 源文件: {}, wav: {} 字节, 耗时: {} ms",
+                    mediaFile.getFileName(), Files.size(wav), System.currentTimeMillis() - start);
+            return runWhisper(wav, outputPrefix, timeoutSeconds, initialPrompt);
+        } catch (IOException e) {
+            log.error("视频转写 IO 异常", e);
+            throw new BusinessException("视频语音识别失败，请重试");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("视频语音识别被中断，请重试");
+        } finally {
+            deleteQuietly(wav);
+            deleteQuietly(txtFile);
+        }
+    }
+
+    /**
+     * 从视频里抽 16kHz 单声道 wav。
+     *
+     * <p>用文件路径而非字节数组：答辩视频可能几百 MB，读进堆会直接 OOM。
+     * 抽音轨是纯流式解复用，10 分钟视频通常几秒内完成。</p>
+     */
+    private Path extractAudioTrack(Path video, Path workDir, long timeoutSeconds)
+            throws IOException, InterruptedException {
+        Path out = Files.createTempFile(workDir, "video-audio-", ".wav");
+        ProcessBuilder builder = new ProcessBuilder(
+                ffmpegPath, "-y",
+                "-i", video.toAbsolutePath().toString(),
+                "-vn",
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                "-loglevel", "error",
+                out.toAbsolutePath().toString());
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            deleteQuietly(out);
+            throw new BusinessException("音轨提取超时（超过 " + timeoutSeconds + " 秒），请稍后重试");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        // wav 头 + 空数据约 44 字节：小于等于它说明没有声轨（纯静音或视频无音轨）
+        if (process.exitValue() != 0 || !Files.exists(out) || Files.size(out) <= 44) {
+            deleteQuietly(out);
+            log.warn("音轨提取失败 - 退出码: {}, 输出: {}", process.exitValue(),
+                    output.length() > 800 ? output.substring(0, 800) : output.trim());
+            throw new BusinessException("该视频没有可用的音轨，或格式无法解码，请确认视频能正常播放");
+        }
+        return out;
     }
 
     /**
@@ -340,8 +418,16 @@ public class WhisperAsrServiceImpl implements AsrService {
         return true;
     }
 
-    /** 真正执行一次识别，返回识别文本（可能为空串） */
-    private String runWhisper(Path audioFile, Path outputPrefix) throws IOException, InterruptedException {
+    /**
+     * 真正执行一次识别，返回识别文本（可能为空串）。
+     *
+     * @param timeoutSeconds 识别超时。60 秒录音用 {@code app.voice.timeout-seconds}（180s）；
+     *                       答辩视频整段转写要按视频时长放大（见 {@code app.video-analysis.budget-seconds}）
+     * @param initialPrompt  术语气提示词；为空则用 {@code app.voice.prompt} 的默认值。
+     *                       视频链路会传一份答辩术语表，专治「文字答辩→文字打变」这类同音字
+     */
+    private String runWhisper(Path audioFile, Path outputPrefix, long timeoutSeconds, String initialPrompt)
+            throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(exePath);
         command.add("-m");
@@ -356,14 +442,15 @@ public class WhisperAsrServiceImpl implements AsrService {
         // 静默模式：不打印分段与进度，避免输出膨胀（也顺带避免管道缓冲区被写满）
         command.add("-np");
 
-        // 提示词（initial prompt）：引导简体输出 + 提供专业术语表
-        String prompt = appProperties.getVoice().getPrompt();
+        // 提示词（initial prompt）：引导简体输出 + 提供专业术语表。
+        // 调用方给了专用提示词（视频术语表）就优先用它，否则退回全局 app.voice.prompt。
+        String prompt = UploadUtils.isBlank(initialPrompt)
+                ? appProperties.getVoice().getPrompt() : initialPrompt;
         if (!UploadUtils.isBlank(prompt)) {
             command.add("--prompt");
             command.add(prompt);
         }
 
-        long timeout = appProperties.getVoice().getTimeoutSeconds();
         long start = System.currentTimeMillis();
 
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -387,9 +474,9 @@ public class WhisperAsrServiceImpl implements AsrService {
         reader.setDaemon(true);
         reader.start();
 
-        if (!process.waitFor(timeout, TimeUnit.SECONDS)) {
+        if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
             process.destroyForcibly();
-            throw new BusinessException("语音识别超时（超过 " + timeout + " 秒），请缩短作答时长或稍后重试");
+            throw new BusinessException("语音识别超时（超过 " + timeoutSeconds + " 秒），请缩短作答时长或稍后重试");
         }
         reader.join(1000);
         long cost = System.currentTimeMillis() - start;

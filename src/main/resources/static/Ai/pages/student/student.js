@@ -3,6 +3,8 @@ const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
 const auth = require('../../utils/auth.js');
 const radar = require('../../utils/radar.js');
+const scoreCard = require('../../utils/scoreCard.js');
+const gradeSheet = require('../../utils/gradeSheet.js');
 
 /**
  * 登录态失效统一处理（【C1】转交 auth 模块，行为与全站一致）。
@@ -97,8 +99,15 @@ Page({
     // 添加回答详情字段
     selectedAnswers: null,
 
-    // 逐轮五维评分明细（2026-10-01 详情增强；打开/关闭详情与加载失败时都会重置，防止上一条记录的分数串台显示）
-    scoreDetailLines: [],
+    // 【2026-10-20】评分表成绩单化：逐轮卡片（大模型判断 + 五维分 + 等级）与整场汇总。
+    // 数据源仍是 defense_score_record，只是展示口径与「报告评析」对齐（总分 + 等级 + 依据）。
+    // 打开/关闭详情与加载失败时都要重置，防止上一条记录的分数串台显示。
+    scoreCards: [],
+    scoreSummary: null,
+    // 【2026-10-20 · 视频 AI 评分】解析后的成绩单（总分/等级/五维卡片），与教师端共用同一解析器
+    videoDims: [],
+    videoSummary: null,
+    videoRaw: '',
     // 【F11】语音答辩逐轮录音回放（归档在 voice_responses，URL 走 /files/**）
     voiceRecords: [],
     // 【N8】五维雷达图（逐轮五维平均分）与是否可绘制
@@ -836,6 +845,8 @@ Page({
             score: record.score ? parseFloat(record.score) : 0,
             date: that.formatDateTime(record.defenseTime),
             defenseTime: that.formatDateTime(record.defenseTime),
+            // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表红标用（后端给 1/0，转布尔）
+            hasVideo: !!record.hasVideo,
             feedback: record.score ? `本次答辩得分：${parseFloat(record.score)}分。` : '暂无评分'
           }));
           
@@ -961,8 +972,14 @@ Page({
             feedback: detailData.aiAllAnalysis || '暂无综合评价'
           };
           
+          // 【2026-10-20 · 视频 AI 评分】后端产出的是「成绩单文本」，学生端同样拆成
+          // 总分/等级/五维小卡片，与教师端、与报告评析保持同一观感（解析器三处共用）。
+          const videoSheet = gradeSheet.parse(detailData.aiVideoAnalysis || '');
           that.setData({
-            selectedRecord: selectedRecord
+            selectedRecord: selectedRecord,
+            videoDims: videoSheet.dims,
+            videoSummary: videoSheet.summary,
+            videoRaw: videoSheet.raw
           });
         } else {
           wx.showToast({
@@ -1134,7 +1151,7 @@ Page({
     const that = this;
     // 打开即重置：上一条记录的逐轮评分若不清理，换记录后仍会显示（2026-10-01 审计 P1-3 修复）
     // 【F11】录音回放列表同样在打开时置空，避免串场；【N8】雷达图同理
-    this.setData({ scoreDetailLines: [], voiceRecords: [], radarDims: [], radarText: '' });
+    this.setData({ scoreCards: [], scoreSummary: null, voiceRecords: [], radarDims: [], radarText: '' });
     wx.showLoading({
       title: '加载回答详情...'
     });
@@ -1190,13 +1207,12 @@ Page({
             success: (scoreRes) => {
               const body = scoreRes && scoreRes.data;
               if (body && body.code === 1 && Array.isArray(body.data) && body.data.length > 0) {
-                const lines = body.data.map((s) => '第' + s.roundNum + '轮：表达 ' + s.expressionScore +
-                  '、逻辑 ' + s.logicScore + '、专业 ' + s.professionalScore +
-                  '、应变 ' + s.adaptabilityScore + '、创新 ' + s.innovationScore);
-                // 【N8】五维雷达图：取逐轮平均值，画在弹层的 canvas 上
+                // 【2026-10-20】成绩单化：逐轮卡片（含大模型评语）+ 整场汇总（总分/等级），
+                // 与「报告评析」展示同一套口径；雷达图继续用逐轮平均分。
                 const dims = radar.averageDims(body.data);
                 that.setData({
-                  scoreDetailLines: lines,
+                  scoreCards: scoreCard.buildRoundCards(body.data),
+                  scoreSummary: scoreCard.buildSummary(body.data),
                   radarDims: dims,
                   radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
                 });
@@ -1204,11 +1220,11 @@ Page({
                 wx.nextTick(() => radar.drawRadar(that, 'radarCanvas', dims));
               } else {
                 // 失败 / 空数据显式置空，避免残留上一条记录的分数（2026-10-01 审计 P1-3 修复）
-                that.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+                that.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
               }
             },
             fail: () => {
-              that.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+              that.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
             }
           });
 
@@ -1262,7 +1278,8 @@ Page({
   closeAnswers() {
     this.setData({
       selectedAnswers: null,
-      scoreDetailLines: [],
+      scoreCards: [],
+      scoreSummary: null,
       voiceRecords: [],
       radarDims: [],
       radarText: ''

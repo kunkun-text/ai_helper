@@ -1,6 +1,7 @@
 const config = require('../../utils/config.js');
 const auth = require('../../utils/auth.js');
 const protocol = require('../../utils/protocol.js');
+const uploader = require('../../utils/uploader.js');
 
 Page({
   data: {
@@ -31,6 +32,18 @@ Page({
     waitSeconds: 0,
     showWaitTimer: false,
     _lastPrompt: '', // 缓存最后一次请求的prompt用于重试
+
+    // 【VID-0 · 2026-10-20】本场答辩记录 ID：由 /api/chat/clear 返回。
+    // 上传视频时显式绑定它，避免同一课题二次答辩被写到「最新一条」别的场次上。
+    defenseId: null,
+    // 【VID-0】答辩视频（可选）：上传不阻塞答题，失败可重试/续传
+    hasVideo: false,
+    videoUrl: '',
+    isUploading: false,
+    uploadProgress: 0,
+    uploadStageText: '',
+    uploadError: '',
+    currentUploadId: '',
   },
 
   onLoad(options) {
@@ -106,15 +119,195 @@ Page({
           return;
         }
         const data = res.data || {};
+        // 【VID-0】记录本场 defenseId（新建/续答都会返回），供视频上传绑定
+        this.setData({ defenseId: data.defenseId || null });
         if (data.resumed) {
           this.resumeDefense(data);
         } else {
           this.beginNewDefense();
         }
+        this.loadDefenseVideo();
       },
       // 接口异常时退回原行为（从第 1 题开始），不阻塞答辩
       fail: () => this.beginNewDefense(),
     });
+  },
+
+  // ==================================================================
+  // 【VID-0 · 2026-10-20】答辩视频上传（可选，不阻塞答题）
+  // ==================================================================
+
+  /** 选择视频并开始上传；无本场 defenseId 时先提示开始答辩 */
+  chooseDefenseVideo() {
+    if (this.data.isUploading) {
+      wx.showToast({ title: '视频正在上传中', icon: 'none' });
+      return;
+    }
+    if (!this.data.defenseId) {
+      wx.showToast({ title: '请先开始本次答辩再上传视频', icon: 'none' });
+      return;
+    }
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['video'],
+      sourceType: ['album', 'camera'],
+      maxDuration: 600,
+      camera: 'back',
+      success: (res) => {
+        const file = (res.tempFiles || [])[0];
+        if (!file || !file.tempFilePath) {
+          wx.showToast({ title: '未选择到视频文件', icon: 'none' });
+          return;
+        }
+        // 扩展名从临时路径取，不能硬编码 mp4（mov/avi 会被存错）
+        const ext = uploader.extensionOf(file.tempFilePath.split('?')[0]) || 'mp4';
+        const fileName = 'video_' + Date.now() + '_'
+          + Math.random().toString(36).substring(2, 8) + '.' + ext;
+        this.startDefenseVideoUpload(file.tempFilePath, fileName, file.size);
+      },
+      fail: (err) => {
+        const msg = String((err && err.errMsg) || '');
+        // 用户取消选视频不算失败
+        if (msg.toLowerCase().indexOf('cancel') >= 0) {
+          return;
+        }
+        console.error('[defense] chooseMedia fail:', msg);
+        wx.showToast({ title: '无法选择视频，请检查相机/相册权限', icon: 'none' });
+      },
+    });
+  },
+
+  /** 实际上传：先按服务端 policy 校验格式与大小，再走分片（带 defenseId 绑定本场） */
+  startDefenseVideoUpload(filePath, fileName, fileSize) {
+    const token = auth.getToken();
+    // 记住参数：失败后「重试」可续传，不必重新选文件
+    this._pendingVideo = { filePath, fileName, fileSize };
+    this.setData({
+      isUploading: true,
+      uploadProgress: 0,
+      uploadStageText: '正在准备上传...',
+      uploadError: '',
+    });
+
+    uploader.fetchPolicy('video', token)
+      .then((policy) => {
+        const ext = uploader.extensionOf(fileName);
+        if ((policy.allowedExts || []).indexOf(ext) === -1) {
+          throw {
+            code: -1,
+            msg: '不支持的视频格式' + (ext ? '（.' + ext + '）' : '')
+              + '，仅支持：' + (policy.allowedExts || []).join(' / '),
+          };
+        }
+        if (policy.maxSize && fileSize > policy.maxSize) {
+          throw {
+            code: -1,
+            msg: '视频过大：' + uploader.readableSize(fileSize) + '，上限 ' + policy.maxSizeText,
+          };
+        }
+        return uploader.uploadVideo({
+          topicId: this.data.topicId,
+          defenseId: this.data.defenseId,
+          filePath: filePath,
+          fileName: fileName,
+          fileSize: fileSize,
+          token: token,
+          uploadId: this.data.currentUploadId || '',
+          onStage: (stage) => {
+            const text = stage === 'merging' ? '正在合并视频...'
+              : (stage === 'init' ? '正在准备上传...' : '正在上传分片...');
+            this.setData({ uploadStageText: text });
+          },
+          onProgress: (percent) => {
+            this.setData({ uploadProgress: percent });
+          },
+        });
+      })
+      .then((data) => {
+        this._pendingVideo = null;
+        this.setData({
+          isUploading: false,
+          uploadProgress: 100,
+          uploadStageText: '',
+          uploadError: '',
+          currentUploadId: '',
+          hasVideo: true,
+          videoUrl: uploader.resolveFileUrl((data && data.videoUrl) || '') || '',
+        });
+        wx.showToast({ title: '视频上传成功', icon: 'success' });
+      })
+      .catch((err) => {
+        // 主动取消：静默复位，不残留错误条
+        if (err && err.cancelled) {
+          this.setData({
+            isUploading: false,
+            uploadProgress: 0,
+            uploadStageText: '',
+            uploadError: '',
+            currentUploadId: '',
+          });
+          return;
+        }
+        // 记住 uploadId：重试时只补未完成分片
+        this.setData({
+          isUploading: false,
+          uploadStageText: '',
+          uploadError: (err && err.msg) || '视频上传失败，请重试',
+          currentUploadId: (err && err.uploadId) || '',
+        });
+      });
+  },
+
+  /** 取消上传：先停本地在途分片，再让后端清理半成品 */
+  cancelDefenseVideoUpload() {
+    uploader.cancelUpload(auth.getToken());
+    this._pendingVideo = null;
+    this.setData({
+      isUploading: false,
+      uploadProgress: 0,
+      uploadStageText: '',
+      uploadError: '',
+      currentUploadId: '',
+    });
+  },
+
+  /** 重试：有原文件参数就续传，否则重新选文件 */
+  retryDefenseVideoUpload() {
+    const pending = this._pendingVideo;
+    if (pending) {
+      this.startDefenseVideoUpload(pending.filePath, pending.fileName, pending.fileSize);
+      return;
+    }
+    this.chooseDefenseVideo();
+  },
+
+  /** 预览本场已上传的视频 */
+  previewDefenseVideo() {
+    if (!this.data.videoUrl) {
+      return;
+    }
+    wx.previewMedia({
+      sources: [{ url: this.data.videoUrl, type: 'video' }],
+      current: 0,
+    });
+  },
+
+  /** 进入页面时查询本场是否已有视频（续答场景） */
+  loadDefenseVideo() {
+    if (!this.data.topicId) {
+      return;
+    }
+    uploader.getMediaUrl('video', this.data.topicId, auth.getToken())
+      .then((data) => {
+        const info = data || {};
+        this.setData({
+          hasVideo: !!info.hasVideo,
+          videoUrl: uploader.resolveFileUrl(info.videoUrl) || '',
+        });
+      })
+      .catch(() => {
+        // 查询失败不影响答题，静默忽略
+      });
   },
 
   /** 全新答辩：与改造前完全一致的进场流程 */

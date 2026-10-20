@@ -9,6 +9,7 @@ import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.dto.DocScoreResult;
 import com.ai_helper.ai_helper.util.DocScoreParser;
 import com.ai_helper.ai_helper.util.DocTextExtractor;
+import com.ai_helper.ai_helper.util.MaterialScorePrompts;
 import com.ai_helper.ai_helper.util.UploadUtils;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -154,30 +155,11 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
      * <p>评分行不带总分（总分由服务端按五维之和重算，见 {@link DocScoreParser}），
      * 5 个槽位比 6 个槽位更稳（实测带总分槽时 3B 会数错、还会做错加法）。</p>
      */
-    private static final String SCORE_SYSTEM = String.join("\n",
-            "你是答辩评分器。你会看到一份答辩报告的五条逐维点评，请据此打分。",
-            "",
-            "【输出格式】只输出这一行，不要有任何其它文字：",
-            "评分:表达分|逻辑分|专业分|应变分|创新分",
-            "规则：竖线后**恰好 5 个** 0~10 的整数，顺序固定（表达,逻辑,专业,应变,创新），"
-                    + "不要写总分，不要写其它文字。",
-            "【示例】评分:7|7|8|5|6",
-            "",
-            "【最重要】若切题判断为\"否\"（材料讲的是与课题无关的另一件事），五维一律给 0~2 分。",
-            "",
-            "【逐维打分标尺】（每条点评独立判断，一律从严）",
-            "- 点评写\"材料未涉及 / 未提及 / 缺少 / 没有给出 / 只有笼统描述 / 无\" → 该维 0~4 分",
-            "- 点评只正面肯定但**没有具体细节支撑**（没引用术语、数据、章节、机制） → 该维 5~6 分",
-            "- 点评肯定且**有具体内容支撑**（引用了材料里的术语、数据、章节、机制） → 该维 7~10 分",
-            "注意：材料自己声称\"完成度高、达到预期、效果良好\"不算具体支撑；"
-                    + "只有材料给出了可核对的术语、数字、步骤、机制才算。",
-            "",
-            "【总分锚点】（用于自检：五个维度打完分后，总分应落在与材料实况相符的档位）",
-            "- 五维都有具体支撑 → 总分 35~50",
-            "- 多数维度有支撑、个别维缺失 → 总分 26~34",
-            "- 约一半维度能给出具体依据 → 总分 15~25",
-            "- 绝大多数维度只有笼统说法、但主题切题 → 总分 5~14",
-            "- 内容与课题无关（跑题）或无可评内容 → 总分 0~4");
+    /**
+     * 评分口径已抽到 {@link MaterialScorePrompts#SCORE_SYSTEM}（2026-10-20）：
+     * 答辩视频的五维评分复用**完全相同**的提示词，避免两条链路分数漂移。
+     */
+    private static final String SCORE_SYSTEM = MaterialScorePrompts.SCORE_SYSTEM;
 
     /**
      * 综合评价调用的 system 消息（第三次调用：基于材料 + 五维成绩单写整体评价，2026-10-18）。

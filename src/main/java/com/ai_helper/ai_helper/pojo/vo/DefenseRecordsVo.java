@@ -36,6 +36,17 @@ public class DefenseRecordsVo {
     /** 答辩形式：text=文字 / voice=语音；历史场次为空 */
     private String defenseMode;
 
+    // ---------- 【VID-4 · 2026-10-20】视频 AI 评分的列表入口 ----------
+
+    /**
+     * 该场次是否已上传有效答辩视频（{@code video_url} 非空且不是历史脏值 {@code 'abc'}）。
+     *
+     * <p>教师端列表据此打「视频已上传」红标并按浅红底色标识——视频评分按钮在
+     * 「答辩详情」里，且只在该场次有视频时才渲染；没有这个标记，教师无法在列表里
+     * 定位到"可以评分的那一行"，会误以为评分功能不可用。</p>
+     */
+    private Boolean hasVideo;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Shanghai")
     private LocalDateTime defenseTime;
 

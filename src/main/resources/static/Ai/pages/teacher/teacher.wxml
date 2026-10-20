@@ -67,7 +67,9 @@
           bindrefresherrefresh="onDefenseRecordsRefresh"
           style="max-height: 450rpx;">
           <block wx:for="{{defenseRecords}}" wx:key="id">
-            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : ''}}" data-id="{{item.id}}">
+            <!-- 【VID-4 · 2026-10-20】底色优先级：报告评析（teal）为主，视频红只在该行没有报告评析时铺底；
+                 红标签两者都显示，作为补充信息。 -->
+            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : (item.hasVideo ? 'has-video' : '')}}" data-id="{{item.id}}">
               <view class="record-avatar">AI</view>
               <view class="record-body">
                 <view class="record-row">
@@ -83,6 +85,8 @@
                 <text wx:if="{{item.scoreKind === 'report'}}" class="score-kind">报告评析</text>
                 <text class="score">{{item.displayScore}}分</text>
                 <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
+                <!-- 【VID-4 · 2026-10-20】该场次已上传视频 → 详情里有「AI 评分（基于视频）」。 -->
+                <text wx:if="{{item.hasVideo}}" class="g-tag g-tag-video">视频已上传</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -137,7 +141,9 @@
         style="height: 900rpx;">
         <view class="record-list full">
           <block wx:for="{{defenseRecords}}" wx:key="id">
-            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : ''}}" data-id="{{item.id}}">
+            <!-- 【VID-4 · 2026-10-20】底色优先级：报告评析（teal）为主，视频红只在该行没有报告评析时铺底；
+                 红标签两者都显示，作为补充信息。 -->
+            <view class="record-item {{item.analysisSource === 'report' ? 'doc-analyzed' : (item.hasVideo ? 'has-video' : '')}}" data-id="{{item.id}}">
               <view class="record-avatar">AI</view>
               <view class="record-body">
                 <view class="record-row">
@@ -153,6 +159,8 @@
                 <text wx:if="{{item.scoreKind === 'report'}}" class="score-kind">报告评析</text>
                 <text class="score">{{item.displayScore}}分</text>
                 <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
+                <!-- 【VID-4 · 2026-10-20】该场次已上传视频 → 详情里有「AI 评分（基于视频）」。 -->
+                <text wx:if="{{item.hasVideo}}" class="g-tag g-tag-video">视频已上传</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
                 <text class="link-sm" bindtap="openFeedbackDetail" data-id="{{item.id}}">查看反馈</text>
               </view>
@@ -442,6 +450,43 @@
           <text class="label">答辩视频</text>
           <text class="value">视频地址无效或未上传</text>
         </view>
+
+        <!-- 【2026-10-20 · 视频 AI 评分】听声识别后按五维评分，产出与「报告 AI 评析」同形态的成绩单。
+             一次要跑十几分钟（whisper 在 CPU 上约 1~3 倍实时），所以走「提交 + 轮询」。 -->
+        <view class="form-item" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">
+          <text class="label">视频 AI 评分（基于视频里的说话内容）</text>
+          <view class="doc-actions">
+            <button class="primary-btn" bindtap="analyzeVideo" disabled="{{videoAnalyzing}}">
+              {{videoAnalyzing ? videoStage : (selectedRecord.aiVideoAnalysis ? '重新生成视频评分' : 'AI 评分（基于视频）')}}
+            </button>
+          </view>
+          <view wx:if="{{videoAnalyzing}}" class="g-bar" style="margin-top: 16rpx;">
+            <view class="g-bar-inner" style="width: {{videoPercent}}%;"></view>
+          </view>
+          <text wx:if="{{videoAnalyzing}}" class="muted">{{videoStage}}</text>
+
+          <!-- 成绩单抬头：总分 / 等级 / 服务端警告（跑题） -->
+          <view wx:if="{{videoSummary}}" class="doc-score-summary">
+            <text class="doc-total">总分 {{videoSummary.total}}/50</text>
+            <text wx:if="{{videoSummary.grade}}" class="g-tag g-tag-doc">等级 {{videoSummary.grade}}</text>
+            <view wx:for="{{videoSummary.warnings}}" wx:key="*this" class="doc-warn">⚠️ {{item}}</view>
+          </view>
+
+          <!-- 五维小卡片：与报告评析完全相同的样式与解析器 -->
+          <block wx:if="{{videoDims.length > 0}}">
+            <view wx:for="{{videoDims}}" wx:key="name" class="doc-dim-item">
+              <view class="doc-dim-head">
+                <text class="doc-dim-name">{{item.missing ? '⚠️ ' : ''}}{{item.name}}</text>
+                <text class="doc-dim-score">{{item.score}} 分</text>
+              </view>
+              <text class="doc-dim-comment">{{item.comment}}</text>
+            </view>
+          </block>
+          <!-- 格式漂移兜底：解析不出五维时展示原文，绝不静默丢内容 -->
+          <scroll-view wx:if="{{videoDims.length === 0 && videoRaw}}" class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
+            <text class="value feedback">{{videoRaw}}</text>
+          </scroll-view>
+        </view>
         
         <!-- 答辩报告 -->
         <view class="form-item" wx:if="{{selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc'}}">
@@ -556,10 +601,38 @@
           </scroll-view>
         </view>
 
-        <!-- 【N8】逐轮五维明细 + 五维雷达图（逐轮平均） -->
-        <view wx:if="{{scoreDetailLines.length > 0}}" class="form-item">
-          <text class="label">逐轮五维评分</text>
-          <view wx:for="{{scoreDetailLines}}" wx:key="*this" class="muted">{{item}}</view>
+        <!-- 【2026-10-20 · 评分表成绩单化】与学生端同一套口径（utils/scoreCard.js）：
+             总分 + 等级 + 逐维平均 + 逐轮大模型评语。此前只有纯文本分数行，评语不展示。 -->
+        <view wx:if="{{scoreSummary}}" class="form-item">
+          <text class="label">评分表（本地大模型判定）</text>
+          <view class="sc-summary">
+            <text class="sc-total">{{scoreSummary.totalText}}</text>
+            <text class="sc-total-max">/50</text>
+            <text class="g-tag g-tag-doc">{{scoreSummary.grade}}</text>
+            <text class="sc-total-note">逐轮平均 · 共 {{scoreSummary.roundCount}} 轮</text>
+          </view>
+          <view class="sc-dims">
+            <view wx:for="{{scoreSummary.dims}}" wx:key="name" class="sc-dim">
+              <text class="sc-dim-name">{{item.name}}</text>
+              <text class="sc-dim-score">{{item.avg}}</text>
+            </view>
+          </view>
+          <text class="sc-tip">五维各 10 分、合计 50 分；等级与报告评析同一把尺子（≥35 优秀 / 26~34 良好 / 15~25 合格 / 5~14 不合格 / 5 分以下无效）。</text>
+        </view>
+        <view wx:if="{{scoreCards.length > 0}}" class="form-item">
+          <text class="label">逐轮判定与依据</text>
+          <view wx:for="{{scoreCards}}" wx:key="roundNum" class="sc-round">
+            <view class="sc-round-head">
+              <text class="sc-round-title">第 {{item.roundNum}} 轮</text>
+              <text class="sc-round-total">{{item.totalText}} / 50</text>
+              <text class="g-tag g-tag-doc">{{item.grade}}</text>
+            </view>
+            <view class="sc-round-dims">
+              <text wx:for="{{item.dims}}" wx:for-item="dim" wx:key="name" class="sc-round-dim">{{dim.name}} {{dim.score}}</text>
+            </view>
+            <text wx:if="{{item.comment}}" class="sc-round-comment">{{item.comment}}</text>
+            <text wx:else class="sc-round-comment sc-muted">本轮模型未返回评语</text>
+          </view>
         </view>
         <view wx:if="{{radarDims.length === 5}}" class="form-item">
           <text class="label">五维能力雷达图（逐轮平均）</text>

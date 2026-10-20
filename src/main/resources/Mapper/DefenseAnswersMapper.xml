@@ -8,10 +8,21 @@
         VALUES 
         (#{defenseId}, #{questionId}, #{sqId}, #{studentAnswer}, #{score}, #{feedback}, #{createdAt})
     </insert>
+    <!--
+      收尾写回：feedback / video_analysis / report_analysis / score。
+
+      【2026-10-20 · 视频评分保护】video_analysis 可能是两条链路写的：
+        ① 这里：10 轮答辩收尾时模型「凭空」写的【视频分析】（没有任何视频输入）；
+        ② VideoAnalysisServiceImpl：教师触发的「听声识别 + 五维评分」真实成绩单，
+           写库时会把 analysis_source 标成 'video'。
+      若教师在学生点「完成答辩」之前就触发了视频评分，收尾会拿 ① 覆盖掉 ②。
+      所以这里加一道判断：已经是视频评分的成绩单就原样保留，不被幻觉段落冲掉。
+    -->
     <update id="insertAiFeedback">
         update defense_records
         set feedback = #{feedback},
-            video_analysis = #{videoAnalysis},
+            video_analysis = CASE WHEN analysis_source = 'video' THEN video_analysis
+                                  ELSE #{videoAnalysis} END,
             report_analysis = #{reportAnalysis},
             score = #{score},
             updated_at = NOW()

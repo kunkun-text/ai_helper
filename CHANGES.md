@@ -10,6 +10,58 @@
 
 ## 2026-10-20
 
+### 视频 AI 评分「点了没反应」排查 → 教师列表补「视频已上传」红标（VID-4 收口）
+
+**现象**：教师端找不到「AI 评分（基于视频）」按钮，疑似功能没触发（后端日志无任何评分请求）。
+
+**实证结论（不是接口故障，是入口找不到）**
+
+| 证据 | 内容 |
+|---|---|
+| 库 | `defense_records` 里**只有 `defense_id=358` 带视频**：user 23 / topic 37 / `pending` / 0 条作答，`video_url=/files/videos/37eb1f8e….mp4` |
+| 磁盘 | 该文件 255,431,040 字节（**2 分 08 秒**，h264 1080p60 + aac 立体声），mtime `2026-10-20 16:20:33`，即当天上传；存储根 `F:\ai wordplace` |
+| 日志 | 16:47 重启后**没有任何** `/teacher/defense/video/analyze` 入站记录；唯一的详情请求是 16:47:57 的 `getDetailRecords` → `defense_id=364`（topic 28，`video_url` 为空） |
+| 前端 | 按钮渲染条件 `selectedRecord.defenseVideoUrl && !== 'abc'`；364 无视频 → 按钮**按设计不渲染**，所以"没反应" |
+| 缺环 | 教师列表 `getDefenseRecords` 不返回任何视频字段（VID-4 的「列表红标」当时标注为"未做"），教师无法在列表里定位到"哪一行才有视频"，只能逐行点开碰运气 |
+
+**改动（只补入口，不动评分链路）**
+
+| 层 | 改动 |
+|---|---|
+| SQL | `getDefenseRecords` 增 `CASE WHEN video_url 非空且非 'abc' THEN 1 ELSE 0 END AS hasVideo`。列表与搜索共用这一条 SQL，改一处两端生效；`'abc'` 是历史脏值，与详情页判定口径一致不视为有效视频 |
+| VO | `DefenseRecordsVo` 增 `Boolean hasVideo`（注释写清"为什么需要"） |
+| 前端 | `mapDefenseRecord` 补 `hasVideo: !!record.hasVideo`（后端给 1/0，转布尔避免 wxml 把 0 当有值）；列表两处（首页卡片 + 记录 Tab）加红标签「视频已上传」，行样式 `has-video`（浅红底 + 左红条）；**报告评析（teal）优先**，两者同时存在时绿色铺底、红色只在标签上（与 2026-10-18 定下的口径一致） |
+| 样式 | `app.wxss` 新增 `.g-tag-video`（与 `.g-tag-doc` 同族，全局共用）；`teacher.wxss` 新增 `.record-item.has-video` |
+
+**验证**
+
+- `mvn -o -q clean compile` 通过；`node --check teacher.js` 通过。
+- 同一份视频离线实跑 ASR 链路（与 `AsrService.transcribeMediaFile` 完全相同的参数）：`ffmpeg -y -i … -vn -ar 16000 -ac 1 -c:a pcm_s16le` → wav 4,096,092 字节（≈128 秒，与视频时长吻合）；`whisper-cli -m ggml-small.bin -f wav -l zh -otxt -np --prompt …` 正常产出中文文本（约 150 字）。**确认抽音轨与转写这一最耗时环节在本机可用**，不需要下载任何组件。转写质量仍是已知上限（「文字答辩」被听成「文字打变」、「云答辩」→「云打变」），由 `app.video-analysis.asr-prompt` 术语表缓解。
+- 教师列表取数实测：`ORDER BY defense_date DESC LIMIT 10` 中仅 `358` 的 `hasVideo=1`。
+
+**仍未处理（挂账）**
+
+1. 教师列表目前只标"有视频"，"有报告但没评析"的场次同样只能靠点开详情发现（`report_url` 未进列表）；是否一并加标记待拍板。
+
+### 补漏：学生端记录列表把「已上传材料但还没答辩」的场次过滤掉了（同日追加）
+
+**用户反馈（截图）**：学生端「学生答辩记录」里只有 `364/363/362…` 这些已结束场次，**看不到传了视频的那条**；教师端也"感觉没有"。
+
+**定位**：教师端 `getDefenseRecords` 无状态过滤，实测能查出 `358`（课题「成绩单验证课题-1016」，`pending`，第 7 行，不滚动看不到）。真正丢了的是学生端——`getStudentDefenseRecords` 的过滤条件是
+`dr.status='completed' or exists(select 1 from defense_answers …)`，
+而 `358` 是 `pending` + **0 条作答** + 只有视频，两个条件都不满足 → 整条记录从学生列表消失。学生传完材料后"东西不见了"，教师也无法从学生维度核对。
+
+**改动**：`getStudentDefenseRecords` 的 where 追加两个分支——`video_url` 有效 或 `report_url` 有效即视为该学生可见场次（`'abc'` 脏值同样排除；XML 内只能用 `!=`，`<>` 会让 `<` 成为非法字符）。
+
+**验证**：按学生 `12408060102` 实跑改写后的 SQL → `358` 出现在第 7 条（课题「成绩单验证课题-1016」，标记有视频），其余记录顺序不变；`mvn -o test` 81/81 通过（含 Spring 上下文加载，即 mapper 解析）。生效需重启后端（mapper 在启动时加载）。
+
+**同日追加：学生端列表红标 + 排序口径确认**
+
+- 用户实测教师端视频评分已跑通（`358` 出成绩单：`总分 8/50｜等级 不合格`，五维卡片正常渲染），但学生端仍看不到该场次。日志核实：17:08:50 重启后 `getStudentDefenseRecords` 已是新 SQL、`Total: 10`，`358` 在其中——是**排在列表第 7 位、首页卡片只露 3 条**，没往下滚。
+- **排序口径（用户拍板，勿再改）**：保持**最新在上**（`defense_date DESC` / `defense_id DESC`）。曾按"时间顺序从上到下"字面试改正序，实测第一页会退化成 6~9 月的老记录（学生端 358 要翻 6 页），已回退；两端都补 `defense_id` 作次序兜底，避免同秒创建的场次顺序漂移（"轮次错乱"的真正来源）。
+- **学生端红标（用户拍板要做）**：`getStudentDefenseRecords` 增 `hasVideo`（与教师端同一 CASE 口径）；`student.js` 映射补 `hasVideo: !!record.hasVideo`；`student.wxml` 两处列表（首页卡片 + 答辩记录 Tab）加红标签「视频已上传」+ 行样式 `has-video`；`student.wxss` 补浅红底 + 左红条（该页 `.record-item` 是透明底 + 分隔线，所以额外补圆角与内边距，避免红条贴字）。
+- 验证：`node --check student.js` 通过；`mvn -o test` 81/81 通过；改写后的学生端 SQL 实跑返回 `358 hasVideo=1`、其余 `0`。
+
 ### 报告文档：图片 OCR（图片内容可参与评分）+ 报告模板下载 + 上传格式收口为 docx
 
 **需求**：① 报告里的图片模型读不到，需要补齐输入；② 学生端报告上传按钮下方要能下载模板，模板类型必须是模型能分析的类型；③ 上传只收 docx。
@@ -73,14 +125,101 @@
 | 修复 2 | 新增 `saveOrOpenTemplate()`：**电脑端走 `wx.saveFileToDisk` 弹系统「另存为」自选目录**；手机端仍 `openDocument({showMenu:true})`（Word 右上角另存为）；用户取消不报错。判定不用平台名（开发者工具是 `devtools`，按平台名硬判会导致工具里永不弹窗），改用 `typeof wx.saveFileToDisk === 'function'`，并打印 `[template] platform=… saveFileToDisk=…` 便于排查 |
 | 修复 3 | 打开失败时降级为「复制模板链接 + 提示到电脑浏览器打开」（链接 `/api/report/template` 本就免登录），浏览器侧仍有 `showSaveFilePicker` 真对话框；另存为失败时弹 `showActionSheet`（打开模板 / 复制链接）二选一，并 `console.error` 打印 `saveFileToDisk` 的真实 `errMsg` |
 | 工具限制 | 实测 `platform=devtools` 下 `typeof wx.saveFileToDisk === 'function'` 为 **true 但调用失败**——开发者工具对该 PC 专有 API 只有占位、无真实实现，**弹系统另存为只能在电脑版微信客户端里验证**（预览/真机调试）；工具内只能走「Word 另存」或「浏览器打开下载页」 |
+| 修复 4 | 顺手修掉 `cover()` 的潜在结构 bug：图片资源缺失的降级分支把 `p("Title", …)` 拼进了未闭合的 `<w:p>`，会产生**嵌套段落**——这正是 Word 判「文档损坏」的典型原因 |
 | 修复 5（取消仍弹 Word） | `wx.showActionSheet` 在用户点「取消」时**同样走 `fail`**（`errMsg: showActionSheet:fail cancel`），原代码把 fail 一律当「弹不出来」→ 反而打开 Word。改为先匹配 `cancel` 直接 return，仅真实异常才降级打开 |
 | 修复 6（Word / WPS 双兼容） | 模板本就是标准 OOXML（`.docx`），Word 与 WPS 均可打开；本次把文案统一为「Word / WPS」（填写须知第 1 条、自检清单字数提示、小程序提示语），并新增单测守住 **zip 首条目必须是 `[Content_Types].xml`**——WPS 等严格解析器对此有硬要求，缺了会报文档损坏 |
-| 修复 4 | 顺手修掉 `cover()` 的潜在结构 bug：图片资源缺失的降级分支把 `p("Title", …)` 拼进了未闭合的 `<w:p>`，会产生**嵌套段落**——这正是 Word 判「文档损坏」的典型原因 |
 | 守卫 | 新增单测 `templateStructureIsSane`：解析 `document.xml`，断言无 `w:p` 嵌套、每个 `a:blip/@r:embed` 都能在关系表找到对应 Id |
 
 **验证**：`mvn -o clean test` → **79/79 通过**（新增 8 条：占位落在正文真实位置 / 普通抽取不产生占位 / 关系缺失只降级 / 模板含封面与评分页可被解析 / 封面头图确实打进 zip 且体积正常 / 模板结构无嵌套段落且图片关系齐全 / zip 首条目是 [Content_Types].xml / OCR 引擎缺失返回 null）；`node --check student.js` 通过；**Windows OCR 中英文实测通过**；**Word 打开模板实测通过**。
 
 **未做/限制**：模板下载与小图 OCR 待真机验证；tesseract 首次自动安装需联网（安装器约 50MB + 语言包数 MB），离线机器可把已装好的 `X:\ocr` 目录整体拷贝；PDF/旧 doc 仍不支持（零依赖抽不出文字）。
+
+---
+
+### VID-0 · 答辩页视频上传（2026-10-20，待真机）
+
+**需求**：N80。答辩进行中就要能上传本场的答辩视频，落 `video_url`，供后续 VID-1~3（转写 → 五维分析）与教师端回放。
+
+**为什么不能直接用现成链路**：视频上传入口原来只在「学生详情」页；`/api/video/init` 只认 `topicId`，`complete` 时按 `getLatestDefenseIdByUserAndTopic`（`ORDER BY defense_id DESC LIMIT 1`）写库——**同一课题二次答辩会写到最新那条记录上**，而不是正在进行的这一场。答辩页前端也拿不到 `defenseId`（`/api/chat/clear` 只回 success/resumed/answeredCount...）。
+
+| 层 | 改动 |
+|---|---|
+| 接口 | `/api/video/init` 增加可选 `defenseId`（不传则保持旧行为，学生详情页零改动） |
+| 校验 | Service 层用 `countOwnedDefenseRecord(defenseId, userId)` 校验归属，伪造他人 defenseId 直接抛「该答辩记录不属于当前账号」 |
+| 会话 | Redis 会话新增 `defenseId` 字段（空串=未绑定，Redis Hash 不接受 null） |
+| 合并 | `complete` 优先用会话里的 `defenseId` 写 `video_url`，未绑定才回落「最新一条」 |
+| 会话返回 | `/api/chat/clear` 增加 `defenseId`，前端进场即拿到本场记录 |
+| 上传模块 | `uploader.uploadVideo` 支持 `defenseId` 透传到 init 请求体 |
+| 答辩页 | 顶部进度条下新增常驻上传条，四态：未上传 / 上传中（进度+取消）/ 失败（原因+重试）/ 已上传（预览+重传）；选视频用 `chooseMedia`，扩展名从临时路径取（不硬编码 mp4） |
+| 不阻塞 | 上传全程不动 `isAiThinking`/`isFinished`，答题可继续；失败可续传（沿用 uploadId） |
+
+**验证**：`mvn -o clean compile` + `mvn -o clean test` → **79/79 通过**；`node --check defense.js` / `uploader.js` 通过。真机待测（100MB 视频、断网续传、教师端回放）。
+
+**下一步**：VID-1（ffmpeg 抽音轨 → whisper → 写 `video_words`）。注意路线图 §1.2 的 G1：`video_words` 目前全工程只读不写，这是「视频分析有真实输入」的前置。
+
+---
+
+### N81 · 评分表与「文档提交」评分展示口径统一（2026-10-20，待真机）
+
+**问题**：同一套五维，两条链路展示完全不对称。
+
+| | 文档提交（报告评析） | 评分表（`defense_score_record`） |
+|---|---|---|
+| 总分 | ✅ `总分 36/50` | ❌ 不显示，只有逐轮五维 |
+| 等级 | ✅ `等级 优秀`（teal 标签） | ❌ 无 |
+| 依据 | ✅ 每维一句点评小卡片 | ❌ **`comment`（本轮评语）虽已查出来但从未展示** |
+| 形态 | 成绩单 | 一行纯文本「第1轮：表达 6、逻辑 7…」 |
+
+**做法**（前端即可，零后端改动——`comment` 本就在 `getScoreRecordsByDefenseId` 的 SELECT 列里）：
+
+| 层 | 改动 |
+|---|---|
+| 共享模块 | 新增 `utils/scoreCard.js`（纯函数）：`gradeLevel` / `buildRoundCards` / `buildSummary` |
+| 口径 | 等级阈值与后端 `DocScoreParser.gradeLevel` **逐字一致**（≥35 优秀 / ≥26 良好 / ≥15 合格 / ≥5 不合格 / 否则无效）；总分 = 逐轮五维之和的平均（与雷达图平均同源） |
+| 学生端 | `student.js` 用 `scoreCards` / `scoreSummary` 取代 `scoreDetailLines`；wxml 换成「总分+等级+五维平均+口径说明」与「逐轮卡片（分数/等级/本轮评语）」 |
+| 教师端 | `teacher.js` / `teacher.wxml` 同款替换，共用同一模块，保证两端不会漂 |
+| 样式 | 统一放 `app.wxss`（`.sc-summary/.sc-dims/.sc-round…`），teal 强调色与 `.g-tag-doc` 一致 |
+| 兜底 | 无评语时显式写「本轮模型未返回评语」，不静默留白；空数据（无评分行）整块不渲染，不出现空壳 |
+
+**验证**：`node --check scoreCard.js / student.js / teacher.js` 全部通过；后端无改动（`79/79` 不受影响）。真机待测。
+
+---
+
+### VID-1/2/3 · 答辩视频听声识别 + 五维成绩单（2026-10-20，待真视频实测）
+
+**需求口径（用户 2026-10-20 拍板）**：视频就是答辩现场回答的录音录像 → **只听声、不需要压缩、不看画面**；时长普遍 <5 分钟、最长 ≤10 分钟 → **全部分析、不分段**（CPU 扛得住）；评分结果与「文字/语音/文档」答辩**放同一个地方**（即 `defense_records.video_analysis`，沿用现有展示位）。
+
+| 环节 | 实现 |
+|---|---|
+| 抽音轨 | `AsrService.transcribeMediaFile(Path, timeout)`：ffmpeg `-vn` 直接丢画面，落 16k/单声道 wav。**按文件路径处理**，不把视频读进堆（原 `transcribe(byte[])` 有 20MB 上限，且是全量读内存） |
+| 转写 | 复用 whisper.cpp（`ggml-small`，离线）。`runWhisper` 增加超时入参：60 秒录音仍用 180s，视频用总预算（默认 1800s）。**结果先落 `video_words`** —— 后面任何一步失败都能查"模型当时看到了什么" |
+| 点评 | 新增 `MaterialScorePrompts.VIDEO_COMMENTS_SYSTEM`：六行（五维 + 切题），**明令禁止评价画面**（看不到 PPT/板书/表情，说了就是幻觉），并要求引用转写里真实出现的内容 |
+| 评分 | **与报告评析共用同一条 `SCORE_SYSTEM`**（本次从 `ReportDocAnalysisServiceImpl` 抽到 `MaterialScorePrompts`），temperature=0，只喂点评不喂原文（抗注入） |
+| 守护 | 沿用 `DocScoreParser`：缺失维压 0~4、跑题归零、总分服务端重算 |
+| 落库 | `video_analysis` = 成绩单文本（`总分：31/50　等级：良好` + 五维逐项依据），`analysis_source='video'`；只 UPDATE 这两列 |
+| 调度 | `VideoAnalysisServiceImpl`：Redis 状态 + 任务锁 + `budget-seconds` 预算；**复用 `docAnalysisExecutor`（core=1）**，与报告解析天然串行，不抢 CPU/内存 |
+| 接口 | `POST /teacher/defense/video/analyze/{id}?force=`、`GET /teacher/defense/video/status/{id}`（整类 `@RequireRole(TEACHER)`） |
+| 前端 | 教师端「答辩详情」：视频下方新增「AI 评分（基于视频）」按钮 + 进度条 + 五维卡片（复用报告评析的 `doc-*` 样式与被抽出的 `utils/gradeSheet.js` 解析器）；学生端把 `aiVideoAnalysis` 从"一大段裸文本"改成同款成绩单，无解析结果时仍兜底原文 |
+
+**为什么不分段**：10 分钟 wav ≈ 19MB，原设计担心超 20MB 上限要按 240 秒切片——现在走「文件路径 + 流式抽音轨」根本没有内存上限一说，且用户确认最长 10 分钟，分段只会增加切点丢词风险。
+
+**已知边界（必须在实测里确认）**：
+1. 3B 对**口语转写**的点评质量未经标定（报告评析那套 prompt 是按书面材料调的），可能出现"点评笼统 → 分数集中在 26~34 档"；
+2. whisper 有同音字/断句错误，点评已明令不得据此扣分，但真实效果要看样本；
+3. 答辩**收尾那一步**仍会按 10 轮对话生成一段【视频分析】并写 `video_analysis`（见 `ScorePersistenceServiceImpl`）——若教师在学生点「完成答辩」之前触发视频评分，收尾会覆盖真实成绩单。**待定**：是否给该 UPDATE 加 `analysis_source='video'` 保护。
+
+**验证**：`mvn -o clean compile` + `mvn -o clean test` → **79/79 通过**；`node --check teacher.js / student.js / gradeSheet.js` 通过；`gradeSheet.parse` 用真实成绩单文本（含 ⚠️ 跑题行、缺失维度）跑通。真视频待测。
+
+**同日追加（口语口径，2026-10-20 晚）**
+
+| 项 | 改动与实测依据 |
+|---|---|
+| 视频转写提示词 | 新增 `app.video-analysis.asr-prompt`，仅视频链路生效（60 秒录音仍走 `app.voice.prompt`）。**三种prompt实测**（同一 2 分 08 秒视频）：无提示词 203 字；**长术语表 152 字且碎片化、出现 `(字幕:小小小)` 噪声——反而更差**；短句 213 字（「教师端」「视频录像」被纠正）。故默认用短句，「文字答辩→文字打变」仍未解决 |
+| 口语下限 | 新增 `app.video-analysis.oral-missing-floor`（默认 3）+ `DocScoreParser.applyOralMissingFloor`：**自认缺失的维度只抬下限、不抬上限**；顺序为 缺失守护 → 口语下限 → 跑题闸门，跑题仍归零。实测同一段点评：原 0+1+2+0+1=4（无效档）→ 兜底后 3+3+2+3+3=**14（不合格档）** |
+| 缺失词表补漏 | 单测先红后绿暴露真实漏洞：`没有提到`不在 `MISSING_MARKERS` 里，而 3B 视频点评原话就是「没有提到应对技术问题或风险的措施」→ 该维既没被压分、也没被兜底。补入 `未提到/没有提到/没提到/未体现/没有体现/未交代/没有交代` |
+| 收尾覆盖保护 | 实测 `defenseId=358` 时发现它 `status=pending`：学生之后点「完成答辩」，`insertAiFeedback` 会拿收尾时模型**凭空**写的【视频分析】覆盖真实成绩单。已在 SQL 里加判断：`video_analysis = CASE WHEN analysis_source='video' THEN video_analysis ELSE #{videoAnalysis} END` |
+
+**验证**：`mvn -o clean test` → **81/81 通过**（新增 2 条口语下限用例）。
 
 ---
 

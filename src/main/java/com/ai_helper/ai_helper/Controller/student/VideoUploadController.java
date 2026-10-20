@@ -45,13 +45,21 @@ public class VideoUploadController {
         return Result.success(mediaFileService.describePolicy(MediaKind.VIDEO));
     }
 
-    /** 初始化分片上传 */
+    /**
+     * 初始化分片上传。
+     *
+     * <p>【VID-0 · 2026-10-20】新增可选 {@code defenseId}：答辩页上传时带上本场记录，
+     * 合并阶段就直接写这条记录；不传则沿用「该生该题最新一条」的旧行为（学生详情页保持兼容）。
+     * 归属校验在 Service 层做，前端伪造别人的 defenseId 会被拒绝。</p>
+     */
     @PostMapping("/init")
     public Result<Map<String, Object>> init(@RequestParam("fileName") String fileName,
                                            @RequestParam("fileSize") long fileSize,
                                            @RequestParam("topicId") Integer topicId,
+                                           @RequestParam(value = "defenseId", required = false) Integer defenseId,
                                            HttpServletRequest request) {
-        return Result.success(chunkUploadService.init(currentUserNumber(request), topicId, fileName, fileSize));
+        return Result.success(chunkUploadService.init(
+                currentUserNumber(request), topicId, defenseId, fileName, fileSize));
     }
 
     /** 上传单个分片，请求体为分片原始字节（Content-Type: application/octet-stream） */

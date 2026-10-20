@@ -544,6 +544,9 @@ public class chatController {
         result.put("success", true);
         result.put("message", resumed ? "已恢复未完成的答辩" : "已清理");
         result.put("resumed", resumed);
+        // 【VID-0 · 2026-10-20】答辩页上传视频需要本场记录 ID：这里返回的正是
+        // 「刚新建」或「续答」的那一条，前端拿到后传给 /api/video/init 绑定，避免写到别的场次。
+        result.put("defenseId", resume != null ? resume.getDefenseId() : null);
         result.put("answeredCount", resume != null ? resume.getAnsweredCount() : 0);
         result.put("roundNum", resume != null ? resume.getRoundNum() : 1);
         result.put("totalRounds", resume != null ? resume.getTotalRounds() : 0);

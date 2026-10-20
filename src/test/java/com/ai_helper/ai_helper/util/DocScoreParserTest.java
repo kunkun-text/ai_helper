@@ -207,6 +207,45 @@ class DocScoreParserTest {
         }
     }
 
+    // ---------- 2026-10-20 视频答辩：口语下限 ----------
+
+    @Test
+    @DisplayName("口语下限：自认缺失的维度从 0~2 抬到 3，有依据的维度不动")
+    void oralMissingFloorRaisesOnlyMissingDims() {
+        String comments = String.join("\n",
+                "表达:未提及演讲时的语速与清晰度",
+                "逻辑:先讲背景再讲实现，层次清楚",
+                "专业:提到了接口与数据库",
+                "应变:没有提到风险与取舍",
+                "创新:提到了自己设计的评分表");
+        // 3B 实测给的是 0,5,7,0,6 —— 表达/应变自认缺失
+        double[] raised = DocScoreParser.applyOralMissingFloor(
+                new double[]{0, 5, 7, 1, 6}, comments, 3.0);
+        assertEquals(3.0, raised[0], "缺失维抬到下限 3");
+        assertEquals(5.0, raised[1], "有依据的维度不动");
+        assertEquals(7.0, raised[2]);
+        assertEquals(3.0, raised[3]);
+        assertEquals(6.0, raised[4]);
+    }
+
+    @Test
+    @DisplayName("口语下限：不低于已有分数（模型给了 5 就保持 5），且跑题时仍归零")
+    void oralMissingFloorNeverLowersAndOffTopicStillWins() {
+        String missing = "表达:未提及语速";
+        double[] kept = DocScoreParser.applyOralMissingFloor(new double[]{5}, missing, 3.0);
+        assertEquals(5.0, kept[0], "下限只抬不压");
+
+        // 顺序复刻 VideoAnalysisServiceImpl：缺失守护 → 口语下限 → 跑题闸门
+        String offTopic = String.join("\n", missing, "逻辑:未提及", "专业:未提及",
+                "应变:未提及", "创新:未提及", "切题:否");
+        double[] dims = DocScoreParser.applyMissingGuards(new double[]{0, 0, 0, 0, 0}, offTopic);
+        dims = DocScoreParser.applyOralMissingFloor(dims, offTopic, 3.0);
+        dims = DocScoreParser.applyOffTopicGuard(dims, offTopic);
+        for (double v : dims) {
+            assertEquals(0.0, v, "讲的是另一个系统时，口语下限不能把人救回来");
+        }
+    }
+
     @Test
     @DisplayName("缺失标记：自认缺失的维度展示时挂 ⚠️，有依据的不挂")
     void missingDimensionsAreMarked() {

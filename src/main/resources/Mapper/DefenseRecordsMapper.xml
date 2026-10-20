@@ -56,6 +56,14 @@
             dr.report_doc_score AS reportDocScore,
             dr.analysis_source AS analysisSource,
             dr.defense_mode AS defenseMode,
+            <!-- 【VID-4 · 2026-10-20】列表红标：该场次是否已上传答辩视频。
+                 教师必须先能一眼找到"哪一行有视频"，才点得到「AI 评分（基于视频）」；
+                 此前列表不返回任何视频信息，教师只能逐行点开详情碰运气。
+                 'abc' 是历史脏值（占位/无效地址），与详情页判定口径保持一致，不算有效视频。
+                 注意：这里只能用 !=，写 <> 会让 < 变成 XML 非法字符（实测导致 mapper 解析失败）。 -->
+            CASE WHEN dr.video_url IS NOT NULL AND TRIM(dr.video_url) != ''
+                      AND dr.video_url != 'abc'
+                 THEN 1 ELSE 0 END AS hasVideo,
             dr.defense_date AS defenseTime
         FROM
             defense_records dr
@@ -66,7 +74,10 @@
             <if test="userNumber != null and userNumber != ''">and u.user_number like concat('%',#{userNumber},'%')</if>
             <if test="topicName != null"> and dt.topic_name like concat('%',#{topicName},'%')</if>
         </where>
-        ORDER BY dr.defense_date DESC
+        <!-- 【2026-10-20】最新在上；defense_id 作次序兜底——同一秒创建的场次（批量重放）
+             靠它保持稳定顺序，避免刷一次变一个样（"轮次错乱"就出在这里）。
+             注意：defense_date 为 NULL 的历史记录（如 defense_id=25）在 DESC 下排最后。 -->
+        ORDER BY dr.defense_date DESC, dr.defense_id DESC
 
     </select>
 
@@ -132,13 +143,27 @@
             dr.report_doc_score as reportDocScore,
             dr.analysis_source as analysisSource,
             dr.defense_mode as defenseMode,
+            <!-- 【VID-4 · 2026-10-20】学生端列表红标：该场次是否已上传有效视频。
+                 与教师端 getDefenseRecords 同一口径（非空、非 'abc'）。
+                 只传了视频还没答辩的场次会显示"未完成"，配上这个红标学生才认得出是自己传过材料的那条。 -->
+            CASE WHEN dr.video_url IS NOT NULL AND TRIM(dr.video_url) != ''
+                      AND dr.video_url != 'abc'
+                 THEN 1 ELSE 0 END AS hasVideo,
             dr.created_at as defenseTime
         from    defense_records dr
                     left join users u on u.user_id = dr.user_id
                     left join defense_topics dt on dt.topic_id = dr.topic_id
         where u.user_number = #{userNumber}
           and (dr.status = 'completed'
-               or exists (select 1 from defense_answers da where da.defense_id = dr.defense_id))
+               or exists (select 1 from defense_answers da where da.defense_id = dr.defense_id)
+               <!-- 【VID-4 · 2026-10-20】已上传视频/报告的场次必须让学生看到。
+                    此前只认「已结束」或「有作答」，于是"只上传了材料、还没开始答辩"的记录
+                    （如 defense_id=358：pending + 0 条作答 + 有视频）在列表里完全消失，
+                    学生会以为自己传的东西没了，教师也无法从学生维度核对。
+                    限制为"有效附件"，避免把历史空壳记录（0 作答且无材料）全倒出来。 -->
+               or (dr.video_url is not null and trim(dr.video_url) != '' and dr.video_url != 'abc')
+               or (dr.report_url is not null and trim(dr.report_url) != '' and dr.report_url != 'abc'))
+        <!-- 【2026-10-20】与教师端一致：最新在上，defense_id 兜底保证同秒创建时的顺序稳定 -->
         order by dr.defense_id desc
     </select>
     <!-- 【F3 · 2026-10-05】课题列表分页：不再全表返回（大题库会拖慢页面） -->
@@ -351,6 +376,42 @@
         UPDATE defense_records
         SET report_text = #{text},
             updated_at  = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- ========== 答辩视频的 AI 评分（2026-10-20 · VID 系列） ========== -->
+
+    <!-- 触发视频评分前的上下文：视频地址 / 已转写文本（幂等与复用）/ 既有结果 / 课题名 -->
+    <select id="selectVideoAnalysisTarget" resultType="java.util.HashMap">
+        SELECT
+            dr.defense_id     AS defenseId,
+            dr.video_url      AS videoUrl,
+            dr.video_words    AS videoWords,
+            dr.video_analysis AS videoAnalysis,
+            dr.analysis_source AS analysisSource,
+            dt.topic_name     AS topicName
+        FROM defense_records dr
+                 LEFT JOIN defense_topics dt ON dt.topic_id = dr.topic_id
+        WHERE dr.defense_id = #{defenseId}
+    </select>
+
+    <!-- 转写文本单独落库，且在评分之前写：
+         评分失败（解析不出五维 / 超时）时，最需要知道"模型当时看到了什么"，那时下面的 UPDATE 不会被调用。
+         只 set video_words + updated_at，不碰 video_url / video_analysis 等其它列。 -->
+    <update id="updateVideoWords">
+        UPDATE defense_records
+        SET video_words = #{words},
+            updated_at  = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 写入基于视频的评析结果。只写 video_analysis + analysis_source + updated_at：
+         video_url（上传链路负责）、feedback / report_analysis / score（逐轮答辩与报告链路负责）都不能碰。 -->
+    <update id="updateVideoAnalysis">
+        UPDATE defense_records
+        SET video_analysis  = #{analysis},
+            analysis_source = #{source},
+            updated_at      = NOW()
         WHERE defense_id = #{defenseId}
     </update>
 

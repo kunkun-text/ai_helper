@@ -392,6 +392,16 @@
   border-bottom: none;
 }
 
+/* 【VID-4 · 2026-10-20】该场次已上传答辩视频：浅红底 + 左侧红条（与教师端同款视觉）。
+   学生端 .record-item 是透明底 + 下分隔线，所以这里补圆角与内边距，避免红条贴着文字。 */
+.record-item.has-video {
+  background: #fdecea;
+  border-left: 6rpx solid #c0392b;
+  border-radius: 12rpx;
+  padding-left: 16rpx;
+  padding-right: 16rpx;
+}
+
 .record-avatar {
   width: 60rpx;
   height: 60rpx;

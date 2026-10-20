@@ -145,4 +145,30 @@ public interface DefenseRecordsMapper {
      */
     int updateReportDocSummary(@Param("defenseId") Integer defenseId,
                                @Param("summary") String summary);
+
+    // ==================== 答辩视频的 AI 评分（2026-10-20 · VID 系列） ====================
+
+    /**
+     * 取某场答辩的「视频评分」上下文。
+     *
+     * <p>返回 video_url / video_words / video_analysis / analysis_source / topic_name，
+     * 供触发前做存在性、幂等判定，并给评分 prompt 提供课题名。</p>
+     */
+    java.util.Map<String, Object> selectVideoAnalysisTarget(@Param("defenseId") Integer defenseId);
+
+    /**
+     * 写入视频语音转写文本（评分前落库，供事后复核模型看到的输入）。
+     *
+     * <p>只 set {@code video_words} + {@code updated_at}。</p>
+     */
+    int updateVideoWords(@Param("defenseId") Integer defenseId, @Param("words") String words);
+
+    /**
+     * 写入基于答辩视频的 AI 评析（{@code video_analysis} + {@code analysis_source='video'}）。
+     *
+     * <p>只 set 这两列 + {@code updated_at}：视频地址、逐轮反馈、报告评析、总分都不能碰。</p>
+     */
+    int updateVideoAnalysis(@Param("defenseId") Integer defenseId,
+                            @Param("analysis") String analysis,
+                            @Param("source") String source);
 }

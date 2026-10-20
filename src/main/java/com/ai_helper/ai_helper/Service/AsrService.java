@@ -22,6 +22,30 @@ public interface AsrService {
      */
     String transcribe(byte[] audio, String format);
 
+    /**
+     * 识别一个**媒体文件**（视频或音频）里的说话内容 —— 答辩视频评分用（2026-10-20）。
+     *
+     * <p><b>为什么不复用 {@link #transcribe(byte[], String)}：</b>
+     * 那个方法把整个音频读进内存（上限 20MB），而答辩视频可能 500MB。
+     * 本方法按**文件路径**处理：先用 ffmpeg 抽音轨（{@code -vn} 丢掉画面），
+     * 边转边写 16k 单声道 wav，全程只占一个 wav 文件的空间，不把视频load进堆。</p>
+     *
+     * @param mediaFile      视频/音频文件的绝对路径
+     * @param timeoutSeconds 识别超时。视频是整段转写，不能沿用「60 秒录音」的 180 秒
+     * @return 识别出的文字（可能为空串，表示视频里没有说话内容）
+     * @throws com.ai_helper.ai_helper.exception.BusinessException 引擎不可用、无音轨、超时、识别失败
+     */
+    String transcribeMediaFile(java.nio.file.Path mediaFile, long timeoutSeconds);
+
+    /**
+     * 同上，但使用**指定的术语气提示词**（2026-10-20）。
+     *
+     * <p>答辩视频里「文字答辩 / 语音答辩 / 评分表」这类词被 whisper 频繁听成别的词
+     * （实测「文字答辩」→「文字打变」），一份术语表能显著降低同音字错误。
+     * 传空串则退回 {@code app.voice.prompt} 的默认行为。</p>
+     */
+    String transcribeMediaFile(java.nio.file.Path mediaFile, long timeoutSeconds, String initialPrompt);
+
     /** 识别引擎是否就绪（未安装时应让前端立刻看到明确提示，而不是让用户干等） */
     boolean available();
 

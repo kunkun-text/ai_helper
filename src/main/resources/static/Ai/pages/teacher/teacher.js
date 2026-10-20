@@ -3,6 +3,8 @@ const config = require('../../utils/config.js');
 const uploader = require('../../utils/uploader.js');
 const auth = require('../../utils/auth.js');
 const radar = require('../../utils/radar.js');
+const scoreCard = require('../../utils/scoreCard.js');
+const gradeSheet = require('../../utils/gradeSheet.js');
 
 /**
  * 【C2 · 2026-10-05】统一处理 401/403：token 过期 / 角色不符时，
@@ -75,7 +77,9 @@ Page({
     selectedAnswers: null, // 添加选中的回答详情
     voiceRecords: [], // 【F11】语音答辩逐轮录音回放（来自 voice_responses）
     auditLogs: [], // 【N15】场次审计日志（START/RESUME/FINISH 时间线）
-    scoreDetailLines: [], // 【N8】逐轮五维明细文本
+    // 【2026-10-20】评分表成绩单化：与学生端共用 utils/scoreCard.js，口径完全一致
+    scoreCards: [], // 逐轮卡片：[{ roundNum, totalText, grade, dims, comment }]
+    scoreSummary: null, // 整场汇总：{ totalText, grade, roundCount, dims }
     radarDims: [], // 【N8】五维雷达图数据（逐轮平均）
     radarText: '', // 【N8】雷达图下方的文字汇总
     importMode: 'append', // 【N10】题库导入方式：append=追加 / replace=覆盖
@@ -89,6 +93,15 @@ Page({
     docAnalyzing: false, // 分析进行中（按钮禁用 + 显示进度条）
     docStage: '', // 当前阶段文案（由后端 stage 下发）
     docPercent: 0, // 进度百分比（按阶段估算，不假装精确）
+
+    // 【2026-10-20 · 视频 AI 评分】与报告评析同一形态（总分/等级/五维卡片），状态独立一组。
+    // 复用 parseReportDocAnalysis：后端两条链路输出的是同一种成绩单文本。
+    videoAnalyzing: false,
+    videoStage: '',
+    videoPercent: 0,
+    videoDims: [], // [{ name, score, comment, missing }]
+    videoSummary: null, // { total, grade, warnings }
+    videoRaw: '', // 解析失败时的原文兜底
     // 【2026-10-18】查看反馈：报告存在但没有综合评价时自动补齐
     feedbackSummaryGenerating: false, // 自动生成/等待中
     feedbackSummaryStage: '', // 当前阶段文案
@@ -114,10 +127,12 @@ Page({
   onHide() {
     this.stopReportDocPolling();
     this.stopFeedbackSummaryPolling();
+    this.stopVideoPolling();
   },
 
   onUnload() {
     this.stopReportDocPolling();
+    this.stopVideoPolling();
     this.stopFeedbackSummaryPolling();
   },
 
@@ -153,6 +168,9 @@ Page({
       score: scoreValue,
       reportDocScore: docScore,
       analysisSource: analysisSource,
+      // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表打红标用。
+      // 后端给的是 1/0（CASE WHEN），这里统一转布尔，避免 wxml 里出现 0 被当成"有值"。
+      hasVideo: !!record.hasVideo,
       // 列表主分数与标签
       displayScore: primaryIsReport ? docScore : scoreValue,
       scoreKind: primaryIsReport ? 'report' : 'defense',
@@ -1051,8 +1069,174 @@ loadMoreTopics() {
       topicName: detailData.topicName,
       topic: detailData.topicName
     };
-    this.setData({ selectedRecord: feedbackDetail });
+    this.setData({
+      selectedRecord: feedbackDetail,
+      // 换了一场记录：视频评分状态必须整体复位，否则会显示上一场的成绩单
+      videoAnalyzing: false,
+      videoStage: '',
+      videoPercent: 0,
+      videoDims: [],
+      videoSummary: null,
+      videoRaw: ''
+    });
+    // 已有结果就直接渲染（旧场次、或刚生成完再打开）
+    this.applyVideoAnalysis(feedbackDetail.aiVideoAnalysis);
     return feedbackDetail;
+  },
+
+  // ==================== 【2026-10-20 · 答辩视频 AI 评分】 ====================
+  // 链路：ffmpeg 抽音轨 → whisper 整段转写 → 五维点评 → 评分 → 成绩单文本（video_analysis）。
+  // 因为要跑十几分钟，接口立即返回 + 前端轮询，与报告评析同款交互。
+
+  /** 把后端成绩单文本解析成五维卡片（复用报告评析的解析器，格式完全一致） */
+  applyVideoAnalysis(text) {
+    const parsed = this.parseReportDocAnalysis(text || '');
+    this.setData({
+      videoDims: parsed.dims,
+      videoSummary: parsed.summary,
+      videoRaw: parsed.raw
+    });
+  },
+
+  /** 触发视频评分。已有结果时按钮是「重新生成」→ 带 force 真正重跑。 */
+  analyzeVideo() {
+    if (this.data.videoAnalyzing) {
+      return;
+    }
+    const record = this.data.selectedRecord;
+    if (!record || !record.id) {
+      wx.showToast({ title: '未找到该场次信息', icon: 'none' });
+      return;
+    }
+    const force = !!(record.aiVideoAnalysis && String(record.aiVideoAnalysis).trim());
+    this.setData({ videoAnalyzing: true, videoStage: '正在提交任务…', videoPercent: 5 });
+    wx.showLoading({ title: '提交中…' });
+    let loadingClosed = false;
+    const closeLoading = () => {
+      if (!loadingClosed) {
+        loadingClosed = true;
+        wx.hideLoading();
+      }
+    };
+
+    wx.request({
+      url: `${config.getBaseUrl()}/teacher/defense/video/analyze/${record.id}${force ? '?force=true' : ''}`,
+      method: 'POST',
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': auth.getToken() ? 'Bearer ' + auth.getToken() : ''
+      },
+      success: (res) => {
+        if (handleUnauthorized(res)) {
+          closeLoading();
+          this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+          return;
+        }
+        const body = res.data || {};
+        if (body.code !== 1) {
+          closeLoading();
+          this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+          // 后端对「没传视频 / 文件丢失 / 语音组件未就绪」都给了明确文案
+          wx.showToast({ title: body.msg || '提交失败', icon: 'none', duration: 3500 });
+          return;
+        }
+        const data = body.data || {};
+        closeLoading();
+        if (data.stage === 'completed') {
+          // 幂等命中：视频没换过，直接复用上次成绩单
+          this.applyVideoAnalysis(data.analysis);
+          this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 100 });
+          wx.showToast({ title: '已返回上次评分', icon: 'none' });
+          return;
+        }
+        this.setData({ videoStage: data.stageText || '排队中…', videoPercent: 8 });
+        this.startVideoPolling(record.id);
+      },
+      fail: () => {
+        closeLoading();
+        this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+        wx.showToast({ title: '网络错误或服务器无响应', icon: 'none' });
+      },
+      complete: closeLoading
+    });
+  },
+
+  /**
+   * 轮询状态：3 秒一次。
+   *
+   * <p>最多 400 次（约 20 分钟）——比报告评析（5 分钟）长得多，因为 whisper 在 CPU 上
+   * 要跑视频时长的 1~3 倍，10 分钟视频最坏 30 分钟；这里给到 20 分钟仍超时就提示手动刷新，
+   * 但**任务在后端会继续跑完并落库**，重新打开就能看到结果。</p>
+   */
+  startVideoPolling(defenseId) {
+    this.stopVideoPolling();
+    this._videoPollCount = 0;
+    this._videoPollTimer = setInterval(() => {
+      this._videoPollCount += 1;
+      if (this._videoPollCount > 400) {
+        this.stopVideoPolling();
+        this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+        wx.showToast({ title: '转写耗时较长，已停止刷新；稍后重新打开可查看结果', icon: 'none', duration: 3500 });
+        return;
+      }
+      this.pollVideoOnce(defenseId);
+    }, 3000);
+  },
+
+  pollVideoOnce(defenseId) {
+    wx.request({
+      url: `${config.getBaseUrl()}/teacher/defense/video/status/${defenseId}`,
+      method: 'GET',
+      header: { 'Authorization': auth.getToken() ? 'Bearer ' + auth.getToken() : '' },
+      success: (res) => {
+        if (handleUnauthorized(res)) {
+          this.stopVideoPolling();
+          this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+          return;
+        }
+        const body = res.data || {};
+        if (body.code !== 1) {
+          return;
+        }
+        const data = body.data || {};
+        if (data.stage === 'completed') {
+          this.stopVideoPolling();
+          this.applyVideoAnalysis(data.analysis);
+          this.setData({
+            videoAnalyzing: false,
+            videoStage: '',
+            videoPercent: 100,
+            'selectedRecord.aiVideoAnalysis': data.analysis || ''
+          });
+          wx.showToast({ title: '视频评分已生成', icon: 'success' });
+          return;
+        }
+        if (data.stage === 'failed') {
+          this.stopVideoPolling();
+          this.setData({ videoAnalyzing: false, videoStage: '', videoPercent: 0 });
+          wx.showToast({ title: data.error || '视频评分失败', icon: 'none', duration: 3500 });
+          return;
+        }
+        // 进度按阶段估算：识别语音最慢（占大头），不假装精确
+        const stage = data.stageText || '分析中…';
+        let percent = 10;
+        if (stage.indexOf('识别语音') >= 0) {
+          percent = 30;
+        } else if (stage.indexOf('生成点评') >= 0) {
+          percent = 70;
+        } else if (stage.indexOf('评定分数') >= 0) {
+          percent = 85;
+        }
+        this.setData({ videoStage: stage, videoPercent: percent });
+      }
+    });
+  },
+
+  stopVideoPolling() {
+    if (this._videoPollTimer) {
+      clearInterval(this._videoPollTimer);
+      this._videoPollTimer = null;
+    }
   },
 
   // ============ 查看反馈：综合评价自动补齐（2026-10-18） ============
@@ -1325,42 +1509,9 @@ loadMoreTopics() {
    * 解析失败时返回空 dims，由 answerDocRaw 原文兜底，保证内容不丢。
    */
   parseReportDocAnalysis(text) {
-    const raw = text || '';
-    const dims = [];
-    const warnings = [];
-    let total = '';
-    let grade = '';
-    if (!raw) {
-      return { summary: null, dims, raw };
-    }
-    const totalMatch = raw.match(/总分\s*[:：]\s*(\d+(?:\.\d+)?)\s*\/\s*50[\s　]*等级\s*[:：]\s*(\S+)/);
-    if (totalMatch) {
-      total = totalMatch[1];
-      grade = totalMatch[2];
-    }
-    raw.split(/\r?\n/).forEach((line) => {
-      const t = (line || '').trim();
-      if (!t) return;
-      const dimMatch = t.match(/^(⚠️\s*)?(表达|逻辑|专业|应变|创新)\s*[（(]\s*(\d+(?:\.\d+)?)\s*分\s*[）)]\s*[:：]\s*(.*)$/);
-      if (dimMatch) {
-        dims.push({
-          name: dimMatch[2],
-          score: dimMatch[3],
-          comment: dimMatch[4] || '（模型未给出该维度点评）',
-          missing: !!dimMatch[1]
-        });
-        return;
-      }
-      // 其余 ⚠️ 行（跑题/接地提示）作为成绩单顶部警告；标题行忽略
-      if (t.indexOf('⚠️') === 0) {
-        warnings.push(t.replace(/^⚠️\s*/, ''));
-      }
-    });
-    return {
-      summary: (total || grade) ? { total, grade, warnings } : null,
-      dims,
-      raw
-    };
+    // 【2026-10-20】解析逻辑抽到 utils/gradeSheet.js：报告评析、视频评分（教师端/学生端）
+    // 三处共用同一份，避免同一条成绩单在不同页面解析出不同结果。
+    return gradeSheet.parse(text);
   },
 
   /** 触发评析。幂等：同一份内容未变的报告会直接返回上次结果，不会重复调模型。 */
@@ -2103,6 +2254,7 @@ loadMoreTopics() {
 
     // 【2026-10-18】报告评析区已迁入本弹层：先清空旧状态，避免换记录时显示上一条
     this.stopReportDocPolling();
+    this.stopVideoPolling();
     // 请求序号：快速切换记录时，先发的请求晚到也不能覆盖后一场的数据
     const detailReqSeq = (this._answerDocSeq || 0) + 1;
     this._answerDocSeq = detailReqSeq;
@@ -2113,7 +2265,14 @@ loadMoreTopics() {
       answerDocRaw: '',
       docAnalyzing: false,
       docStage: '',
-      docPercent: 0
+      docPercent: 0,
+      // 【2026-10-20】视频评分状态同样整体复位
+      videoAnalyzing: false,
+      videoStage: '',
+      videoPercent: 0,
+      videoDims: [],
+      videoSummary: null,
+      videoRaw: ''
     });
 
     // 拉取该场次详情：报告地址 + 已生成的报告评析。
@@ -2171,7 +2330,8 @@ loadMoreTopics() {
             selectedAnswers: processedAnswers,
             voiceRecords: [],
             auditLogs: [],
-            scoreDetailLines: [],
+            scoreCards: [],
+            scoreSummary: null,
             radarDims: [],
             radarText: ''
           });
@@ -2214,22 +2374,22 @@ loadMoreTopics() {
             success: (scoreRes) => {
               const scoreBody = scoreRes && scoreRes.data;
               if (scoreBody && scoreBody.code === 1 && Array.isArray(scoreBody.data) && scoreBody.data.length > 0) {
-                const lines = scoreBody.data.map((s) => '第' + s.roundNum + '轮：表达 ' + s.expressionScore +
-                  '、逻辑 ' + s.logicScore + '、专业 ' + s.professionalScore +
-                  '、应变 ' + s.adaptabilityScore + '、创新 ' + s.innovationScore);
+                // 【2026-10-20】成绩单化：与学生端同一套解析（utils/scoreCard.js），
+                // 逐轮卡片带大模型评语（comment），汇总带总分与等级。
                 const dims = radar.averageDims(scoreBody.data);
                 this.setData({
-                  scoreDetailLines: lines,
+                  scoreCards: scoreCard.buildRoundCards(scoreBody.data),
+                  scoreSummary: scoreCard.buildSummary(scoreBody.data),
                   radarDims: dims,
                   radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
                 });
                 wx.nextTick(() => radar.drawRadar(this, 'radarCanvas', dims));
               } else {
-                this.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+                this.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
               }
             },
             fail: () => {
-              this.setData({ scoreDetailLines: [], radarDims: [], radarText: '' });
+              this.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
             }
           });
 
@@ -2283,7 +2443,8 @@ loadMoreTopics() {
       selectedAnswers: null,
       voiceRecords: [],
       auditLogs: [],
-      scoreDetailLines: [],
+      scoreCards: [],
+      scoreSummary: null,
       radarDims: [],
       radarText: '',
       answerDocInfo: null,
@@ -2292,7 +2453,13 @@ loadMoreTopics() {
       answerDocRaw: '',
       docAnalyzing: false,
       docStage: '',
-      docPercent: 0
+      docPercent: 0,
+      videoAnalyzing: false,
+      videoStage: '',
+      videoPercent: 0,
+      videoDims: [],
+      videoSummary: null,
+      videoRaw: ''
     });
   },
 
