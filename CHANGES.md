@@ -11,6 +11,67 @@
 
 ## 2026-10-20
 
+### ASR 输入可信改造（VAD + 音频预处理 + 质量闸门 + 基准脚本，2026-10-20）
+
+**背景（实锤证据，`defense_id=358`）**
+
+| 指标 | 实测值 | 说明 |
+|---|---|---|
+| 视频时长 | 2:08 | h264 1080p60 + aac 立体声 |
+| 平均音量 | **-31.1 dB** | 远场收音，整体极轻；峰值 -1.5dB 来自鼠标点击 |
+| 静音段 | 44 段 / 78.6s | `silencedetect=noise=-35dB:d=0.5`，有效声段约 49.5s（38.6%，仍含点击声） |
+| 旧转写 | 211 字 | 混入鼠标声；「答辩→打变/散播」「部署→剥锁」「系统评分→系统平方」「数据存储→数据纯属」 |
+
+旧实现直接整段转写，噪声也会变成文字，3B 再基于错字打分——**8/50 首先是输入不可信，不是 prompt 不会写**。
+
+**改动**
+
+| 层 | 改动 |
+|---|---|
+| `AppProperties.Voice` | 新增 `vad-enabled` / `vad-model` / `vad-threshold` / `vad-min-speech-ms` / `vad-min-silence-ms` / `threads`；`model` 档位新增 `large-v3-turbo` |
+| `AppProperties.VideoAnalysis` | 新增 `audio-filter`（默认 `highpass=f=80,dynaudnorm=f=150:g=15`）、`min-speech-seconds=8`、`min-speech-ratio=0.05`、`asr-model`（视频专用档位，示例配 `large-v3-turbo-q5_0`；60 秒语音仍用 `app.voice.model`） |
+| `WhisperAsrServiceImpl` | ① 新版 `whisper-cli` 自动追加 VAD 参数；② `-ojf` 输出完整 JSON，统计分段/有效语音/token 置信度/低置信分段；③ 有效语音闸门：低于阈值直接判「素材不足」，不调用模型；④ 抽音轨加音频滤镜，滤镜不支持时自动退回无滤镜重试；⑤ ffmpeg 用独立超时，whisper 用剩余预算；⑥ **修复模型档位不生效**——此前 installer 下载 medium、运行时仍优先选 small |
+| `VoiceComponentInstaller` | 自动下载 VAD 模型（约 865KB，`ggml-org/whisper-vad`）；发现 `app.video-analysis.asr-model` 与语音模型不同时，额外下载视频专用模型（如 turbo-q5）；`modelReady` 按配置档位判断，不再"存在任意模型就算就绪"；VAD/视频模型下载失败只降级 |
+| `VideoAnalysisServiceImpl` | ASR 提示词按本场课题名生成，控制在 180 字内（长术语表实测会让句子碎片化） |
+| `util/AsrTextCorrector` + `asr-corrections.txt` | 外置纠错词表（`错误=正确`，长词优先，只做字面替换）；默认 14 条高置信度同音词（文字打变/文字打遍/语音打变/剥锁/系统平方/系统平分等），可用 `app.voice.corrections-file` 覆盖 |
+| `scripts/install-whisper.ps1` | 支持 `large-v3-turbo` / `large-v3` / 量化版，新增 VAD 模型下载 |
+| `scripts/asr-benchmark.ps1` | 新增基准脚本：同一段音频跑多个模型，输出耗时、RTF、字数、平均置信度、低置信分段、有效语音、可选 CER（与人工转写对比） |
+
+**验证**
+
+- `mvn -o clean test` → **85/85 通过**（新增 `AsrTextCorrectorTest` 4 条）；Spring 上下文启动日志显示 `ASR 转写纠错词表已加载 - 14 条` 与 `VAD 已启用 - 模型: F:\whisper\models\ggml-silero-v5.1.2.bin`。
+- 同一段视频 `small` 基线：**22.0s（RTF 0.17）、263 字、平均 token 置信度 0.843、低置信分段 2、有效语音 42.6s**。
+- 同一段视频 `large-v3-turbo-q5_0`：**43.2s（RTF 0.34）、274 字、置信度 0.876、低置信分段 1、有效语音 42.9s**。**决定：视频转写用 turbo-q5（离线任务，2 倍时间可接受），60 秒语音仍用 small（现场等待不变）。**
+- VAD + dynaudnorm 修好了「系统评分 / 数据存储 / 实验报告」等词；turbo 后仍有「文字答辩→文字打遍」「部署→boss」，于是补了外置纠错词表（14 条，覆盖打变/打遍/剥锁/系统平分等）。
+- `--carry-initial-prompt` 实测更差（「系统评分→气筒平分」），**未启用**。
+- 内置 ffmpeg 是精简构建，**没有 loudnorm**；改用 `highpass + dynaudnorm`，并在滤镜不可用时自动退回无滤镜。
+
+**待做**
+
+- ~~`medium` / `large-v3-turbo-q5_0` 基准对比~~ → **已跑 turbo-q5，决定视频用 turbo-q5**；medium 全量模型下载慢，未纳入。
+- ~~转写后处理纠错词表~~ → **已做 14 条**；后续按课题术语扩充（外置文件，不需改代码）。
+- 下一步：评分接入 GLM / DeepSeek 文本模型（已拍板，API key 用户已有）。
+
+---
+
+### 云端评分配置骨架（GLM-4.7 主 / DeepSeek 兜底，2026-10-20）
+
+**状态**：✅ 配置类与模板已加；**评分调用代码尚未接**（下一步）。
+
+| 项 | 内容 |
+|---|---|
+| 配置类 | `AppProperties.Ai.Scoring`：`enabled / provider / fallback-to-local / temperature / thinking-enabled / connect-timeout-seconds / read-timeout-seconds / max-tokens`；子项 `glm`（base-url / api-key / model / fallback-model）与 `deepseek`（base-url / api-key / model） |
+| 本地 key 位置 | `src/main/resources/application.yml` → `app.ai.scoring.glm.api-key`（**该文件已被 gitignore**）；DeepSeek 可选填 `deepseek.api-key` |
+| 模板 | `application.yml.example` 用 `${AI_SCORE_API_KEY:}` / `${DEEPSEEK_API_KEY:}`，不写真实 key |
+| 默认 | `provider: glm`、`model: glm-4.7`、`fallback-model: glm-4.5-air`、`thinking-enabled: false`（省 token、稳定输出） |
+| 兜底顺序 | GLM-4.7 → GLM-4.5-air → DeepSeek → 本地 `qwen2.5:3b-16k`（代码待实现） |
+
+**验证**：`mvn -o clean test` → **85/85 通过**（Spring 上下文能正常绑定新增配置；未接调用代码，不影响现有链路）。
+
+**2026-10-21 追加验证（真实调用）**：用最小请求实际调用 `glm-4.7` 成功；开启思考时 20 个 token 全落在 `reasoning_content`、`content` 为空；加 `thinking: {"type":"disabled"}` 后返回 `content=OK`、`reasoning_tokens=0`。**结论：评分必须关闭 thinking**，配置默认值已按此设置。key 只写入本地 `application.yml`（已 gitignore），`git grep` 确认未进入任何被跟踪文件。
+
+---
+
 ### 归档：里程碑注释 + 推送远端（本轮收尾）
 
 | 项 | 内容 |

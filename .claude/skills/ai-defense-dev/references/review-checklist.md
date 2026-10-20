@@ -52,13 +52,15 @@
 
 ## 附：快速取证命令
 
-```bat
-:: 全项目搜 SQL 注入面（应零命中）
-search_content: pattern="\$\{"  path="src/main/resources/Mapper"
+用 `Grep` 工具执行（参数名 `pattern` / `path` / `output_mode`）：
 
-:: 搜协议标签硬编码残留（只允许出现在 prompt 文本与 AiProtocolConstants）
-search_content: pattern=""(点评|评分|下一题|总结):""  path="src/main/java"
+```text
+# 全项目搜 SQL 注入面（应零命中）
+Grep(pattern: '\$\{', path: 'src/main/resources/Mapper', output_mode: 'content')
 
-:: 搜前端裸用地址（应零命中，统一走 config.getBaseUrl()）
-search_content: pattern="http://localhost"  path="src/main/resources/static/Ai"
+# 搜协议标签硬编码残留（只允许出现在 prompt 文本与 AiProtocolConstants）
+Grep(pattern: '"(点评|评分|下一题|总结):"', path: 'src/main/java', output_mode: 'content')
+
+# 搜前端裸用地址（应零命中，统一走 config.getBaseUrl()）
+Grep(pattern: 'http://localhost', path: 'src/main/resources/static/Ai', output_mode: 'content')
 ```

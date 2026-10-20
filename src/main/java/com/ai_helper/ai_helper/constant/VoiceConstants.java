@@ -19,7 +19,13 @@ public final class VoiceConstants {
 
     /** 模型文件名，按优先级排列（优先中文效果与速度平衡的 small） */
     public static final List<String> MODEL_FILE_NAMES = List.of(
-            "ggml-small.bin", "ggml-base.bin", "ggml-medium.bin", "ggml-tiny.bin");
+            "ggml-small.bin", "ggml-base.bin", "ggml-medium.bin",
+            "ggml-large-v3-turbo.bin", "ggml-large-v3.bin",
+            "ggml-large-v3-turbo-q5_0.bin", "ggml-medium-q5_0.bin", "ggml-tiny.bin");
+
+    /** VAD（语音活动检测）模型文件名，按优先级排列（约 865KB，从 ggml-org/whisper-vad 下载） */
+    public static final List<String> VAD_MODEL_FILE_NAMES = List.of(
+            "ggml-silero-v5.1.2.bin", "ggml-silero-v6.2.0.bin", "ggml-silero.bin");
 
     /** ffmpeg 可执行文件名（把 webm / mp3 / aac 统一转成 16kHz wav） */
     public static final String FFMPEG_EXE_NAME = "ffmpeg.exe";

@@ -42,6 +42,9 @@ public class AppProperties {
     /** 答辩视频的 AI 评分配置（2026-10-20 · VID 系列：听声识别 → 五维成绩单） */
     private VideoAnalysis videoAnalysis = new VideoAnalysis();
 
+    /** 云端 AI 评分配置（2026-10-20：GLM / DeepSeek 文本评分，本地 3B 兜底） */
+    private Ai ai = new Ai();
+
     @Data
     public static class Storage {
         /**
@@ -227,12 +230,52 @@ public class AppProperties {
         private String installDir = "";
 
         /**
-         * whisper 模型档位：`tiny` / `base` / `small` / `medium`（也可直接写 `ggml-xxx.bin`）。
+         * whisper 模型档位：`tiny` / `base` / `small` / `medium` / `large-v3-turbo`
+         * 也支持量化名（如 `large-v3-turbo-q5_0` / `medium-q5_0`），或直接写 `ggml-xxx.bin`。
          *
          * <p>默认 small：中文答辩场景准确率与速度最均衡，但模型约 487MB；
-         * 8G 低功耗机若嫌首次下载慢/识别慢，可改 base（约 142MB，快一倍）。</p>
+         * 8G 低功耗机若嫌首次下载慢/识别慢，可改 base（约 142MB，快一倍）。
+         * 离线答辩视频建议先用 medium / large-v3-turbo 做基准测试再决定。</p>
+         *
+         * <p>注意：本档位会参与 {@code WhisperAsrServiceImpl.resolveModel()} 的解析，
+         * 不再只是"下载哪个模型"的提示——否则下载了 medium 却仍用 small。</p>
          */
         private String model = "small";
+
+        /**
+         * 是否启用 VAD（语音活动检测）：先剔除静音与鼠标/键盘噪声，再交给识别。
+         *
+         * <p>2026-10-20 实测：2 分钟录屏里静音占 78.6 秒、平均音量 -31dB，
+         * 不加 VAD 时鼠标声也会被转成文字。VAD 模型缺失或引擎不支持时自动跳过，
+         * 只记日志，不影响原有识别。</p>
+         */
+        private boolean vadEnabled = true;
+
+        /** VAD 模型路径（留空 = 在引擎同目录/models 下自动查找） */
+        private String vadModel = "";
+
+        /** VAD 判定阈值（0~1，越大越严格） */
+        private double vadThreshold = 0.5;
+
+        /** VAD 最短语音段（毫秒），过短的片段会被丢弃 */
+        private int vadMinSpeechMs = 250;
+
+        /** VAD 最短静音段（毫秒），用于切分语音 */
+        private int vadMinSilenceMs = 100;
+
+        /**
+         * whisper 推理线程数。0 = 交给引擎自动决定；CPU 核数较少的机器可显式设为 4。
+         */
+        private int threads = 0;
+
+        /**
+         * 转写后处理纠错词表路径（留空 = 使用 classpath 下的 asr-corrections.txt）。
+         *
+         * <p>格式：每行 `错误写法=正确写法`，`#` 开头为注释。用于修
+         * 「文字答辩→文字打变」「部署→剥锁」这类高置信度同音词；只做字面替换，
+         * 不做模糊匹配，避免误改正常表达。</p>
+         */
+        private String correctionsFile = "";
 
         /** 下载代理（可选，如 `http://127.0.0.1:7890`）；留空 = 直连 */
         private String proxy = "";
@@ -373,6 +416,21 @@ public class AppProperties {
         private int ffmpegTimeoutSeconds = 600;
 
         /**
+         * 视频抽音轨时的音频滤镜。
+         *
+         * <p>2026-10-20 实测：真实录屏平均音量仅 -31dB，直接转写会把鼠标声当成说话。
+         * 内置 ffmpeg 是精简构建，<b>没有 loudnorm</b>；改用当前内置 ffmpeg 可用的
+         * {@code highpass + dynaudnorm} 组合。留空 = 不做处理。</p>
+         */
+        private String audioFilter = "highpass=f=80,dynaudnorm=f=150:g=15";
+
+        /** 有效语音不足该秒数时判「素材不足」，不进入评分（防止噪声素材硬出分） */
+        private double minSpeechSeconds = 8.0;
+
+        /** 有效语音占视频总时长的最低比例；低于该值同样判「素材不足」 */
+        private double minSpeechRatio = 0.05;
+
+        /**
          * 口语场景下「缺失维」的最低分（2026-10-20）。
          *
          * <p>视频是口语，学生大概率讲了但没讲到点上，或 whisper 把术语听错；
@@ -397,6 +455,15 @@ public class AppProperties {
          * 更有效的是换 medium 模型（4 倍算力）或后处理纠错词表。</p>
          */
         private String asrPrompt = "这是一场学生答辩的现场讲解，主要介绍系统功能与实现情况。";
+
+        /**
+         * 视频转写专用模型档位（留空 = 跟 {@code app.voice.model} 一致）。
+         *
+         * <p>2026-10-20 基准：同一段 2:08 视频，`small` 22.0s / 置信度 0.843，
+         * `large-v3-turbo-q5_0` 43.2s / 置信度 0.876，领域词略好。视频是离线任务，
+         * 可以牺牲一倍时间换准确率；60 秒语音作答仍用 small，避免现场等待过久。</p>
+         */
+        private String asrModel = "";
     }
 
     @Data
@@ -533,5 +600,79 @@ public class AppProperties {
          * TEXT 的 64KB 上限会静默截断。</p>
          */
         private boolean storeText = true;
+    }
+
+    /**
+     * 云端 AI 评分配置（2026-10-20）。
+     *
+     * <p><b>为什么要有这一层</b>：本地 qwen2.5:3b 对五维评分的区分度已经到顶，
+     * 而视频/报告只需要把「转写文本 + 声学指标」发给文本大模型，成本极低：
+     * GLM-Flash / glm-4.7 有赠送推理包，DeepSeek 一场约一两分钱。</p>
+     *
+     * <p><b>安全</b>：API key 只从本地 {@code application.yml}（已被 gitignore）
+     * 或环境变量读取，绝不写进代码、绝不提交。key 为空时自动退回本地 3B。</p>
+     */
+    @Data
+    public static class Ai {
+
+        private Scoring scoring = new Scoring();
+
+        @Data
+        public static class Scoring {
+            /** 是否启用云端评分；false = 只用本地 3B */
+            private boolean enabled = true;
+
+            /** 首选提供方：glm / deepseek / local */
+            private String provider = "glm";
+
+            /** 云端失败后是否回退本地 3B */
+            private boolean fallbackToLocal = true;
+
+            /** 采样温度：评分固定 0，保证同一份材料分数稳定 */
+            private double temperature = 0.0;
+
+            /**
+             * 是否允许模型"思考"（GLM-4.7 等推理模型支持）。
+             *
+             * <p>评分场景建议关闭：思考会多花 token，且可能让分数漂移；
+             * 只有复杂复核才需要打开。</p>
+             */
+            private boolean thinkingEnabled = false;
+
+            private int connectTimeoutSeconds = 10;
+
+            private int readTimeoutSeconds = 120;
+
+            /** 单次调用最大输出 token（五维点评 + 可选 JSON） */
+            private int maxTokens = 1500;
+
+            private Glm glm = new Glm();
+
+            private DeepSeek deepseek = new DeepSeek();
+
+            @Data
+            public static class Glm {
+                private String baseUrl = "https://open.bigmodel.cn/api/paas/v4";
+
+                /** 智谱 API key；留空 = 不启用 GLM */
+                private String apiKey = "";
+
+                /** 主模型；用户有 glm-4.7 推理包 */
+                private String model = "glm-4.7";
+
+                /** 主模型额度用完/限流时的备用模型（12M tokens 推理包） */
+                private String fallbackModel = "glm-4.5-air";
+            }
+
+            @Data
+            public static class DeepSeek {
+                private String baseUrl = "https://api.deepseek.com";
+
+                /** DeepSeek API key；留空 = 跳过 DeepSeek 兜底 */
+                private String apiKey = "";
+
+                private String model = "deepseek-v4-flash";
+            }
+        }
     }
 }

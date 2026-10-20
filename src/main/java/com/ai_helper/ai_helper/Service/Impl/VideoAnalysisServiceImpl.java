@@ -194,7 +194,7 @@ public class VideoAnalysisServiceImpl implements VideoAnalysisService {
             // 传答辩术语表：实测录屏讲解里「文字答辩」会被听成「文字打变」，
             // 进而让 3B 写出"使用了云打变等术语但与实际系统不符"这种点评。
             String words = asrService.transcribeMediaFile(videoFile, cfg.getBudgetSeconds(),
-                    cfg.getAsrPrompt());
+                    buildAsrPrompt(topicName, cfg.getAsrPrompt()));
             words = words == null ? "" : words.trim();
             if (words.isEmpty()) {
                 throw new IllegalStateException("视频里没有识别到说话内容，无法评分（请确认视频有声音且能正常播放）");
@@ -259,6 +259,20 @@ public class VideoAnalysisServiceImpl implements VideoAnalysisService {
     // ==================================================================
     // 模型调用
     // ==================================================================
+
+    /**
+     * 视频转写提示词：短句 + 本场课题名。
+     *
+     * <p>2026-10-20 实测：长术语表反而让 whisper 把句子切碎，所以只保留短句和高频词；
+     * 课题名能让模型优先匹配本场的专业词。整体控制在 180 字以内（whisper prompt 约 224 token）。</p>
+     */
+    private String buildAsrPrompt(String topicName, String base) {
+        String prefix = UploadUtils.isBlank(base) ? "学生答辩现场讲解。" : base;
+        String terms = "常见词：答辩、文字答辩、语音答辩、视频上传、报告上传、评分、教师端、学生端、数据库、系统功能。";
+        String topic = UploadUtils.isBlank(topicName) ? "" : "课题：" + topicName + "。";
+        String prompt = prefix + terms + topic;
+        return prompt.length() > 180 ? prompt.substring(0, 180) : prompt;
+    }
 
     /** 第一次调用：按五维写点评 + 切题判断（**不打分**，打分交给下一次） */
     private String callComments(String topicName, String words, AppProperties.VideoAnalysis cfg) {

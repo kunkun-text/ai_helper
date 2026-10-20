@@ -24,7 +24,7 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 见第一原则。需求含糊（"优化一下""改好看点"）时必须先问清验收标准。
 
 ### ② 计划
-- 用 `todo_write` 建任务清单，按**用户可感知的功能模块**拆分（不要按技术细节拆）。
+- 用 `TodoWrite` 建任务清单，按**用户可感知的功能模块**拆分（不要按技术细节拆）。
 - 涉及多文件的改动，先列出"拟改文件清单"让用户过目。
 
 ### ③ 动手前必读（顺序固定）
@@ -35,7 +35,7 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 
 ### ④ 实现标准
 - **全栈视角**：改后端考虑前端返回格式影响，改数据库考虑接口层，改前端考虑后端字段名。
-- **改动克制**：优先 `replace_in_file` 精准修改；严禁重写用户的大文件（`chatController.java`、`defense.js` 属红线级大文件，先读再改，diff 面越小越好）。
+- **改动克制**：优先用 `Edit` 工具精准修改（先 `Read` 再改，`old_string` 必须唯一）；严禁重写用户的大文件（`chatController.java`、`defense.js` 属红线级大文件，先读再改，diff 面越小越好）。
 - **不发明新东西**：沿用项目既有模式（Result 包装返回、MyBatis XML 下划线转驼峰、`/student/**` `/teacher/**` 路径约定、token 身份取 `AuthInterceptor.currentUserNumber(request)`）。
 - 新增接口默认落到既有保护路径下（`/student/**`、`/teacher/**` 已被拦截器覆盖），教师接口加 `@RequireRole(UserRole.TEACHER)`。
 
@@ -53,16 +53,16 @@ description: 协助开发 AI 答辩辅助系统（微信小程序 + Spring Boot 
 
 | 任务 | 用什么 | 关键点 |
 |---|---|---|
-| 后端编译验证 | `execute_command` 跑 mvn | 离线编译命令见 `references/toolbox.md` §1；PATH 无 mvn |
-| 前端 JS 语法校验 | `node --check` | 见 §2 |
-| 找文件 / 找代码 | `search_file` / `search_content` | 用绝对路径；工作区路径含中文（`f:\杂七杂八\ai`） |
-| 大范围摸底（≥5 个文件） | `task` 调 code-explorer 子代理 | 省主上下文，问"结论+证据路径" |
-| 看运行状态 | `diagnose.ps1` | 答辩前 7 项自检，见 §3 |
-| 直查 MySQL / Redis / 接口 | `execute_command` | mysql / redis-cli / curl 命令模板见 §4~§5 |
-| 精准改文件 | `replace_in_file` | 先 read 后改；失败先重读该区域再重试 |
-| 建任务清单 / 汇报进度 | `todo_write` | 完成一项更新一项 |
+| 后端编译验证 | `PowerShell` 跑 mvn | 离线编译命令见 `references/toolbox.md` §1；PATH 无 mvn |
+| 前端 JS 语法校验 | `PowerShell` 跑 `node --check` | 见 §2 |
+| 找文件 / 找代码 | `Glob` / `Grep` | 用绝对路径；工作区路径含中文（`f:\杂七杂八\ai`） |
+| 大范围摸底（≥5 个文件） | `Agent` 调 Explore 子代理 | 省主上下文，问"结论+证据路径" |
+| 看运行状态 | `PowerShell` 跑 `diagnose.ps1` | 答辩前 7 项自检，见 §3 |
+| 直查 MySQL / Redis / 接口 | `PowerShell` | mysql / redis-cli / curl 命令模板见 §4~§5 |
+| 精准改文件 | `Edit`（整文件重写用 `Write`） | 先 `Read` 后改；`old_string` 不唯一时先扩大上下文再重试 |
+| 建任务清单 / 汇报进度 | `TodoWrite` | 完成一项更新一项 |
 
-完整命令模板、Windows cmd 踩坑、curl 接口测试套路 → **读 `references/toolbox.md`**。
+完整命令模板、PowerShell 踩坑、curl 接口测试套路 → **读 `references/toolbox.md`**。
 
 ## 严重 Bug 清单（出现任何一条 = 驳回自己的改动）
 

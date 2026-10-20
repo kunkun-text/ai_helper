@@ -79,11 +79,14 @@ public class ComponentStatusServiceImpl implements ComponentStatusService {
         boolean engine = voiceComponentInstaller.engineReady();
         boolean model = voiceComponentInstaller.modelReady();
         boolean ffmpeg = voiceComponentInstaller.ffmpegReady();
+        boolean vad = voiceComponentInstaller.vadModelReady();
         boolean installed = engine && model;
 
         String message;
         if (installed) {
-            message = "引擎与模型已就绪" + (ffmpeg ? "，ffmpeg 已就绪" : "，ffmpeg 缺失（仅影响 webm 转码）");
+            message = "引擎与模型已就绪"
+                    + (vad ? "，VAD 已就绪" : "，VAD 缺失（不会剔除静音/噪声）")
+                    + (ffmpeg ? "，ffmpeg 已就绪" : "，ffmpeg 缺失（仅影响 webm 转码）");
         } else if (voiceComponentInstaller.isRunning()) {
             message = "未安装，后台自动下载中（约 550MB）";
         } else if (!voiceComponentInstaller.lastError().isBlank()) {

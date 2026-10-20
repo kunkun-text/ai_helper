@@ -16,17 +16,21 @@
     powershell -ExecutionPolicy Bypass -File .\scripts\install-whisper.ps1 -InstallDir D:\whisper
 
   Model size guide (disk / RAM / speed on a 4-core laptop):
-    tiny     ~75MB   fast    low accuracy
-    base     ~142MB  fast    usable for Chinese
-    small    ~466MB  medium  recommended
-    medium   ~1.5GB  slow    best accuracy
+    tiny            ~75MB   fast    low accuracy
+    base            ~142MB  fast    usable for Chinese
+    small           ~466MB  medium  recommended
+    medium          ~1.5GB  slow    best accuracy
+    large-v3-turbo  ~1.6GB  medium  better Chinese, good speed/accuracy trade-off
+    large-v3-turbo-q5_0 ~574MB medium 量化版：体积小、效果好，推荐先试
+    medium-q5_0     ~539MB  slow    量化版
 
   After install: restart the backend (mvn spring-boot:run) and check the log
   for the line "语音识别已就绪" (speech recognition ready).
 #>
 param(
     [string]$InstallDir = '',
-    [ValidateSet('tiny', 'base', 'small', 'medium')]
+    [ValidateSet('tiny', 'base', 'small', 'medium', 'large-v3-turbo', 'large-v3',
+        'large-v3-turbo-q5_0', 'medium-q5_0')]
     [string]$Model = 'small',
     [string]$Proxy = ''
 )
@@ -152,6 +156,35 @@ try {
         if (-not $downloaded) { throw "Failed to download the model from all mirrors" }
         $sizeMb = [math]::Round((Get-Item $modelFile).Length / 1MB, 1)
         Write-Ok "Model installed: $modelFile ($sizeMb MB)"
+    }
+
+    # --------------------------------------------------------- 3.2 VAD model
+    # Why: real screen-recording videos are mostly silence + mouse clicks. Without
+    # VAD, whisper turns those noises into words. The model is only ~865KB.
+    $vadFile = Join-Path $modelDir 'ggml-silero-v5.1.2.bin'
+    if (Test-Path $vadFile) {
+        Write-Ok "VAD model already present, skip"
+    }
+    else {
+        $vadMirrors = @(
+            'https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin',
+            'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin'
+        )
+        $vadOk = $false
+        foreach ($url in $vadMirrors) {
+            try {
+                Get-RemoteFile $url $vadFile 'VAD model (silero)'
+                $vadOk = $true
+                break
+            }
+            catch {
+                Write-Warn2 "VAD mirror failed: $url"
+                if (Test-Path $vadFile) { Remove-Item $vadFile -Force }
+            }
+        }
+        if (-not $vadOk) {
+            Write-Warn2 'VAD model not downloaded; speech recognition still works, but silence/noise may be transcribed.'
+        }
     }
 
     # ------------------------------------------- 3.5 ffmpeg (optional but needed)

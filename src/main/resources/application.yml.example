@@ -211,6 +211,15 @@ app:
     lock-ttl-seconds: 2400
     # ffmpeg 抽音轨超时（秒）
     ffmpeg-timeout-seconds: 600
+    # 抽音轨时的音频滤镜（2026-10-20）：
+    #   真实录屏平均音量仅 -31dB，先高通去低频轰鸣、再做动态响度归一化。
+    #   注意：内置 ffmpeg 是精简构建，没有 loudnorm；可用 highpass / dynaudnorm / volume。
+    #   留空 = 不处理。
+    audio-filter: "highpass=f=80,dynaudnorm=f=150:g=15"
+    # 有效语音闸门：低于任一阈值即判「素材不足」，不调用模型、不写分数。
+    # 用于挡住"视频里只有鼠标声/环境噪声"却硬出低分的情况。
+    min-speech-seconds: 8.0
+    min-speech-ratio: 0.05
     # 口语场景下「缺失维」的最低分：视频里讲了但没讲到点上很常见，
     # 按报告口径压到 0~4 会被 3B 打成 0~2（实测 2 分钟视频直接 4/50「无效」）。
     # 只抬下限，不抬上限；跑题闸门在其后执行，跑题仍归零。
@@ -220,6 +229,45 @@ app:
     #   不加提示词 203 字；长术语表 152 字（更差，句子被切碎 + 出现噪声）；短句 213 字（略优）。
     # 所以默认用短句。要真正治同音字，换 medium 模型或加后处理纠错词表更有效。
     asr-prompt: "这是一场学生答辩的现场讲解，主要介绍系统功能与实现情况。"
+    # 视频专用 ASR 模型档位；留空 = 跟 app.voice.model 一致。
+    # 2026-10-20 基准（2:08 录屏）：small 22.0s / 置信度 0.843；
+    # large-v3-turbo-q5_0 43.2s / 置信度 0.876（离线任务可接受，推荐）。
+    # 60 秒语音作答仍用 app.voice.model（默认 small），避免现场等待过久。
+    asr-model: "large-v3-turbo-q5_0"
+
+  # ==========================================================================
+  # 云端 AI 评分（2026-10-20）
+  #
+  # 把 ASR 转写文本 + 声学指标发给 GLM / DeepSeek 文本模型评分；
+  # 不发送视频/音频。key 为空或接口失败时自动退回本地 qwen2.5:3b-16k。
+  #
+  # 【安全】本文件是 git 跟踪的模板，不要在这里写真实 key：
+  #   ① 本地 src/main/resources/application.yml（已 gitignore）可直接填 api-key；
+  #   ② 或设置环境变量 AI_SCORE_API_KEY / DEEPSEEK_API_KEY（推荐部署时使用）。
+  # ==========================================================================
+  ai:
+    scoring:
+      enabled: true
+      provider: glm                 # glm | deepseek | local
+      fallback-to-local: true
+      temperature: 0.0
+      # 评分关闭“思考”：省 token、结果更稳定；复杂复核再打开
+      thinking-enabled: false
+      connect-timeout-seconds: 10
+      read-timeout-seconds: 120
+      max-tokens: 1500
+      glm:
+        base-url: https://open.bigmodel.cn/api/paas/v4
+        # 智谱 key（用户有 glm-4.7 推理包，5M tokens）
+        api-key: ${AI_SCORE_API_KEY:}
+        model: glm-4.7
+        # 主模型额度用完/限流时的备用（用户有 glm-4.5-air 12M tokens）
+        fallback-model: glm-4.5-air
+      deepseek:
+        base-url: https://api.deepseek.com
+        # 可选：DeepSeek 兜底，一场约 1~2 分钱
+        api-key: ${DEEPSEEK_API_KEY:}
+        model: deepseek-v4-flash
 
   # ==========================================================================
   # 上传报告文档的 AI 评析（2026-10-16 · 报告五维评分第一期）
@@ -311,9 +359,27 @@ app:
     auto-install: true
     # 自动安装目录。留空 = 自动选择本机存在的存储盘（如 F:\whisper）
     install-dir: ""
-    # 模型档位：tiny / base / small / medium。small 中文效果最均衡（约 487MB，8G 机器偏慢）；
-    # 网速/内存紧张可改 base（约 142MB，识别快一倍）
+    # 模型档位：tiny / base / small / medium / large-v3-turbo；
+    # 量化版可写 large-v3-turbo-q5_0（约 574MB，推荐先试）或 medium-q5_0（约 539MB）。
+    # small 中文效果最均衡（约 487MB，8G 机器偏慢）；网速/内存紧张可改 base（约 142MB）。
+    # 该档位会真正参与模型选择（不再只是"下载哪个"的提示）。
     model: small
+    # ---- VAD（语音活动检测，2026-10-20）----
+    # 先剔除静音/鼠标/键盘噪声，再交给识别。实测 2 分钟录屏静音占 78.6 秒，
+    # 不加 VAD 时噪声也会被转成文字。模型约 865KB，缺失时自动跳过，不影响识别。
+    vad-enabled: true
+    # VAD 模型路径；留空 = 在引擎同目录 / models 下自动查找 ggml-silero-*.bin
+    vad-model: ""
+    # 判定阈值（0~1，越大越严格）
+    vad-threshold: 0.5
+    # 最短语音段 / 最短静音段（毫秒）
+    vad-min-speech-ms: 250
+    vad-min-silence-ms: 100
+    # whisper 推理线程数；0 = 引擎自动决定
+    threads: 0
+    # 转写后处理纠错词表路径；留空 = 使用 classpath:asr-corrections.txt
+    # 格式：每行「错误写法=正确写法」，# 开头为注释；只做字面替换，长词优先
+    corrections-file: ""
     # 下载代理（可选，如 http://127.0.0.1:7890）；留空 = 直连。GitHub 访问慢时很有用
     proxy: ""
     # whisper.cpp 可执行文件（whisper-cli.exe / 旧版 main.exe）。留空 = 自动查找

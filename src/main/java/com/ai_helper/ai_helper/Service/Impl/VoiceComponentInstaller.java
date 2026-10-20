@@ -72,6 +72,13 @@ public class VoiceComponentInstaller {
             "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/",
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/");
 
+    /** VAD 模型（约 865KB）：剔除静音与鼠标/键盘噪声，2026-10-20 实测必要 */
+    private static final String VAD_MODEL_FILE = VoiceConstants.VAD_MODEL_FILE_NAMES.get(0);
+
+    private static final List<String> VAD_MODEL_MIRRORS = List.of(
+            "https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/",
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/");
+
     /** ffmpeg 压缩包（gyan.dev 官方 win64 构建，BtbN 兜底） */
     private static final List<String> FFMPEG_ZIP_URLS = List.of(
             "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
@@ -129,9 +136,14 @@ public class VoiceComponentInstaller {
         return hasEngine(resolveInstallDir());
     }
 
-    /** 语音模型（ggml-*.bin）是否已就位 */
+    /** 语音模型（ggml-*.bin）是否已就位（按 app.voice.model 配置的档位判断） */
     public boolean modelReady() {
-        return hasModel(resolveInstallDir().resolve("models"));
+        return hasConfiguredModel(resolveInstallDir().resolve("models"));
+    }
+
+    /** VAD 模型是否已就位（缺失不影响语音识别，只是不剔除静音/噪声） */
+    public boolean vadModelReady() {
+        return hasVadModel(resolveInstallDir().resolve("models"));
     }
 
     /** ffmpeg 是否已就位（缺失不致命：只影响开发者工具录的 webm） */
@@ -166,27 +178,60 @@ public class VoiceComponentInstaller {
             }
             updatePercent(30);
 
-            // ---------- 2/3 模型 ----------
+            // ---------- 2/4 模型 ----------
             Path modelDir = dir.resolve("models");
             Files.createDirectories(modelDir);
-            if (hasModel(modelDir)) {
-                log.info("[2/3] 语音识别模型已存在，跳过下载 - {}", modelDir);
+            if (hasConfiguredModel(modelDir)) {
+                log.info("[2/4] 语音识别模型已存在，跳过下载 - {}", modelDir);
             } else {
                 stage = "下载语音识别模型 " + modelName() + "（体积较大，请耐心等待）";
                 downloadModel(modelDir);
             }
-            updatePercent(88);
+            updatePercent(58);
 
-            // ---------- 3/3 ffmpeg（尽力而为） ----------
+            // ---------- 2.5/4 视频专用模型（可选，默认与语音模型不同才下载） ----------
+            String videoTier = appProperties.getVideoAnalysis().getAsrModel();
+            String videoFileName = (videoTier == null || videoTier.isBlank())
+                    ? "" : modelFileName(videoTier);
+            if (videoFileName.isEmpty() || videoFileName.equals(modelName())) {
+                log.info("[2.5/4] 视频专用模型与语音模型一致或未配置，跳过");
+            } else if (Files.isRegularFile(modelDir.resolve(videoFileName))) {
+                log.info("[2.5/4] 视频专用模型已存在，跳过下载 - {}", videoFileName);
+            } else {
+                stage = "下载视频专用模型 " + videoFileName + "（离线视频分析用）";
+                try {
+                    downloadModel(modelDir, videoFileName, 58, 26);
+                } catch (IOException e) {
+                    // 视频模型缺失只退回默认模型，不影响语音识别主流程
+                    log.warn("视频专用模型下载失败（视频将退回默认模型 {}）：{}",
+                            modelName(), e.getMessage());
+                }
+            }
+            updatePercent(86);
+
+            // ---------- 3/4 VAD（可选，但强烈建议：静音/鼠标声会被转成文字） ----------
+            if (appProperties.getVoice().isVadEnabled()) {
+                if (hasVadModel(modelDir)) {
+                    log.info("[3/4] VAD 模型已存在，跳过下载 - {}", modelDir);
+                } else {
+                    stage = "下载语音活动检测模型（约 865KB）";
+                    downloadVadModel(modelDir);
+                }
+            } else {
+                log.info("[3/4] VAD 已关闭（app.voice.vad-enabled=false），跳过");
+            }
+            updatePercent(92);
+
+            // ---------- 4/4 ffmpeg（尽力而为） ----------
             if (hasFfmpeg(dir)) {
-                log.info("[3/3] ffmpeg 已存在，跳过安装 - {}", dir);
+                log.info("[4/4] ffmpeg 已存在，跳过安装 - {}", dir);
             } else {
                 stage = "准备音频转码组件 ffmpeg";
                 installFfmpeg(dir);
             }
             updatePercent(100);
 
-            boolean ok = hasEngine(dir) && hasModel(modelDir);
+            boolean ok = hasEngine(dir) && hasConfiguredModel(modelDir);
             if (ok) {
                 lastError = "";
                 stage = "完成";
@@ -262,9 +307,13 @@ public class VoiceComponentInstaller {
     // 模型
     // ============================================================================================
 
-    /** 下载 ggml 模型（多镜像依次重试） */
+    /** 下载语音模型（多镜像依次重试） */
     private void downloadModel(Path modelDir) throws IOException {
-        String fileName = modelName();
+        downloadModel(modelDir, modelName(), 30, 28);
+    }
+
+    /** 下载指定 ggml 模型（多镜像依次重试），视频专用模型复用同一套镜像 */
+    private void downloadModel(Path modelDir, String fileName, int baseProgress, int span) throws IOException {
         Path dest = modelDir.resolve(fileName);
         Path tmp = null;
         IOException last = null;
@@ -272,7 +321,7 @@ public class VoiceComponentInstaller {
             String url = mirror + fileName;
             try {
                 log.info("下载语音识别模型：{}", url);
-                tmp = downloadToTemp(url, fileName, "模型", 30, 58);
+                tmp = downloadToTemp(url, fileName, "模型", baseProgress, span);
                 break;
             } catch (IOException e) {
                 last = e;
@@ -284,6 +333,38 @@ public class VoiceComponentInstaller {
         }
         Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
         log.info("模型安装完成：{}（{}）", dest, humanSize(Files.size(dest)));
+    }
+
+    /**
+     * 下载 VAD 模型（约 865KB）。
+     *
+     * <p>2026-10-20：真实录屏里静音/鼠标声占大头，whisper 会把噪声也转成文字。
+     * VAD 模型很小，下载失败只降级为「不启用 VAD」，不影响语音识别主流程。</p>
+     */
+    private void downloadVadModel(Path modelDir) {
+        Path dest = modelDir.resolve(VAD_MODEL_FILE);
+        Path tmp = null;
+        for (String mirror : VAD_MODEL_MIRRORS) {
+            String url = mirror + VAD_MODEL_FILE;
+            try {
+                log.info("下载 VAD 模型：{}", url);
+                tmp = downloadToTemp(url, VAD_MODEL_FILE, "VAD 模型", 86, 6);
+                break;
+            } catch (IOException e) {
+                log.warn("VAD 模型镜像下载失败（{}）：{}", mirror, e.getMessage());
+            }
+        }
+        if (tmp == null) {
+            log.warn("VAD 模型未能下载，将跳过语音活动检测（静音/噪声可能被转成文字）");
+            return;
+        }
+        try {
+            Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
+            log.info("VAD 模型安装完成：{}（{}）", dest, humanSize(Files.size(dest)));
+        } catch (IOException e) {
+            log.warn("VAD 模型落盘失败（将跳过 VAD）：{}", e.getMessage());
+            deleteRecursively(tmp);
+        }
     }
 
     // ============================================================================================
@@ -315,7 +396,7 @@ public class VoiceComponentInstaller {
             Path extractDir = null;
             try {
                 log.info("下载 ffmpeg：{}", url);
-                zip = downloadToTemp(url, "ffmpeg.zip", "ffmpeg", 88, 12);
+                zip = downloadToTemp(url, "ffmpeg.zip", "ffmpeg", 92, 8);
                 extractDir = Files.createTempDirectory("voice-ffmpeg-");
                 unzip(zip, extractDir);
                 Path exe = findFile(extractDir, List.of(VoiceConstants.FFMPEG_EXE_NAME));
@@ -551,12 +632,14 @@ public class VoiceComponentInstaller {
         return Path.of(System.getProperty("user.home", "."), "whisper");
     }
 
-    /** 模型文件名：把配置档位（tiny/base/small/medium 或完整文件名）归一成 ggml-xxx.bin */
+    /** 语音模型文件名（默认 small） */
     private String modelName() {
         String configured = appProperties.getVoice().getModel();
-        if (configured == null || configured.isBlank()) {
-            return "ggml-small.bin";
-        }
+        return modelFileName(configured == null || configured.isBlank() ? "small" : configured);
+    }
+
+    /** 把配置档位（tiny/base/small/medium/large-v3-turbo-q5_0 或完整文件名）归一成 ggml-xxx.bin */
+    private String modelFileName(String configured) {
         String name = configured.trim().toLowerCase(Locale.ROOT);
         if (!name.startsWith("ggml-")) {
             name = "ggml-" + name;
@@ -572,8 +655,24 @@ public class VoiceComponentInstaller {
                 .anyMatch(n -> Files.isRegularFile(dir.resolve(n)));
     }
 
-    private boolean hasModel(Path modelDir) {
-        return VoiceConstants.MODEL_FILE_NAMES.stream()
+    /** 配置档位对应的模型是否已就位（medium 配置不会因为存在 small 就误判为就绪） */
+    private boolean hasConfiguredModel(Path modelDir) {
+        String configuredPath = appProperties.getVoice().getWhisperModel();
+        if (configuredPath != null && !configuredPath.isBlank()
+                && Files.isRegularFile(Path.of(configuredPath))) {
+            return true;
+        }
+        return Files.isRegularFile(modelDir.resolve(modelName()));
+    }
+
+    /** VAD 模型是否已就位（配置路径优先，其次 models/ 下的已知文件名） */
+    private boolean hasVadModel(Path modelDir) {
+        String configured = appProperties.getVoice().getVadModel();
+        if (configured != null && !configured.isBlank()
+                && Files.isRegularFile(Path.of(configured))) {
+            return true;
+        }
+        return VoiceConstants.VAD_MODEL_FILE_NAMES.stream()
                 .anyMatch(n -> Files.isRegularFile(modelDir.resolve(n)));
     }
 
