@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Service.Impl;
 
 import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.FileStorageService;
+import com.ai_helper.ai_helper.Service.OcrService;
 import com.ai_helper.ai_helper.Service.ReportDocAnalysisService;
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
@@ -137,7 +138,9 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
             "2. 材料只有笼统说法、没有具体细节（没有具体技术名词、数据、步骤）时，"
                     + "必须如实写\"只有笼统描述，缺少具体细节\"，不得当成优点。"
                     + "材料自称\"完成度高、达到预期\"不算具体细节。",
-            "3. 某维度在材料里找不到依据时，写\"材料未涉及\"。");
+            "3. 某维度在材料里找不到依据时，写\"材料未涉及\"。",
+            "4. 材料里的【图N】是文档图片经文字识别（OCR）得到的内容，可能有识别错误；"
+                    + "图片中的图形结构、箭头关系、图表趋势无法判读，不得据此臆测。");
 
     /**
      * 评分调用的 system 消息（第二次调用：**只依据点评打分，不再喂原始材料**）。
@@ -217,6 +220,7 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
     private final DefenseRecordsMapper defenseRecordsMapper;
     private final ChatClient chatClient;
     private final AppProperties appProperties;
+    private final OcrService ocrService;
 
     /**
      * 专用单线程池（core=max=1）。
@@ -344,11 +348,14 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
         long deadline = System.currentTimeMillis() + cfg.getBudgetSeconds() * 1000L;
         try {
             putStatus(defenseId, STATUS_PROCESSING, "读取文档", "正在读取并解析报告文档", fp, cfg);
-            String text = extractText(relativePath, ext, cfg);
+            Material materialText = extractMaterial(relativePath, ext, cfg);
+            String text = materialText.text();
             if (UploadUtils.isBlank(text)) {
                 throw new IllegalStateException("报告里没有提取到任何文字（可能是空白文档，或内容全在图片里）");
             }
-            log.info("报告文档已抽取 - defenseId: {}, 字数: {}", defenseId, text.length());
+            log.info("报告文档已抽取 - defenseId: {}, 字数: {}, 图片: 共 {} 张，识别出文字 {} 张，跳过 {} 张",
+                    defenseId, text.length(), materialText.imageTotal(),
+                    materialText.imageOcr(), materialText.imageSkipped());
 
             // 全文落库（可追溯）：**放在评分之前**——分析失败时恰恰最需要知道
             // "模型当时到底看到了什么"，而那时后面的 updateReportDocAnalysis 根本不会被调用。
@@ -401,7 +408,8 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
             result.setDimComments(DocScoreParser.formatDimComments(comments, dimsOf(result)));
 
             // 五维成绩单是主口径：**先落库**。综合评价是附加项，生成/落库失败都不能影响它。
-            String analysis = buildAnalysisText(result, grounded, comments, cfg);
+            String analysis = buildAnalysisText(result, grounded, comments, cfg,
+                    materialText.imageTotal(), materialText.imageOcr());
             defenseRecordsMapper.updateReportDocAnalysis(defenseId, analysis,
                     BigDecimal.valueOf(result.getTotalScore()), SOURCE_REPORT);
 
@@ -442,19 +450,107 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
         }
     }
 
-    private String extractText(String relativePath, String ext, AppProperties.ReportDoc cfg) throws Exception {
+    /** 抽取结果：正文（图片文字已原位回填）+ 图片统计 */
+    private static final class Material {
+        private final String text;
+        private final int imageTotal;
+        private final int imageOcr;
+        private final int imageSkipped;
+
+        private Material(String text, int imageTotal, int imageOcr, int imageSkipped) {
+            this.text = text;
+            this.imageTotal = imageTotal;
+            this.imageOcr = imageOcr;
+            this.imageSkipped = imageSkipped;
+        }
+
+        private String text() {
+            return text;
+        }
+
+        private int imageTotal() {
+            return imageTotal;
+        }
+
+        private int imageOcr() {
+            return imageOcr;
+        }
+
+        private int imageSkipped() {
+            return imageSkipped;
+        }
+    }
+
+    /**
+     * 抽取正文并回填图片文字。
+     *
+     * <p>图片在正文中的位置由 {@link DocTextExtractor#extractWithImages} 留下的占位标记确定，
+     * 这里逐个 OCR 后**原位替换**——不能把所有图片文字堆到文末，否则模型会失去上下文。</p>
+     *
+     * <p>三道降级都不让整份评析失败：① 组件未就绪 → 占位写"未能识别"；
+     * ② 超出整体时间预算 → 剩余图片跳过；③ 识别为空/乱码 → 标注为图表类图片。</p>
+     */
+    private Material extractMaterial(String relativePath, String ext, AppProperties.ReportDoc cfg)
+            throws Exception {
         DocTextExtractor.Limits limits = new DocTextExtractor.Limits();
         limits.maxEntryBytes = cfg.getMaxEntryBytes();
         limits.maxTotalBytes = cfg.getMaxTotalBytes();
         limits.maxCompressionRatio = cfg.getMaxCompressionRatio();
         limits.maxChars = cfg.getMaxChars();
 
+        boolean ocrReady = cfg.isOcrEnabled() && ocrService.available();
+        int maxImages = ocrReady ? Math.max(0, cfg.getOcrMaxImages()) : 0;
+
+        DocTextExtractor.ExtractResult result;
         try (InputStream in = fileStorageService.open(relativePath)) {
-            return DocTextExtractor.extract(in, ext, limits);
+            result = DocTextExtractor.extractWithImages(in, ext, limits, maxImages,
+                    cfg.getOcrMaxImageBytes());
         } catch (DocTextExtractor.DocExtractException e) {
             // 转成可读原因，最终会写进状态里给教师看
             throw new IllegalStateException("报告文档解析失败：" + e.getMessage(), e);
         }
+
+        String text = result.text();
+        int recognized = 0;
+        int index = 0;
+        long ocrDeadline = System.currentTimeMillis()
+                + Math.max(0, cfg.getOcrTotalBudgetSeconds()) * 1000L;
+
+        for (DocTextExtractor.DocImage image : result.images()) {
+            index++;
+            String reason = null;
+            String content = null;
+            if (!ocrReady) {
+                reason = "图片识别组件未就绪";
+            } else if (System.currentTimeMillis() >= ocrDeadline) {
+                reason = "超出识别时间预算";
+            } else {
+                content = ocrService.recognize(image.data(), image.extension());
+                if (content == null) {
+                    reason = "格式不支持或识别失败";
+                }
+            }
+
+            String block;
+            if (reason != null) {
+                block = "【图" + index + "：未能识别（" + reason + "）】";
+            } else if (content == null || content.isBlank()) {
+                block = "【图" + index + "：未识别到文字（可能是图表、流程图或照片）】";
+            } else {
+                block = "【图" + index + "】\n" + content;
+                recognized++;
+            }
+            text = text.replace(DocTextExtractor.IMAGE_MARKER_PREFIX + image.rid()
+                    + DocTextExtractor.IMAGE_MARKER_SUFFIX, "\n" + block + "\n");
+        }
+
+        // 关系缺失 / 超限被跳过的图片：占位仍在正文里，统一换成说明，避免私有区字符进入 prompt
+        text = text.replaceAll("\uE000IMG:[^\uE001]+\uE001",
+                "\n【图：未能读取（超出限制或格式不支持）】\n");
+        text = DocTextExtractor.normalize(text, cfg.getMaxChars());
+
+        return new Material(text, result.images().size() + result.skippedImages(),
+                recognized, result.skippedImages());
     }
 
     /**
@@ -744,7 +840,7 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
      * {@code ⚠️} 标记该维点评自认缺失、分数已被服务端压到 0~4——成绩单要能自证每一分的依据。</p>
      */
     private String buildAnalysisText(DocScoreResult result, boolean grounded, String comments,
-                                     AppProperties.ReportDoc cfg) {
+                                     AppProperties.ReportDoc cfg, int imageTotal, int imageOcr) {
         StringBuilder sb = new StringBuilder();
         if (cfg.isAnnotateSource()) {
             sb.append("【基于上传的报告文档】\n");
@@ -754,6 +850,10 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
         }
         if (!grounded) {
             sb.append("⚠️ 未能在报告中定位到点评引用的内容，仅供参考\n");
+        }
+        if (imageTotal > 0) {
+            sb.append("图片：共 ").append(imageTotal).append(" 张，识别出文字 ").append(imageOcr)
+                    .append(" 张（图片中的图形/流程图/图表结构无法判读）\n");
         }
         sb.append("总分：").append(DocScoreParser.formatScore(result.getTotalScore()))
                 .append("/50　等级：").append(DocScoreParser.gradeLevel(result.getTotalScore()))
@@ -1000,13 +1100,9 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
     }
 
     private static String unsupportedMessage(String ext) {
-        if ("pdf".equals(ext)) {
-            return "该报告是 PDF 格式，本期暂不支持自动评分。请让学生把文档另存为 .docx 后重新上传（PDF 需要额外引入解析库）";
-        }
-        if (ext == null || ext.isEmpty()) {
-            return "无法识别报告的文件格式，请让学生上传 docx / pptx / xlsx / txt 格式";
-        }
-        return "该报告格式（." + ext + "）暂不支持自动评分，请让学生另存为 docx / pptx / xlsx / txt 后重新上传";
+        String suffix = ext == null || ext.isEmpty() ? "" : "（." + ext + "）";
+        return "该报告格式" + suffix + "暂不支持自动评分。"
+                + "请让学生用 Word「另存为」.docx 后重新上传（建议直接使用小程序里的报告模板）";
     }
 
     /** 只把可预期的原因透传给教师；其它异常一律给通用文案，不泄露堆栈/SQL/路径 */

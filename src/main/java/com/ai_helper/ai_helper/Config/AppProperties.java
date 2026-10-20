@@ -98,20 +98,23 @@ public class AppProperties {
         }
 
         /**
-         * 答辩报告的默认规则（50MB）。
+         * 答辩报告的默认规则（50MB，**只收 .docx**，2026-10-20 收口）。
          *
-         * <p><b>【2026-10-16 · 报告五维评分第一期】白名单收窄为「可自动解析的四种格式」</b>：
-         * 原为 {@code pdf, doc, docx, xls, xlsx, ppt, pptx, txt}，但 PDF 需要引入 PDFBox
-         * （项目全程 {@code mvn -o} 离线编译，本地仓库没有该包），doc/xls/ppt 是需要 POI scratchpad
-         * 的旧二进制格式，四者都**无法在零依赖前提下抽出文本**。
-         * 留在白名单里会导致「能传但分析必然失败」，故直接下架并给明确提示，
-         * 而不是让学生传完才发现拿不到分。</p>
+         * <p><b>为什么只剩一种</b>：<br>
+         * ① PDF / doc / xls / ppt 在零依赖前提下抽不出文字（PDFBox、POI scratchpad 都会
+         * 破坏 {@code mvn -o} 离线编译）；<br>
+         * ② 「下载报告模板」下发的只能是 docx，模板类型必须等于可分析类型，
+         * 否则学生填完还得转换，口径自相矛盾；<br>
+         * ③ docx 信息密度最高（段落顺序完整），pptx 一页一句、xlsx 表格会塌成文本流。<br>
+         * 留多种格式只会让学生传完才发现拿不到分，故统一为 docx 并给可操作提示。</p>
+         *
+         * <p><b>白名单只影响上传</b>：历史上已上传的 pptx/xlsx/txt 报告仍可评析，
+         * {@code DocTextExtractor} 的解析能力保留，不随白名单删除。</p>
          */
         static FileRule reportDefaults() {
             FileRule rule = new FileRule();
             rule.setMaxSize(50L * 1024 * 1024);
-            rule.setAllowedExts(new ArrayList<>(Arrays.asList(
-                    "docx", "pptx", "xlsx", "txt")));
+            rule.setAllowedExts(new ArrayList<>(Arrays.asList("docx")));
             return rule;
         }
     }
@@ -399,6 +402,42 @@ public class AppProperties {
 
         /** 单个分析任务的总耗时预算（秒），超出即中止并置 FAILED（不写库） */
         private int budgetSeconds = 240;
+
+        // ---------- 文档内图片 OCR（2026-10-20） ----------
+
+        /**
+         * 是否识别文档内图片里的文字。
+         *
+         * <p>模型是纯文本模型，图片只能通过 OCR 变成文字才能参与评判；
+         * 关掉后图片内容完全缺席（成绩单会注明），文字正文不受影响。</p>
+         */
+        private boolean ocrEnabled = true;
+
+        /**
+         * 识别引擎：{@code auto}（默认，Windows 自带 OCR 优先）/ {@code windows} / {@code tesseract}。
+         *
+         * <p>Windows 10/11 自带 OCR 在中文系统上零下载可用；tesseract 需要联网下载安装器
+         * （现网官方源与 GitHub raw 均不可达），因此只作可选兜底。</p>
+         */
+        private String ocrEngine = "auto";
+
+        /**
+         * OCR 组件安装目录。留空则自动选第一个存在的盘（如 {@code X:\ocr}）。
+         * 与 {@code app.voice.install-dir} 同款逻辑。
+         */
+        private String ocrInstallDir = "";
+
+        /** 单份报告最多识别多少张图片（成本闸门：每张 1~2 秒） */
+        private int ocrMaxImages = 12;
+
+        /** 单张图片字节上限（超出跳过，不报错） */
+        private long ocrMaxImageBytes = 2L * 1024 * 1024;
+
+        /** 单张图片的识别超时（秒），超时即跳过该图 */
+        private int ocrTimeoutSeconds = 20;
+
+        /** 单份报告整体 OCR 时间预算（秒），用完即停止识别剩余图片 */
+        private int ocrTotalBudgetSeconds = 60;
 
         // ---------- 任务控制 ----------
 

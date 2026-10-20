@@ -1,9 +1,86 @@
 # AI 答辩辅助系统 — 改动记录
 
 > 基于 git commit `508d803`（母版），代码基线 `a4c4381`（2026-10-15 审查整改批次H N68~N78 已提交）+ 报告文档 AI 五维评分第一期（2026-10-16，未提交）；
+> 2026-10-20：**报告文档图片 OCR + 报告模板下载 + 上传格式收口为 docx**（见 [2026-10-20](#2026-10-20) 节）。
 > 2026-10-16：**报告文档 AI 五维评分第一期**（上传的 docx/pptx/xlsx/txt → 五维评分 + 教师端手动触发 + 列表着色，见 [2026-10-16](#2026-10-16) 节）。**⚠️ 上线前必须先执行 `docs/ddl_report_doc_analysis.sql`**。
 > 2026-10-15：批次H 编码完成（N68~N78，见 [2026-10-15](#2026-10-15) 节）+ 判分口径实验（N65）实测会误杀已回滚。
 > 本文档按「时间倒序 + 功能模块」组织，方便快速定位某次改动的上下文。
+
+---
+
+## 2026-10-20
+
+### 报告文档：图片 OCR（图片内容可参与评分）+ 报告模板下载 + 上传格式收口为 docx
+
+**需求**：① 报告里的图片模型读不到，需要补齐输入；② 学生端报告上传按钮下方要能下载模板，模板类型必须是模型能分析的类型；③ 上传只收 docx。
+
+**关键前提（改变了方案形态）**：`qwen2.5:3b-16k` 是**纯文本模型，没有视觉能力**。图片转成 PNG/JPEG/base64 都进不了模型，唯一可行路径是**把图片里的文字 OCR 成文本**。所以「转码」在本项目里的定义是：
+
+```
+任意可解码位图（png/jpg/gif/bmp/tiff）
+  → 白底重绘 + 小图 2 倍放大 + 灰度（统一预处理）
+  → PNG（中间态，tesseract 最稳的输入）
+  → UTF-8 纯文本（最终态，按正文位置回填）
+```
+
+矢量图（emf/wmf/svg）JDK 无法栅格化，**跳过并显式占位**；公式（OMML）与图表趋势不参与判分。
+
+**实现**
+
+| 层 | 改动 |
+|---|---|
+| 抽取 | `DocTextExtractor.extractWithImages`：单遍 zip 同时取 `word/document.xml`、`word/_rels/document.xml.rels`、`word/media/*`；按 `<a:blip r:embed>` 的**出现顺序**在正文原位插入占位；关系缺失/超限只计入 `skippedImages`，不抛异常 |
+| 占位 | 用私有区字符 `\uE000IMG:rIdN\uE001`，**不能用 `\u0001`**——段落落盘前 `trim()` 会删掉 ≤ 空格的字符，控制字符占位会被截断（本次单测实证） |
+| OCR | 新增 `DocImageOcr`：ImageIO 解码 + 预处理 + `tesseract <png> stdout -l chi_sim+eng --psm 6`；单图超时 20s；字体/图表噪声按「可读字符占比 < 0.5」过滤；任何异常返回 null |
+| 组件 | `OcrServiceImpl` 按「**Windows 自带 OCR 优先、tesseract 兜底**」选引擎：Win10/11 中文系统零下载即可用；tesseract 仅在系统 OCR 不可用时才后台安装（Inno Setup 静默安装 + `tessdata_fast` 语言包） |
+| 接入 | `ReportDocAnalysisServiceImpl.extractMaterial`：逐个 OCR 后**原位替换**占位为 `【图N】+识别文本`；失败写 `【图N：未能识别（原因）】`；成绩单追加「图片：共 N 张，识别出文字 M 张」；点评 prompt 增第 4 条纪律（OCR 文本可能有误、图形结构不得臆测） |
+| 模板 | 新增 `ReportTemplateBuilder`（JDK ZipOutputStream 拼最小 OOXML，零新依赖）：封面 + 填写须知 8 条 + 六章骨架 + 提交前自检清单；`GET /api/report/template` 返回 `AI答辩报告模板.docx` |
+| 前端 | 学生端「选择报告，开始上传」下方新增「下载报告模板（.docx，含填写须知）」；`selectReport` 前置校验扩展名，非 docx 直接提示 |
+| 白名单 | `reportDefaults()` **只留 `docx`**；`MediaFileServiceImpl`/`ReportDocAnalysisServiceImpl` 的拒绝文案统一为「用 Word 另存为 .docx」；**解析能力保留**，历史 pptx/xlsx/txt 报告仍可评析 |
+
+**配置**（`application.yml`，全部有默认值）：`app.report-doc.ocr-enabled / ocr-engine(auto) / ocr-install-dir / ocr-max-images(12) / ocr-max-image-bytes(2MB) / ocr-timeout-seconds(20) / ocr-total-budget-seconds(60)`。
+
+**当日修正（网络受限）**：首版直接下载 tesseract 官方安装器，现网实测 `digi.bib.uni-mannheim.de` 返回 **HTTP 403**、`raw.githubusercontent.com` **连接超时**（`cdn.jsdelivr.net` 可用）。改为**优先使用 Windows 自带 OCR**（`Windows.Media.Ocr`，本机实测语言 `zh-Hans-CN`）：Java 调 `scripts/windows-ocr.ps1` 桥接 WinRT 异步 API，结果以 UTF-8 写文件回读（绕开控制台代码页 `chcp 936` 的中文乱码），**零下载、零新依赖**。tesseract 仅在 `ocr-engine: tesseract` 时作为可选兜底，下载失败只降级。已用中英文测试图各实测一次（输出 `REPORT OCR TEST 12345` / 含 CJK）。
+
+**组件自检（同日追加，需求原话：「有就显示已安装，没有就自动下载」）**
+
+| 项 | 实现 |
+|---|---|
+| 统一状态 | 新增 `ComponentStatusVo`（key/name/installed/installing/percent/stage/location/message）与 `ComponentStatusService` |
+| 启动摘要 | 应用就绪 3 秒后打印（等自动安装线程先完成检测）：<br>`========== 本机组件自检 ==========`<br>`语音识别（whisper）：已安装｜引擎与模型已就绪，ffmpeg 已就绪` + `位置：F:\whisper`<br>`图片识别（OCR）：已安装｜使用系统自带 OCR，支持中文` + `位置：Windows 自带 OCR（系统组件，零下载）` |
+| HTTP 状态 | `GET /api/system/components`（**已加入登录保护**，因为会暴露本机安装路径） |
+| whisper 侧 | 补只读接口 `engineReady()/modelReady()/ffmpegReady()/installDirectory()`；已安装时显示「已安装」，缺失且下载中显示百分比与阶段，失败显示原因 |
+| OCR 侧 | 补 `status()`；安装流程补 `stage/percent`（准备 → 下载安装包 → 安装引擎 → 下载语言包 → 完成/失败） |
+| 自动补齐 | 保持原逻辑：whisper 由 `WhisperAsrServiceImpl` 后台下载（约 550MB）；OCR 优先系统自带（零下载），系统不支持时才尝试 tesseract |
+
+**模板封面与系统「另存为」（同日追加）**
+
+| 项 | 实现 |
+|---|---|
+| 第 1 页封面 | 参照学校实验报告封面：**单张横向头图** `resources/templates/school-header.png`（左侧圆形校徽 + 英文校名，右侧书法体「重慶理工大學」）→「答辩报告书」36pt 黑体 → 两行「报告成绩」框 → 课题名称/班级/姓名/学号/指导教师/日期（值区下边框表格）。图片以 OOXML `word/media/school-header.png` 内嵌（`[Content_Types].xml` 声明 `image/png`、`document.xml.rels` 用 `rId10` 指向），不依赖学生电脑字体 |
+| 第 2 页 | 新增「评分标准与写作要点」：五维含义、等级对照表、各章建议字数、常见扣分点 |
+| 页序 | 封面 → 评分标准 → 填写须知 → 六章正文 → 提交前自检清单 |
+| 实测 | 用 Word 实际打开生成的模板：**8 页、1 张内联图片、4 个表格、无「文档已损坏」提示**（早前两图版曾在部分机器显示红叉，改为单张 PNG 后关系/内容类型/媒体实体三者一致） |
+| 另存为 | 手机端小程序**没有**系统「另存为」API（只能下载到临时文件再 `openDocument`）；**电脑端微信有 `wx.saveFileToDisk`，会弹系统另存为对话框**。另新增浏览器页 `/template-download.html`：点击表格行 → `showSaveFilePicker` 弹**系统保存对话框**（Edge/Chrome 在 `localhost` 或 HTTPS 下生效），不支持时降级为浏览器默认下载。`/api/report/template` 已从登录拦截中排除（空白模板，无用户数据），上传/删除/查询仍要求登录 |
+
+**当日修正（下载后 Word 报「在试图打开文件时遇到错误」）**
+
+| 项 | 结论 / 改动 |
+|---|---|
+| 定位 | 用 Word COM 实测生成的模板：**能正常打开（9 页 / 1 张内联图 / 4 个表格）**，`[Content_Types].xml`、`document.xml`、`.rels`、`styles.xml` 全部良构，`school-header.png` 确为真 PNG（645×207，32bpp ARGB）。**即文件本身没坏** |
+| 根因 | `wx.downloadFile` 的 `tempFilePath` 是**无扩展名的随机缓存文件**（截图中的 `MCEhkpihNmCM082c7bb17cef1d6a06…`），直接 `wx.openDocument` 交给 Word，Word 拿不到扩展名即按错误格式解析 → 该报错框 |
+| 修复 1 | 新增 `stageTemplateFile()`：先 `FileSystemManager.copyFile` 到 `${USER_DATA_PATH}/AI答辩报告模板.docx`，**带上真实后缀**再打开。这也顺带让文件在小程序沙箱里可复用 |
+| 修复 2 | 新增 `saveOrOpenTemplate()`：**电脑端走 `wx.saveFileToDisk` 弹系统「另存为」自选目录**；手机端仍 `openDocument({showMenu:true})`（Word 右上角另存为）；用户取消不报错。判定不用平台名（开发者工具是 `devtools`，按平台名硬判会导致工具里永不弹窗），改用 `typeof wx.saveFileToDisk === 'function'`，并打印 `[template] platform=… saveFileToDisk=…` 便于排查 |
+| 修复 3 | 打开失败时降级为「复制模板链接 + 提示到电脑浏览器打开」（链接 `/api/report/template` 本就免登录），浏览器侧仍有 `showSaveFilePicker` 真对话框；另存为失败时弹 `showActionSheet`（打开模板 / 复制链接）二选一，并 `console.error` 打印 `saveFileToDisk` 的真实 `errMsg` |
+| 工具限制 | 实测 `platform=devtools` 下 `typeof wx.saveFileToDisk === 'function'` 为 **true 但调用失败**——开发者工具对该 PC 专有 API 只有占位、无真实实现，**弹系统另存为只能在电脑版微信客户端里验证**（预览/真机调试）；工具内只能走「Word 另存」或「浏览器打开下载页」 |
+| 修复 5（取消仍弹 Word） | `wx.showActionSheet` 在用户点「取消」时**同样走 `fail`**（`errMsg: showActionSheet:fail cancel`），原代码把 fail 一律当「弹不出来」→ 反而打开 Word。改为先匹配 `cancel` 直接 return，仅真实异常才降级打开 |
+| 修复 6（Word / WPS 双兼容） | 模板本就是标准 OOXML（`.docx`），Word 与 WPS 均可打开；本次把文案统一为「Word / WPS」（填写须知第 1 条、自检清单字数提示、小程序提示语），并新增单测守住 **zip 首条目必须是 `[Content_Types].xml`**——WPS 等严格解析器对此有硬要求，缺了会报文档损坏 |
+| 修复 4 | 顺手修掉 `cover()` 的潜在结构 bug：图片资源缺失的降级分支把 `p("Title", …)` 拼进了未闭合的 `<w:p>`，会产生**嵌套段落**——这正是 Word 判「文档损坏」的典型原因 |
+| 守卫 | 新增单测 `templateStructureIsSane`：解析 `document.xml`，断言无 `w:p` 嵌套、每个 `a:blip/@r:embed` 都能在关系表找到对应 Id |
+
+**验证**：`mvn -o clean test` → **79/79 通过**（新增 8 条：占位落在正文真实位置 / 普通抽取不产生占位 / 关系缺失只降级 / 模板含封面与评分页可被解析 / 封面头图确实打进 zip 且体积正常 / 模板结构无嵌套段落且图片关系齐全 / zip 首条目是 [Content_Types].xml / OCR 引擎缺失返回 null）；`node --check student.js` 通过；**Windows OCR 中英文实测通过**；**Word 打开模板实测通过**。
+
+**未做/限制**：模板下载与小图 OCR 待真机验证；tesseract 首次自动安装需联网（安装器约 50MB + 语言包数 MB），离线机器可把已装好的 `X:\ocr` 目录整体拷贝；PDF/旧 doc 仍不支持（零依赖抽不出文字）。
 
 ---
 
@@ -11,6 +88,7 @@
 
 | 想看什么 | 跳到 |
 |---|---|
+| **报告图片 OCR + 报告模板 + 只收 docx（2026-10-20）** | [2026-10-20](#2026-10-20) |
 | **答辩完成弹窗总平均分修复（2026-10-19）** | [2026-10-19](#2026-10-19) |
 | **教师端报告评析入口迁移 + 五维卡片化（2026-10-18）** | [2026-10-18](#2026-10-18) |
 | **报告文档 AI 五维评分第一期（2026-10-16）** | [2026-10-16](#2026-10-16) |

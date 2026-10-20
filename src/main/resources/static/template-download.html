@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>答辩报告模板下载</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 48px 20px;
+            font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+            background: #f5f7fa;
+            color: #1f2937;
+        }
+        .wrap { max-width: 860px; margin: 0 auto; }
+        h1 { font-size: 22px; margin: 0 0 8px; }
+        .desc { color: #6b7280; font-size: 14px; margin-bottom: 24px; line-height: 1.8; }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 6px 24px rgba(15, 23, 42, .08);
+            overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 16px 20px; text-align: left; font-size: 14px; }
+        thead th { background: #f8fafc; color: #64748b; font-weight: 600; }
+        tbody tr { cursor: pointer; transition: background .15s; border-top: 1px solid #eef2f7; }
+        tbody tr:hover { background: #f0f7ff; }
+        .name { font-weight: 600; color: #0f172a; }
+        .tag {
+            display: inline-block; padding: 2px 8px; border-radius: 6px;
+            background: #e8f3ff; color: #1677ff; font-size: 12px;
+        }
+        .btn {
+            display: inline-block; padding: 8px 16px; border-radius: 8px;
+            background: #1677ff; color: #fff; font-size: 13px; white-space: nowrap;
+        }
+        .hint { margin-top: 18px; font-size: 13px; color: #6b7280; line-height: 1.9; }
+        .hint code { background: #eef2f7; padding: 1px 6px; border-radius: 4px; }
+        .status { margin-top: 12px; font-size: 13px; min-height: 20px; }
+        .ok { color: #16a34a; }
+        .err { color: #dc2626; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>答辩报告模板</h1>
+    <div class="desc">
+        点击表格中的行即可下载。浏览器支持时（Edge / Chrome）会弹出<strong>系统「另存为」对话框</strong>，
+        由你自行选择保存到哪个磁盘或文件夹。
+    </div>
+
+    <div class="card">
+        <table>
+            <thead>
+            <tr>
+                <th>文件名称</th>
+                <th>格式</th>
+                <th>说明</th>
+                <th style="width:120px">操作</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr id="template-row" title="点击另存为">
+                <td class="name">AI 答辩报告模板.docx</td>
+                <td><span class="tag">DOCX</span></td>
+                <td>含封面、评分标准、填写须知与六章骨架</td>
+                <td><span class="btn">另存为…</span></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="hint">
+        提示：若浏览器未弹出保存对话框（例如通过局域网 IP 访问、或浏览器不支持该 API），
+        文件会按浏览器默认方式下载。此时可在浏览器设置中开启
+        <code>下载前询问每个文件的保存位置</code>。<br>
+        微信小程序内不支持系统「另存为」对话框，请在电脑浏览器中打开本页操作。
+    </div>
+</div>
+
+<script>
+    const row = document.getElementById('template-row');
+    const statusEl = document.getElementById('status');
+
+    function setStatus(text, ok) {
+        statusEl.textContent = text || '';
+        statusEl.className = 'status ' + (ok ? 'ok' : 'err');
+    }
+
+    async function download() {
+        setStatus('正在生成模板…', true);
+        let blob;
+        try {
+            // 模板接口已从登录保护中排除（空白模板，无用户数据）
+            const res = await fetch('/api/report/template', { credentials: 'same-origin' });
+            if (!res.ok) {
+                throw new Error('HTTP ' + res.status);
+            }
+            blob = await res.blob();
+        } catch (e) {
+            setStatus('模板获取失败：' + e.message + '（请确认后端已启动）', false);
+            return;
+        }
+
+        // Chromium 的 File System Access API：真正的系统「另存为」对话框
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: 'AI答辩报告模板.docx',
+                    types: [{
+                        description: 'Word 文档',
+                        accept: {
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+                        }
+                    }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                setStatus('已保存到你选择的位置。', true);
+                return;
+            } catch (e) {
+                if (e && e.name === 'AbortError') {
+                    setStatus('已取消保存。', true);
+                    return;
+                }
+                // 其他异常走降级分支
+            }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'AI答辩报告模板.docx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setStatus('当前浏览器不支持系统保存对话框，已按默认方式下载。', true);
+    }
+
+    row.addEventListener('click', download);
+</script>
+</body>
+</html>

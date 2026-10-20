@@ -15,9 +15,11 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -93,7 +95,92 @@ public final class DocTextExtractor {
 
     private static final int BUFFER_SIZE = 8192;
 
+    /** docx 图片关系表（rId → media 路径）与媒体目录 */
+    private static final String DOCX_RELS = "word/_rels/document.xml.rels";
+    private static final String DOCX_MEDIA_PREFIX = "word/media/";
+
+    /** OOXML 关系命名空间：{@code <a:blip r:embed="rId5">} 的属性就在这个命名空间下 */
+    private static final String REL_NS =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    /**
+     * 正文里的图片占位：{@code \uE000IMG:rId5\uE001}，由调用方用 OCR 文本替换。
+     *
+     * <p>为什么用 Unicode 私有区字符而不是 {@code \u0001}：段落落盘前会走
+     * {@link String#trim()}，而 {@code trim()} 会删掉所有 ≤ 空格的字符，
+     * 控制字符占位会被拦腰截断、导致标记匹配不上（2026-10-20 单测实证）。
+     * 私有区字符不属于空白，能稳定穿过清洗流程；万一没被替换，
+     * 调用方最后会统一清理，不会进入模型输入。</p>
+     */
+    public static final String IMAGE_MARKER_PREFIX = "\uE000IMG:";
+    public static final String IMAGE_MARKER_SUFFIX = "\uE001";
+
+    private static final Pattern IMAGE_MARKER =
+            Pattern.compile("\uE000IMG:([^\uE001]+)\uE001");
+
     private DocTextExtractor() {
+    }
+
+    /**
+     * 文档内的一张图片。
+     *
+     * <p>{@code rid} 是正文里 {@code <a:blip r:embed="...">} 的引用标识，用来把 OCR 结果
+     * 按**图片在正文中的出现顺序**回填；{@code name} 是 zip 内的 media 路径。</p>
+     */
+    public static final class DocImage {
+        private final String rid;
+        private final String name;
+        private final byte[] data;
+
+        public DocImage(String rid, String name, byte[] data) {
+            this.rid = rid;
+            this.name = name;
+            this.data = data;
+        }
+
+        public String rid() {
+            return rid;
+        }
+
+        public String name() {
+            return name;
+        }
+
+        public byte[] data() {
+            return data;
+        }
+
+        /** 扩展名（小写、不含点），无法判断时返回空串 */
+        public String extension() {
+            int dot = name == null ? -1 : name.lastIndexOf('.');
+            return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
+        }
+    }
+
+    /** 抽取结果：正文（含图片占位）+ 按出现顺序排列的图片字节 */
+    public static final class ExtractResult {
+        private final String text;
+        private final List<DocImage> images;
+        private final int skippedImages;
+
+        public ExtractResult(String text, List<DocImage> images, int skippedImages) {
+            this.text = text;
+            this.images = images == null ? List.of() : images;
+            this.skippedImages = skippedImages;
+        }
+
+        public String text() {
+            return text;
+        }
+
+        public List<DocImage> images() {
+            return images;
+        }
+
+        /** 有引用但因超限/找不到关系而没能取出的图片数量（用于给教师提示） */
+        public int skippedImages() {
+            return skippedImages;
+        }
     }
 
     /** 由扩展名判断格式（大小写不敏感，允许带前导点） */
@@ -149,6 +236,77 @@ public final class DocTextExtractor {
         return normalize(raw, lim.maxChars);
     }
 
+    /**
+     * 抽取正文，并**按正文出现顺序**取出 docx 内嵌图片。
+     *
+     * <p>正文里的图片位置会留下 {@code \u0001IMG:rIdN\u0001} 占位，由调用方用 OCR 文本替换；
+     * 这样图片里的文字会落在它在原文中的位置，而不是全部堆到文末。</p>
+     *
+     * <p>非 docx（pptx/xlsx/txt）本期不做图片抽取，等价于 {@link #extract}。
+     * 图片取不到（关系缺失 / 超单张或总量上限）只计入 {@code skippedImages}，**绝不抛异常**——
+     * 图片是增强项，不能因为它让整份报告无法评分。</p>
+     *
+     * @param maxImages     最多取多少张，&lt;=0 表示不取
+     * @param maxImageBytes 单张图片字节上限
+     */
+    public static ExtractResult extractWithImages(InputStream in, String ext, Limits limits,
+                                                  int maxImages, long maxImageBytes)
+            throws DocExtractException {
+        if (in == null) {
+            throw new DocExtractException("文档内容为空");
+        }
+        Limits lim = limits == null ? Limits.defaults() : limits;
+        Format format = formatOf(ext);
+        if (format != Format.DOCX || maxImages <= 0) {
+            return new ExtractResult(extract(in, ext, lim), List.of(), 0);
+        }
+
+        Map<String, byte[]> wanted = collectWantedEntries(in, format, lim, true);
+        byte[] document = wanted.get(DOCX_DOCUMENT);
+        if (document == null) {
+            throw new DocExtractException("文档内容为空或结构异常，未能取到正文");
+        }
+
+        String raw;
+        Map<String, String> rels;
+        try {
+            raw = extractParagraphText(document, true);
+            rels = parseRelationships(wanted.get(DOCX_RELS));
+        } catch (XMLStreamException e) {
+            throw new DocExtractException("文档内容解析失败（文件可能已损坏）", e);
+        }
+
+        List<DocImage> images = new ArrayList<>();
+        Set<String> taken = new LinkedHashSet<>();
+        int skipped = 0;
+        long imageBytes = 0;
+        long imageBudget = Math.max(1L, maxImageBytes) * Math.max(1, maxImages);
+
+        Matcher marker = IMAGE_MARKER.matcher(raw);
+        while (marker.find()) {
+            String rid = marker.group(1);
+            if (taken.contains(rid)) {
+                continue;   // 同一张图被引用多次：只 OCR 一份，占位各自保留
+            }
+            String target = rels.get(rid);
+            String media = target == null ? null : normalizeMediaPath(target);
+            byte[] data = media == null ? null : wanted.get(media);
+            if (data == null) {
+                skipped++;
+                continue;
+            }
+            if (data.length > maxImageBytes || images.size() >= maxImages
+                    || imageBytes + data.length > imageBudget) {
+                skipped++;
+                continue;
+            }
+            images.add(new DocImage(rid, media, data));
+            taken.add(rid);
+            imageBytes += data.length;
+        }
+        return new ExtractResult(normalize(raw, lim.maxChars), images, skipped);
+    }
+
     // ------------------------------------------------------------------
     // zip 与各格式
     // ------------------------------------------------------------------
@@ -182,6 +340,23 @@ public final class DocTextExtractor {
      */
     private static Map<String, byte[]> collectWantedEntries(InputStream in, Format format, Limits limits)
             throws DocExtractException {
+        return collectWantedEntries(in, format, limits, false);
+    }
+
+    /**
+     * 单遍扫描 zip，只把关心的条目读进内存（受三重上限约束）。
+     *
+     * <p>用单遍而不是 {@code ZipFile} 随机访问，是因为上传流没有落盘路径；
+     * 关心条目总共不超过几十个、且总量有硬上限，全部放内存是安全的。</p>
+     *
+     * @param withImages 是否把 {@code word/media/*} 与关系表一并读出来。
+     *                   图片**不计入**文本条目的累计解压上限（否则含十几张截图的正常报告
+     *                   会被误判成压缩炸弹），但仍受单条目上限约束，总量由调用方用
+     *                   「图片张数 × 单张上限」二次兜住。
+     */
+    private static Map<String, byte[]> collectWantedEntries(InputStream in, Format format, Limits limits,
+                                                            boolean withImages)
+            throws DocExtractException {
         Map<String, byte[]> result = new LinkedHashMap<>();
         long totalRead = 0;
         try (ZipInputStream zin = new ZipInputStream(in, StandardCharsets.UTF_8)) {
@@ -191,16 +366,20 @@ public final class DocTextExtractor {
                     continue;
                 }
                 String name = entry.getName();
-                if (!isWanted(name, format)) {
+                if (!isWanted(name, format, withImages)) {
                     continue;
                 }
+                boolean media = withImages && name.startsWith(DOCX_MEDIA_PREFIX);
 
                 long declared = entry.getSize();
                 if (declared > limits.maxEntryBytes) {
+                    if (media) {
+                        continue;   // 超大图片直接跳过：图片是增强项，不能让整份报告失败
+                    }
                     throw new DocExtractException("文档内部条目过大，已拒绝解析");
                 }
                 long compressed = entry.getCompressedSize();
-                if (declared > 0 && compressed > 0
+                if (!media && declared > 0 && compressed > 0
                         && declared / Math.max(1L, compressed) > limits.maxCompressionRatio) {
                     throw new DocExtractException("文档压缩比异常（疑似压缩炸弹），已拒绝解析");
                 }
@@ -211,12 +390,23 @@ public final class DocTextExtractor {
                 int n;
                 while ((n = zin.read(buf)) > 0) {
                     entryRead += n;
-                    totalRead += n;
                     // 声明值可以伪造，这里按实际读入量再兜一次
-                    if (entryRead > limits.maxEntryBytes || totalRead > limits.maxTotalBytes) {
+                    if (entryRead > limits.maxEntryBytes) {
+                        if (media) {
+                            break;   // 图片超限：丢弃这一张，继续下一项
+                        }
                         throw new DocExtractException("文档解压后体积过大，已拒绝解析");
                     }
+                    if (!media) {
+                        totalRead += n;
+                        if (totalRead > limits.maxTotalBytes) {
+                            throw new DocExtractException("文档解压后体积过大，已拒绝解析");
+                        }
+                    }
                     bos.write(buf, 0, n);
+                }
+                if (media && entryRead > limits.maxEntryBytes) {
+                    continue;   // 半截图片不入结果
                 }
                 result.put(name, bos.toByteArray());
             }
@@ -226,10 +416,13 @@ public final class DocTextExtractor {
         return result;
     }
 
-    private static boolean isWanted(String name, Format format) {
+    private static boolean isWanted(String name, Format format, boolean withImages) {
         switch (format) {
             case DOCX:
-                return DOCX_DOCUMENT.equals(name);
+                if (DOCX_DOCUMENT.equals(name)) {
+                    return true;
+                }
+                return withImages && (DOCX_RELS.equals(name) || name.startsWith(DOCX_MEDIA_PREFIX));
             case PPTX:
                 return PPT_SLIDE.matcher(name).matches();
             case XLSX:
@@ -244,6 +437,14 @@ public final class DocTextExtractor {
      * 本地名去掉命名空间前缀后都是 {@code p} / {@code t}，因此共用一套抽取。
      */
     private static String extractParagraphText(byte[] xml) throws XMLStreamException {
+        return extractParagraphText(xml, false);
+    }
+
+    /**
+     * @param markImages 是否在图片出现的位置写入 {@code \u0001IMG:rIdN\u0001} 占位。
+     *                   仅 docx 需要（图片文字回填要按正文顺序）；pptx 只取文字。
+     */
+    private static String extractParagraphText(byte[] xml, boolean markImages) throws XMLStreamException {
         if (xml == null) {
             return "";
         }
@@ -272,6 +473,20 @@ public final class DocTextExtractor {
                         if (inParagraph) {
                             paragraph.append('\n');
                         }
+                    } else if (markImages && "blip".equals(local)) {
+                        // <a:blip r:embed="rId5"/>：图片在正文中的位置
+                        String rid = reader.getAttributeValue(REL_NS, "embed");
+                        if (rid == null) {
+                            rid = reader.getAttributeValue(null, "embed");
+                        }
+                        if (rid != null && !rid.isBlank()) {
+                            String marker = IMAGE_MARKER_PREFIX + rid + IMAGE_MARKER_SUFFIX;
+                            if (inParagraph) {
+                                paragraph.append(marker);
+                            } else {
+                                out.append(marker).append('\n');
+                            }
+                        }
                     }
                 } else if (event == XMLStreamConstants.END_ELEMENT
                         && "p".equals(reader.getLocalName()) && inParagraph) {
@@ -283,6 +498,54 @@ public final class DocTextExtractor {
             closeQuietly(reader);
         }
         return out.toString();
+    }
+
+    /** 关系表：{@code <Relationship Id="rId5" Target="media/image1.png"/>} */
+    private static Map<String, String> parseRelationships(byte[] xml) throws XMLStreamException {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (xml == null || xml.length == 0) {
+            return map;
+        }
+        XMLStreamReader reader = openXml(xml);
+        try {
+            while (reader.hasNext()) {
+                if (reader.next() == XMLStreamConstants.START_ELEMENT
+                        && "Relationship".equals(reader.getLocalName())) {
+                    String id = reader.getAttributeValue(null, "Id");
+                    String target = reader.getAttributeValue(null, "Target");
+                    if (id != null && target != null) {
+                        map.put(id, target);
+                    }
+                }
+            }
+        } finally {
+            closeQuietly(reader);
+        }
+        return map;
+    }
+
+    /**
+     * 把关系表里的 Target 归一成 zip 内路径。
+     *
+     * <p>Target 相对 {@code word/} 目录，常见形态是 {@code media/image1.png}；
+     * 也可能写成 {@code /word/media/image1.png}。含 {@code ..} 的一律返回 null
+     * （拒绝路径穿越，宁可不识别这张图）。</p>
+     */
+    private static String normalizeMediaPath(String target) {
+        if (target == null) {
+            return null;
+        }
+        String t = target.replace('\\', '/').trim();
+        while (t.startsWith("./")) {
+            t = t.substring(2);
+        }
+        if (t.startsWith("/")) {
+            t = t.substring(1);
+        }
+        if (t.contains("..")) {
+            return null;
+        }
+        return t.startsWith("word/") ? t : "word/" + t;
     }
 
     /** pptx：按幻灯片序号**数值**排序（字典序会把 slide10 排到 slide2 前面） */
@@ -521,7 +784,8 @@ public final class DocTextExtractor {
      * 若正文里出现同样字样，就可能在模型眼里"提前结束"材料区、把后面的内容当指令读。
      * 替换成全角后字面不再匹配，正文内容本身不受影响。</p>
      */
-    static String normalize(String raw, int maxChars) {
+    /** 统一空白与截断；图片占位标记（\u0001）由调用方负责替换，这里不动 */
+    public static String normalize(String raw, int maxChars) {
         if (raw == null || raw.isEmpty()) {
             return "";
         }

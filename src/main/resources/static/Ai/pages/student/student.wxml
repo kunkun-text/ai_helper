@@ -106,15 +106,22 @@
       <view class="card">
         <view class="upload-box">
           <view class="upload-icon">报告</view>
-          <!-- 【2026-10-16 · 报告五维评分】报告白名单收窄为可自动解析文字的四种格式：
-               PDF 与旧版 .doc/.xls/.ppt 已下架（零依赖抽不出文字，传了也拿不到评析）。
-               上传这几类时后端会返回「请另存为 docx 后重新上传」的明确提示。 -->
-          <text class="muted">上传答辩报告（Word / PPT / Excel / TXT 格式）</text>
-          <text class="muted">支持 docx / pptx / xlsx / txt；PDF 请先另存为 docx</text>
+          <!-- 【2026-10-20 · 报告模板】提交格式统一为 .docx：
+               它既是系统唯一能完整解析的类型，也是「下载报告模板」下发的类型，
+               学生直接在模板里填写即可，避免"交上来才发现读不了"。
+               其余格式（pdf / doc / ppt / pptx / xls / xlsx / txt）由后端返回明确提示。 -->
+          <text class="muted">上传答辩报告（仅支持 .docx）</text>
+          <text class="muted">请先下载模板，在模板中填写后上传；PDF 与旧版 doc 请另存为 docx</text>
 
           <button class="outline-btn" bindtap="selectReport" disabled="{{isReportUploading}}">
             {{hasUploadedReport ? '重新上传报告' : '选择报告，开始上传'}}
           </button>
+
+          <!-- 报告模板下载：模板类型 = 系统唯一可分析的类型
+               【2026-10-20】电脑端微信点击后弹系统「另存为」可选保存位置；
+               手机端打开文档后从右上角「…」另存为 / 发送到电脑。 -->
+          <view class="template-link" bindtap="downloadReportTemplate">下载报告模板（.docx，含填写须知）</view>
+          <text class="muted">电脑端可直接选择保存位置；手机端打开后从右上角菜单另存（Word / WPS 均可打开）</text>
 
           <!-- 文件信息显示 -->
           <view wx:if="{{reportFileName}}" class="file-info">

@@ -429,6 +429,12 @@ Page({
       success: function(res) {
         if (res.tempFiles && res.tempFiles.length > 0) {
           const file = res.tempFiles[0];
+          // 【2026-10-20】前端前置校验：只收 docx，避免传完才被后端拒
+          const name = String(file.name || '').toLowerCase();
+          if (!name.endsWith('.docx')) {
+            wx.showToast({ title: '仅支持 .docx，请先下载报告模板', icon: 'none' });
+            return;
+          }
           that.uploadReport(file.path, file.name, file.size);
         }
       },
@@ -1720,6 +1726,154 @@ Page({
       sources: [{ url: url, type: 'video' }],
       fail: () => {
         wx.showToast({ title: '当前微信版本不支持预览，请更新微信', icon: 'none' });
+      }
+    });
+  },
+
+  /**
+   * 下载答辩报告模板（.docx）。
+   *
+   * 【2026-10-20 修复】`wx.downloadFile` 的 `tempFilePath` 是**无扩展名的随机缓存文件**，
+   * 直接交给 Word 会弹出「Word 在试图打开文件时遇到错误」——文件本身是好的，
+   * 只是 Word 拿不到扩展名就按错误格式解析。所以先复制成带 `.docx` 的真实文件名再处理。
+   *
+   * 保存方式按运行环境分流：
+   * - 电脑端微信（windows / mac）：`wx.saveFileToDisk` 弹**系统另存为对话框**，用户自选目录；
+   * - 手机端：`wx.openDocument` 打开，右上角「…」→ 另存为 / 发送给朋友；
+   * - 打不开时：复制模板链接，提示用电脑浏览器打开保存（浏览器有自己的保存对话框）。
+   */
+  downloadReportTemplate() {
+    const token = this.data.token;
+    if (!token) {
+      handleAuthExpired();
+      return;
+    }
+    wx.showLoading({ title: '正在下载模板...' });
+    wx.downloadFile({
+      url: config.getBaseUrl() + '/api/report/template',
+      header: {
+        'Authorization': 'Bearer ' + token
+      },
+      success: (res) => {
+        // 401/403 统一走登录失效处理
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          wx.hideLoading();
+          handleAuthExpired();
+          return;
+        }
+        if (res.statusCode !== 200) {
+          wx.hideLoading();
+          wx.showToast({ title: '模板下载失败，请稍后重试', icon: 'error' });
+          return;
+        }
+        this.stageTemplateFile(res.tempFilePath);
+      },
+      fail: () => {
+        wx.hideLoading();
+        wx.showToast({ title: '模板下载失败，请检查网络', icon: 'error' });
+      }
+    });
+  },
+
+  /**
+   * 把缓存文件复制成带 .docx 后缀的固定路径。
+   *
+   * 复制失败（如存储配额不足）时退回原临时路径，至少不阻断后续流程。
+   */
+  stageTemplateFile(tempFilePath) {
+    const target = `${wx.env.USER_DATA_PATH}/AI答辩报告模板.docx`;
+    wx.getFileSystemManager().copyFile({
+      srcPath: tempFilePath,
+      destPath: target,
+      success: () => {
+        wx.hideLoading();
+        this.saveOrOpenTemplate(target);
+      },
+      fail: () => {
+        wx.hideLoading();
+        this.saveOrOpenTemplate(tempFilePath);
+      }
+    });
+  },
+
+  /** 电脑端弹系统「另存为」，其它环境打开文档让用户在 Word 里另存 */
+  saveOrOpenTemplate(filePath) {
+    const platform = String((wx.getSystemInfoSync() || {}).platform || '').toLowerCase();
+    // devtools 运行时 platform 是 'devtools'，但底层是 Windows/Mac，同样支持 saveFileToDisk；
+    // 因此不按平台名硬判，直接看 API 是否存在，避免「开发者工具里永远不弹窗、只能看到 Word 报错」。
+    const canSaveToDisk = typeof wx.saveFileToDisk === 'function';
+    console.log('[template] platform=' + platform + ' saveFileToDisk=' + canSaveToDisk);
+    if (canSaveToDisk) {
+      wx.saveFileToDisk({
+        filePath,
+        success: () => {
+          wx.showToast({ title: '模板已保存', icon: 'success' });
+        },
+        fail: (err) => {
+          const msg = String((err && err.errMsg) || '');
+          // 失败原因必须打出来：开发者工具对 PC 专有 API 可能只有空实现，
+          // 打印后能直接看出是「不支持」还是「用户取消」还是「路径不合法」。
+          console.error('[template] saveFileToDisk fail:', msg);
+          // 用户主动取消不算失败，不打扰
+          if (msg.toLowerCase().indexOf('cancel') >= 0) {
+            return;
+          }
+          wx.showActionSheet({
+            itemList: ['打开模板（用 Word / WPS 另存为）', '复制下载链接（用浏览器打开）'],
+            success: (res) => {
+              if (res.tapIndex === 0) {
+                this.openTemplateFile(filePath);
+              } else {
+                this.copyTemplateLink();
+              }
+            },
+            fail: (sheetErr) => {
+              // 点「取消」也会进 fail（errMsg 为 showActionSheet:fail cancel），
+              // 此时必须什么都不做——否则会出现「点了取消反而弹出 Word」。
+              const sheetMsg = String((sheetErr && sheetErr.errMsg) || '');
+              if (sheetMsg.toLowerCase().indexOf('cancel') >= 0) {
+                return;
+              }
+              console.error('[template] showActionSheet fail:', sheetMsg);
+              this.openTemplateFile(filePath);
+            }
+          });
+        }
+      });
+      return;
+    }
+    this.openTemplateFile(filePath);
+  },
+
+  /** 打开模板；打开失败则复制下载链接，指引用户到电脑浏览器保存 */
+  openTemplateFile(filePath) {
+    wx.openDocument({
+      filePath,
+      fileType: 'docx',
+      showMenu: true,
+      fail: (err) => {
+        console.error('[template] openDocument fail:', (err && err.errMsg) || '');
+        this.copyTemplateLink();
+      }
+    });
+  },
+
+  /**
+   * 复制模板直链。
+   *
+   * 电脑浏览器直接访问该地址会走浏览器自己的下载流程（Chrome 可开「下载前询问每个文件的保存位置」），
+   * 是「开发者工具无法弹系统另存为」时唯一稳的兜底。
+   */
+  copyTemplateLink() {
+    wx.setClipboardData({
+      data: config.getBaseUrl() + '/api/report/template',
+      success: () => {
+        wx.showModal({
+          title: '已复制模板链接',
+          content: '当前环境无法弹出「另存为」。链接已复制，请在电脑浏览器地址栏粘贴打开，浏览器会让你选择保存位置。',
+          confirmText: '知道了',
+          showCancel: false
+        });
       }
     });
   },

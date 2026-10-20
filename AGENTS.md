@@ -26,7 +26,7 @@
 
 ---
 
-## 当前状态速查（2026-10-19，最新提交 `9cbe4c7`）
+## 当前状态速查（2026-10-20，最新提交 `9cbe4c7`）
 
 | 维度 | 状态 |
 |---|---|
@@ -45,7 +45,8 @@
 | 低功耗加固 | ✅ 异步线程池 `app.async`（2/4/50）；`-StrictLowPower` 校验低功耗变量取值 |
 | 记录详情增强 | 🔧 N8 已开发待实测：原生 canvas 五维雷达图 + 标准答案对照 |
 | 题库/统计/审计 | 🔧 已开发待实测：N10 CSV 批量导入、N9 按课题统计导出、N15 场次审计日志（新表 `defense_audit_log`；教师端可视化入口 10-14 已补） |
-| 单元测试 | ✅ **66 条用例全通过**（`mvn -o clean test`，不连库；N14 纯函数 18 + N61 违禁词 7 + 上下文加载 1 + 报告解析/标注守卫等增量） |
+| 单元测试 | ✅ **76 条用例全通过**（`mvn -o clean test`，不连库；N14 纯函数 18 + N61 违禁词 7 + 上下文加载 1 + 报告解析/标注守卫 + 2026-10-20 新增 5 条：图片占位顺序 / 普通抽取不产生占位 / 关系缺失降级 / 模板可解析 / OCR 引擎缺失降级） |
+| 报告文档图片与模板（2026-10-20） | ✅ 编译 + 76/76 单测通过（待真机） | ① **文档内图片 OCR**：3B 无视觉能力，位图（png/jpg/gif/bmp/tiff）转 PNG 后走 tesseract，按 `<a:blip>` 正文顺序原位回填 `【图N】`；矢量图跳过标注；组件**优先 Windows 自带 OCR（零下载）**，tesseract 仅兜底，失败只降级。② **下载报告模板**：`GET /api/report/template` 动态生成 docx（**学校封面：校徽/校名图片 + 成绩框 + 信息栏** + 评分标准页 + 填写须知 + 六章骨架 + 自检清单），学生端上传按钮下方入口；**浏览器页 `/template-download.html` 点击表格行弹系统「另存为」**（小程序无此 API）。③ **上传只收 .docx**（解析代码保留，历史文件仍可评析）；④ **组件自检**：启动后日志打印 whisper/OCR 是否已安装、位置与下载进度，另有 `GET /api/system/components`（登录保护）。见 `CHANGES.md` 2026-10-20 |
 | 小程序环境 | 🔧 A2 配置侧就绪（dev/lan/prod，prod 强制 HTTPS），等真实域名 |
 | 数据隔离 | ✅ 2026-10-19 逻辑隔离：`/api/chat` 与 `/api/chat/clear` 校验 `sessionId` 内嵌用户/课题，跨用户或跨课题直接拒绝（单测 71/71 全过）；报告评析只读写 `report_doc_*`/`report_text`，视频列无实现、不会串料 |
 | 数据库 | ✅ 12 张表（新库 schema.sql 直接含 system_feedback + defense_audit_log + defense_rubric + uk_defense_round）；`defense_records` 另有报告评析 **6 个新列**（`report_doc_analysis` / `report_text` / `report_doc_summary` / `report_doc_score` / `defense_mode` / `analysis_source`） |

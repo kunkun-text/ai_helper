@@ -115,6 +115,30 @@ public class VoiceComponentInstaller {
         return targetDir;
     }
 
+    // ------------------------------------------------------------------
+    // 状态自检（2026-10-20）：供 /api/system/components 与启动日志使用
+    // ------------------------------------------------------------------
+
+    /** 组件实际安装目录（配置优先 → 存储盘 → 用户目录） */
+    public Path installDirectory() {
+        return resolveInstallDir();
+    }
+
+    /** 语音识别引擎（whisper-cli.exe 等）是否已就位 */
+    public boolean engineReady() {
+        return hasEngine(resolveInstallDir());
+    }
+
+    /** 语音模型（ggml-*.bin）是否已就位 */
+    public boolean modelReady() {
+        return hasModel(resolveInstallDir().resolve("models"));
+    }
+
+    /** ffmpeg 是否已就位（缺失不致命：只影响开发者工具录的 webm） */
+    public boolean ffmpegReady() {
+        return hasFfmpeg(resolveInstallDir());
+    }
+
     /**
      * 幂等安装：只补齐缺失的组件（引擎 / 模型 / ffmpeg）。
      *

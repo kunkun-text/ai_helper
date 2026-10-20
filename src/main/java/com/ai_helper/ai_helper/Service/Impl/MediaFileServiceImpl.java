@@ -181,16 +181,15 @@ public class MediaFileServiceImpl implements MediaFileService {
     /**
      * 格式不支持的提示文案。
      *
-     * <p>【2026-10-16 · 报告五维评分】报告白名单收窄为 docx/pptx/xlsx/txt 之后，
-     * 学生手上的 PDF 与旧版 .doc/.xls/.ppt 会被拒。这两类格式**不是本系统用不了**，
-     * 而是「零依赖前提下抽不出文字」，所以给一句**可操作**的指引（另存为），
-     * 而不是干巴巴列一遍白名单——否则学生只会对着同一个文件反复重试。</p>
+     * <p>【2026-10-20 · 报告模板】报告白名单统一为 docx 之后，其余格式一律给**可操作**的指引：
+     * 告诉学生「另存为 docx」，并提示他先用「下载报告模板」。
+     * 干巴巴列白名单只会让学生对着同一个文件反复重试。</p>
      */
     private String describeUnsupportedExt(MediaKind kind, String ext, AppProperties.FileRule rule) {
-        if (kind == MediaKind.REPORT
-                && ("pdf".equals(ext) || "doc".equals(ext) || "xls".equals(ext) || "ppt".equals(ext))) {
-            return "暂不支持 ." + ext + " 格式的报告，请在 Word / PPT / Excel 里"
-                    + "「另存为」docx / pptx / xlsx 后重新上传（系统需要读取文档文字来自动评分）";
+        if (kind == MediaKind.REPORT) {
+            String suffix = ext == null || ext.isEmpty() ? "" : "（." + ext + "）";
+            return "暂不支持该格式的报告" + suffix + "，请用 Word「另存为」.docx 后重新上传"
+                    + "（建议先在小程序里下载报告模板，直接在模板中填写）";
         }
         return "不支持的文件格式"
                 + (ext.isEmpty() ? "" : "（." + ext + "）")

@@ -39,6 +39,8 @@ public class WebConfig implements WebMvcConfigurer {
     private static final String[] PROTECTED_PATHS = {
             "/api/video/**",
             "/api/report/**",
+            // 2026-10-20：组件状态会暴露本机安装路径，必须登录后才能看
+            "/api/system/**",
             "/api/chat",
             "/api/chat/**",
             "/api/final-evaluate",
@@ -88,7 +90,11 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authInterceptor)
-                .addPathPatterns(PROTECTED_PATHS);
+                .addPathPatterns(PROTECTED_PATHS)
+                // 2026-10-20：报告模板是空白模板（无任何用户数据），
+                // 浏览器下载页（showSaveFilePicker 需要同源 fetch）没有登录态，
+                // 因此单独放行；上传/删除/查询仍全部要求登录。
+                .excludePathPatterns("/api/report/template");
     }
 
     /**

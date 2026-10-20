@@ -226,6 +226,16 @@
   border: none;
 }
 
+/* 报告模板下载入口：放在「选择报告，开始上传」正下方，弱化为文字链 */
+.template-link {
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #1890ff;
+  text-decoration: underline;
+  text-align: center;
+  padding: 8rpx 0;
+}
+
 .link-sm {
   font-size: 22rpx;
   color: #1890ff;

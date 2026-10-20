@@ -234,6 +234,27 @@ app:
     # 需先执行 docs/ddl_report_text.sql。
     store-text: true
 
+    # ---- 文档内图片 OCR（2026-10-20）----
+    # 模型是纯文本模型（qwen2.5:3b-16k），没有视觉能力：图片只有先 OCR 成文字，
+    # 才能进入点评调用。图片文字按正文顺序原位回填，不会堆到文末。
+    ocr-enabled: true
+    # 识别引擎：auto（默认，Windows 自带 OCR 优先）/ windows / tesseract
+    # - windows：Win10/11 系统自带 OCR，中文系统默认带 zh-Hans-CN，**零下载**
+    # - tesseract：外部可执行程序，启动后后台自动下载安装（与 whisper 同款）；
+    #   注意官方源 digi.bib.uni-mannheim.de 与 raw.githubusercontent.com 在部分网络下不可达，
+    #   下载失败只降级，不影响文字评析
+    ocr-engine: auto
+    # tesseract 安装目录。留空 = 自动选第一个存在的存储盘（如 F:\ocr）
+    ocr-install-dir: ""
+    # 单份报告最多识别多少张图片（成本闸门：每张约 1~2 秒）
+    ocr-max-images: 12
+    # 单张图片字节上限（超出跳过，不报错）
+    ocr-max-image-bytes: 2097152      # 2MB
+    # 单张图片识别超时（秒）
+    ocr-timeout-seconds: 20
+    # 单份报告整体 OCR 时间预算（秒），用完即停止识别剩余图片
+    ocr-total-budget-seconds: 60
+
   # ==========================================================================
   # 语音答辩（F10）：AI 提问的语音播报 + 学生语音作答的识别
   #
