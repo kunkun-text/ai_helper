@@ -149,7 +149,11 @@
             CASE WHEN dr.video_url IS NOT NULL AND TRIM(dr.video_url) != ''
                       AND dr.video_url != 'abc'
                  THEN 1 ELSE 0 END AS hasVideo,
-            dr.created_at as defenseTime
+            <!-- 【2026-10-21】展示与排序都用「最后活动时间」，不再用 created_at。
+                 典型场景：`358` 是 10-18 建的空壳记录，视频是 10-20 才传上来的——
+                 按 created_at 它会显示成"18 号"并排在一堆旧记录后面，学生会以为自己传丢了。
+                 GREATEST 遇 NULL 直接返回 NULL，所以外层再 COALESCE 一次兜底。 -->
+            COALESCE(GREATEST(dr.updated_at, dr.created_at), dr.updated_at, dr.created_at) as defenseTime
         from    defense_records dr
                     left join users u on u.user_id = dr.user_id
                     left join defense_topics dt on dt.topic_id = dr.topic_id
@@ -163,8 +167,11 @@
                     限制为"有效附件"，避免把历史空壳记录（0 作答且无材料）全倒出来。 -->
                or (dr.video_url is not null and trim(dr.video_url) != '' and dr.video_url != 'abc')
                or (dr.report_url is not null and trim(dr.report_url) != '' and dr.report_url != 'abc'))
-        <!-- 【2026-10-20】与教师端一致：最新在上，defense_id 兜底保证同秒创建时的顺序稳定 -->
-        order by dr.defense_id desc
+        <!-- 【2026-10-21】按「最后活动时间」倒序：谁最近动过谁在最上面，与上方 defenseTime 同一表达式。
+             此前按 defense_id 排，`358`（10-20 传视频）会掉到 10-18/10-19 那批记录后面，
+             学生看到"我刚传的视频在哪"就找不着。defense_id 仍作同秒兜底，保证顺序稳定。 -->
+        order by COALESCE(GREATEST(dr.updated_at, dr.created_at), dr.updated_at, dr.created_at) desc,
+                 dr.defense_id desc
     </select>
     <!-- 【F3 · 2026-10-05】课题列表分页：不再全表返回（大题库会拖慢页面） -->
     <select id="getDefenseTopic" resultType="com.ai_helper.ai_helper.pojo.entity.DefenseTopics">
