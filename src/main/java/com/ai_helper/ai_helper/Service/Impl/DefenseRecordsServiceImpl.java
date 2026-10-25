@@ -315,14 +315,92 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                 log.warn("定位答辩记录失败：未找到用户 {}", userNumber);
                 return null;
             }
-            Integer defenseId = defenseRecordsMapper.getLatestDefenseIdByUserAndTopic(internalUserId, topicId);
-            if (defenseId != null) {
-                return defenseId;
+
+            // 【2026-10-25】附件归属分三档，取代原来的「最新一条（不分状态）」：
+            // 旧实现会把报告挂到已完成的上一场答辩上（同一个课题有多条记录时），
+            // 教师点开当前场次自然看不到材料，看起来像"上传后没有评析入口"。
+
+            // ① 待答辩空壳（pending + 一题未答 + 无追问 + 无评分）——与开始答辩时的复用口径完全一致。
+            //    学生"先传材料、后点开始答辩"时，材料就落在这一条，复用后材料与作答同场。
+            Integer emptyShellId = defenseRecordsMapper.getLatestEmptyShellDefenseId(internalUserId, topicId);
+            if (emptyShellId != null) {
+                return emptyShellId;
             }
+
+            // ② 已开始答题、尚未收尾且仍在续答窗口内的场次：材料属于这一场。
+            //    不能直接取「最新 pending」——历史弃答场次也是 pending，
+            //    该生某课题下有 20 条两个月前的弃答记录，最新 pending 正是其中一条。
+            Integer pendingId = defenseRecordsMapper.getLatestPendingDefenseIdByUserAndTopic(internalUserId, topicId);
+            if (pendingId != null && isRecentlyAnswered(pendingId)) {
+                log.info("附件归属正在进行的答辩场次 - defenseId: {}, topicId: {}", pendingId, topicId);
+                return pendingId;
+            }
+
+            // ③ 没有可挂的场次：为「下一场答辩」新建一条。
+            if (!createIfMissing) {
+                return null;
+            }
+            // 必须显式 INSERT：getOrCreateDefenseRecord 内部是「取最新 pending，有就返回」，
+            // 会把历史弃答场次当成"新建"结果返回。
+            defenseRecordsMapper.createDefenseRecord(internalUserId, topicId);
+            Integer created = defenseRecordsMapper.getLatestPendingDefenseIdByUserAndTopic(internalUserId, topicId);
+            log.info("已为附件新建待答辩场次 - defenseId: {}, topicId: {}, userId: {}",
+                    created, topicId, internalUserId);
+            return created;
         } catch (Exception e) {
             log.error("查询最新答辩记录失败 - userNumber: {}, topicId: {}", userNumber, topicId, e);
+            return null;
         }
-        return createIfMissing ? getOrCreateDefenseRecord(topicId, userNumber) : null;
+    }
+
+    /**
+     * 【2026-10-25】该场次是否「最近还在答题」：最后一次评分时间在续答窗口内。
+     *
+     * <p>用于把附件归档到一场正在进行（已答过几题、尚未收尾）的答辩上。
+     * 超过窗口的 pending 属于历史弃答数据，不该再接收新材料。</p>
+     */
+    private boolean isRecentlyAnswered(Integer defenseId) {
+        try {
+            LocalDateTime last = scoreRecordMapper.getLastScoreTime(defenseId);
+            if (last == null) {
+                return false;
+            }
+            long minutesAgo = java.time.Duration.between(last, LocalDateTime.now()).toMinutes();
+            return minutesAgo <= appProperties.getDefense().getResumeWindowMinutes();
+        } catch (Exception e) {
+            log.warn("判定场次是否为进行中失败（按否处理）- defenseId: {}, 原因: {}", defenseId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 【2026-10-25】文档答辩：每次上传都新建一条独立场次，不复用旧记录。
+     *
+     * <p>为什么必须新建：复用会让"传三次只有一条记录"，而且新报告写进上一场
+     * （甚至是两个月前的老场次），教师看到的时间、题目、分数全对不上。
+     * 用户口径已确认：一次上传 = 一次答辩，历史各自保留。</p>
+     */
+    @Override
+    public Integer createDefenseRecordForReport(Integer topicId, String userNumber) {
+        if (topicId == null || userNumber == null || userNumber.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            String internalUserId = defenseRecordsMapper.getUserIdByUserNumber(userNumber.trim());
+            if (internalUserId == null) {
+                log.warn("新建文档答辩场次失败：未找到用户 {}", userNumber);
+                return null;
+            }
+            defenseRecordsMapper.createDefenseRecord(internalUserId, topicId);
+            // 无生成键回填（见 mapper 注释），靠回查拿刚插入的这条（defense_id 最大）
+            Integer created = defenseRecordsMapper.getLatestPendingDefenseIdByUserAndTopic(internalUserId, topicId);
+            log.info("文档答辩：新建独立场次 - defenseId: {}, topicId: {}, userId: {}",
+                    created, topicId, internalUserId);
+            return created;
+        } catch (Exception e) {
+            log.error("新建文档答辩场次失败 - userNumber: {}, topicId: {}", userNumber, topicId, e);
+            return null;
+        }
     }
 
     @Override
@@ -408,7 +486,30 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
                 log.info("请求续答，但当前不存在可续答场次（无记录 / 已答满 / 超出续答窗口），改用新答辩");
             }
 
-            // —— 全新答辩：清理一题未答的空壳 + 新建 ——
+            // —— 全新答辩：优先复用「已上传材料、一题未答」的场次 ——
+            // 【2026-10-25 · 事故修复】附件上传时会先定位/创建一条记录并把材料写上去
+            // （getOrCreateLatestDefenseRecord），若这里不复用而是新建，材料与作答就分家；
+            // 更严重的是旧实现会把这条带材料的记录当空壳整行删除
+            // （defenseId=358：pending + 0 作答 + 只有视频，2026-10-25 19:52 被 DELETE，
+            //  视频链接/转写/成绩单随 CASCADE 一起消失，磁盘视频随后被孤儿清理收走）。
+            // 复用分支必须早于 deleteEmptyShellRecords：虽然清理 SQL 已补附件条件，
+            // 但复用才能保证「材料与作答落在同一条记录上」。
+            Integer reusableId = defenseRecordsMapper.selectReusableMaterialDefenseId(internalUserId, topicId);
+            if (reusableId != null) {
+                vo.setDefenseId(reusableId);
+                vo.setResumed(false);
+                vo.setResumable(false);
+                vo.setAnsweredCount(0);
+                vo.setRoundNum(1);
+                log.info("开始新答辩：复用已上传材料的场次 - defenseId: {}, topicId: {}, userId: {}",
+                        reusableId, topicId, internalUserId);
+                auditLogService.logDefenseEvent(reusableId, parseIdSafely(internalUserId), topicId,
+                        com.ai_helper.ai_helper.Service.AuditLogService.EVENT_START, 0,
+                        "开始新答辩，复用已上传材料的场次");
+                return vo;
+            }
+
+            // —— 清理一题未答的纯空壳 + 新建 ——
             int removed = defenseRecordsMapper.deleteEmptyShellRecords(internalUserId, topicId);
             defenseRecordsMapper.createDefenseRecord(internalUserId, topicId);
             vo.setDefenseId(defenseRecordsMapper.getDefenseIdByUserAndTopic(internalUserId, topicId));

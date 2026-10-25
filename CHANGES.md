@@ -12,6 +12,239 @@
 
 ---
 
+## 2026-10-25
+
+> 背景：当天上午由外部 harness 做的一版改动**整体回退**（存于 `stash@{0}`，补丁 `f:\杂七杂八\deepseek-20261025.diff`），
+> 本节是回退后按用户口径重新实现的部分。回退原因：① 报告上传后记录被清理未根治；
+> ② 列表着色判据改动让报告场次与语音/文字答辩混在一起；③ 复核顺序被做成"切题先上云"，与"本地先评、低分再复核"相反。
+
+### 一、事故修复：开始新答辩误删「已上传材料」的场次（P0）
+
+- **现象**：`defenseId=358`（学生 23 / 课题 37，pending、0 作答、只有视频）在 2026-10-25 19:52:05
+  随新建 `365` 被整行 `DELETE`。`defense_answers` / `defense_score_record` / `defense_student_questions`
+  均为 `ON DELETE CASCADE`，一删之下视频链接、转写、成绩单同时消失，磁盘视频随后被孤儿清理收走。
+  记录行已从 binlog 恢复，但 `video_url` 为空（255MB 视频不可恢复）。
+- **根因**：`deleteEmptyShellRecords` 只判 `pending + 无作答 + 无追问 + 无评分`，
+  「已传材料、还没开始答题」的场次完全符合空壳定义。
+- **修复**（`DefenseRecordsMapper.xml`）：
+  1. 空壳判定补三条防线：无 `video_url`/`report_url`、无转写与分析产物（`video_words`/`video_analysis`/
+     `report_text`/`report_doc_analysis`/`report_doc_summary`/`report_doc_score`）。
+     第二条针对 358 这类"链接丢了但转写还在"的场次，避免二次误删。
+  2. 新增 `selectReusableMaterialDefenseId`：开始答辩时**优先复用**「已传材料、一题未答」的场次，
+     材料与作答才会落在同一条记录上（不复用会分家成两条）。
+  3. 复用分支必须早于清理 SQL，否则仍会先删后建。
+
+### 二、附件归属与读写一致性
+
+- `getOrCreateLatestDefenseRecord` 由「最新一条（不分状态）」改为三档：
+  ① 待答辩空壳 → ② 续答窗口内仍在进行的 pending → ③ 新建。
+  旧实现会把答辩后上传的报告挂到上一场已结束的记录上，教师点开当前场次看不到材料。
+- 新增 `getLatestVideoUrlByUserAndTopic` / `getLatestReportUrlByUserAndTopic`：
+  旧 `LIMIT 1` 无排序，多记录时取到哪行取决于执行计划，前端出现"传了却显示未上传"的跳变。
+- 新增 `selectLatestMaterialDefenseId`：删除附件与读取指向同一行，避免"列表有报告、点删除清了另一场"。
+- 换视频时读取旧地址改用确定性方法，避免误删其他场次的视频文件。
+
+### 三、列表按答辩类型着色
+
+- 教师端：着色判据由 `analysis_source === 'report'` 改为 `report_doc_score !== null`。
+  `analysis_source` 是报告/视频共用单列，视频评分跑完会把 `'report'` 覆盖成 `'video'`，teal 会无故消失。
+- 学生端：新增 `hasReport` 字段与「报告评析 / 报告已上传」标签、teal 底色（此前只有视频红标，
+  报告场次与普通语音/文字答辩外观完全相同）。
+- 后端两条列表 SQL 均返回 `hasReport`（`DefenseRecordsVo.hasReport`）。
+- 优先级：`doc-analyzed`（teal）> `report-uploaded`（浅 teal）> `has-video`（红）；多条链路并存时绿色为主，红色只保留在标签上。
+- 「已上传但未评析」也铺浅 teal 底色（教师端 `#f1f9f8` / 学生端同色），否则只有一个小标签，
+  扫列表时仍与普通语音/文字答辩分不开。
+- 学生端 `.record-item` 补基础白卡底 + 圆角（此前是纯透明底 + 分隔线，去掉分隔线整片就是空白，
+  着色也没有承载面）。
+
+### 四、低分/跑题云端复核（N83 接入）
+
+- **顺序按用户口径**：本地 `qwen2.5:3b-16k` 先按原两段式完整评一次（点评 → 只依据点评打分 → 服务端守护），
+  **只有总分 < 5 或判跑题**时才调云端复核（阈值 `REVIEW_SCORE_THRESHOLD = 5.0`）。
+- 云端链：`glm-4.7` → `glm-4.5-air` → `deepseek`（`AiScoringService`，JDK HttpClient，OpenAI 兼容，
+  GLM 带 `thinking: disabled`）；**允许云端改动五维分数**（2026-10-25 用户拍板）。
+- 云端输出被压成两行（`切题:是/否` + `评分:a|b|c|d|e`），直接复用 `DocScoreParser`，不引入第二套解析。
+- **失败方向安全**：未配置 key / 调用失败 / 输出不可解析 / "切题却给全 0" 一律保留本地结论，评析不中断。
+- 成绩单末尾新增「评分引擎：本地 qwen2.5:3b-16k」或「评分引擎：云端 glm:glm-4.7」，
+  教师能看到这一分是谁给的；跑题文案由"按最低档计分"改为与行为一致的"归零（0 分）"。
+- 送云端的内容：课题名 + 材料节选（4000 字）+ 本地点评（1500 字），不含学生身份、不含文件本身。
+
+### 五、详情页评析入口（"本地模型评析没了"的真正原因）
+
+- **现象**：教师打开「答辩详情」，只看到「AI 报告分析：暂无报告分析」，没有任何评析按钮。
+- **根因不是模型被删**，而是入口位置：10-18 把评析入口迁进「回答详情」，
+  而报告场次通常**一轮都没答**——教师点开的是空白的逐轮列表，找不到按钮；
+  同屏的「AI报告分析」读的还是旧列 `report_analysis`（新评析写 `report_doc_analysis`），
+  于是新旧两处都显示"暂无"。
+- **修复**（`DefenseRecordsMapper.xml` / `DefenseRecordsVo` / `teacher.js` / `teacher.wxml`）：
+  1. **列表 SQL 直接下发 `reportUrl`**：`openAnswerDetail` 一打开就用它渲染评析入口，
+     不再依赖第二次 `DetailRecords` 请求——那次请求慢或返回非 1 时旧代码是**静默 return**，
+     整个弹层就是空白（用户看到的正是这个）；
+  2. 详情请求失败/异常时保留列表兜底地址，并在控制台留 `[回答详情]` 警告，不再无声失败；
+  3. **五维评分统一放在「回答详情」**（用户 2026-10-25 指定）：标题「报告 AI 五维评分（本地模型）」，
+     含总分/等级/五维卡片与触发按钮；「答辩详情/查看反馈」里不再重复五维，只保留报告综合评价；
+  4. 旧列「AI报告分析」仅在新列没有结果时兜底显示，标题标注"历史字段"；
+  5. `getDetailRecords` 补 `dt.topic_name`（此前不返回课题名，页面永远显示"未设置题目"）。
+  6. **学生端视觉对齐教师端**：学生详情里的报告评析由"一大段裸文本"改为同款卡片
+     （总分 / 等级 / 五维逐项 / ⚠️ 警告），解析器仍是 `utils/gradeSheet.js`；
+  7. **「评分引擎」行此前被解析器丢弃**：`gradeSheet.parse` 新增 `engine` 字段，
+     教师端「回答详情」与学生端成绩单都会显示「评分引擎：本地 3B / 云端 glm-4.7」——
+     这是"低分是否真的调了云端复核"的唯一可见证据。
+  8. **材料挂到旧视频场次**：`358`（`video_url` 已清、但 `video_analysis` 仍留着 7/50）
+     被空壳判定命中，学生上传简历后挂到了这条上，详情里同时出现「旧视频评分」与「新报告」，
+     看起来像两条链路串了。修复：空壳/复用判定再排除"已有分析产物"的场次
+     （`video_analysis`/`video_words`/`report_doc_*` 任一非空即不算空壳）；
+     两端视频成绩单与「AI视频分析」文本都要求 `video_url` 存在才渲染。
+- 本地 3B 仍是主评分：`callComments` → `callScores` → 服务端守护，链路与 10-16 一致；
+  10-20 只是把同一套 prompt 抽到 `MaterialScorePrompts` 供视频链路共用，**没有改成云端**。
+
+### 六、验证
+
+- `mvn -o clean compile` 通过；`mvn -o test` **95/95**（含新增 `AiScoringServiceTest` 10 条与 Spring 上下文加载）。
+- 新增 SQL 已在 MySQL 9.6 实库手工执行验证（`ORDER BY (status='pending') DESC` 等）。
+- **待办**：重启后端后在真机走一遍「上传 docx → 教师端点评析 → 列表 teal」与「低分触发云端复核」。
+
+### 七、本次未做（明确挂账）
+
+- 换/删材料后旧评析结果**不清空**（`report_doc_analysis` 等沿用），与 harness 版行为不同；
+  是否清空需产品决定（清空会让教师误以为"评析功能没了"）。
+- 报告白名单仍保持现状；孤儿文件清理策略未改。
+- 视频链路的 ASR/评分逻辑未改动。
+
+### 八、学生端列表：0 分被当成「没有分数」
+
+- **现象**：跑题归零或文档评析 0 分的场次，学生端列表仍显示「未完成」，详情页显示「暂无评分」。
+- **根因**：两层都用真值/上下界判断代替"有没有分数"——
+  `student.wxml` 用 `item.status === 'completed'`（已完成但 0 分、或记录状态不同步时不显示分），
+  详情页用 `selectedRecord.score > 0`，`student.js` 里 `record.score ? ... : 0` 也把 `0` 当缺失。
+- **改法**：数据层显式产出 `hasScore`（非 `null`/`undefined`/`''`/`'null'` 即视为有分数，且 `score` 保留 0），
+  模板改按 `hasScore` 判断；`status === 'completed'` 但确实无分数的显示「已完成」，不再谎报「未完成」；
+  列表 `feedback` 文案同步，0 分不再落到「暂无评分」。
+- **验证**：`node --check pages/student/student.js` 通过；改动仅静态前端，未动后端。
+
+### 九、报告评析四个实测问题（2026-10-25 用户反馈）
+
+用户一次提了四条，全部落在「文档报告」链路上：
+
+1. **学生端「查看详情 → 查看回答详情」看不到答辩评析**（五维卡片有，评析正文没有）。
+   - 根因①：学生端只映射了 `reportDocAnalysis`，**没有映射 `report_doc_summary`**（后端第三次调用写的
+     400~700 字整体评价），五维下面自然是空的。
+   - 根因②：「回答详情」弹层只渲染逐轮成绩（`defense_score_record`），报告场次一条作答都没有 → 整层空白。
+   - 修：详情映射补 `reportDocText`；「查看详情」五维卡片下渲染「报告综合评价」；
+     「回答详情」在无逐轮成绩时显示报告成绩单 + 综合评价（数据来自已加载的详情，不再请求接口）。
+2. **列表还显示「未完成」，文档报告没出分**。
+   - 根因：学生端列表 `hasScore` 只认 `score`（逐轮总分）。报告场次 `score` 为空、分数在 `report_doc_score`，
+     于是永远落到「未完成」；教师端早就有 `displayScore` 兜底，学生端没有。
+   - 修：列表映射取 `reportDocScore` 兜底主分数（`scoreFromDoc` 标记来源），`hasScore` 与 `feedback` 同步。
+   - 顺带：`completeReportDefense` 只在评析成功时写 `score`，历史场次不会补 → 本次前端兜底对存量数据同样生效。
+3. **个人简历明显跑题却拿 36/50「优秀」**。
+   - 根因：切题完全依赖 3B 输出的 `切题:是/否`。简历里有 Java/Python，模型只看技术名词就判切题；
+     36 分既不 <5、也不判跑题，**自动云端复核根本不会触发**。
+   - 修（服务端硬闸门 `DocScoreParser.looksLikeResume`）：扫描材料前 1500 字，强特征
+     （个人简历/求职意向/应聘岗位/期望薪资…）≥2、或强≥1+弱≥2、或弱≥4 → 判非答辩材料，
+     五维直接归零；**且不接受云端"改判切题"**（体裁不符与分数高低无关）。
+     单测 4 条（含"标准章节结构的报告不得被误判"）。
+4. **看不到「复审」按钮**。
+   - 新增 `POST /teacher/defense/reportDoc/review/{defenseId}`（`ReportDocAnalysisService.review`）：
+     复用已落库的 `report_text`，**强制走云端**做「点评 → 评分 → 综合评价」，覆盖五维/分数/总评并刷新 Redis 状态；
+     云端不可用或输出不可解析 → 抛明确文案且**不写库**（原成绩单不变）。
+   - 教师端「回答详情」与「答辩详情」各放一个「云端复审」按钮（用户是在答辩详情里找的），
+     与「重新生成评析」互斥；复审返回 `summary` 一并回写，避免旧总评与新分数并存。
+
+**验证**：`mvn -o test` **99/99**（新增 4 条简历识别用例）；`node --check` 两端通过；
+XML 改动已由 Spring 上下文测试覆盖。**待重启后端 + 真机**：简历场次复审应归零、报告场次列表直接显示分数。
+
+### 十、关联性预检（课题 ↔ 材料，独立于五维评分）
+
+> ⚠️ **本节方案当天即被推翻**：它的判定口径（只比"主题是否相关"）与配套的
+> `DocScoreParser.looksLikeResume` 简历词表都是"针对一种文件的特殊对待"，
+> 换成合同/说明书/小说就漏。最终实现见「十一、通用材料裁定」，本节仅作历史记录。
+
+用户口径（2026-10-25）：「先让本地大模型看一下课题及其内容，如果和课题不相关就直接给定需要复审、
+打上疑似标签——不应该像文字答辩那样反复攥写提示词，而是先调用课题名，然后阅读文件与其对比。」
+
+- **为什么不能靠五维点评里的「切题:是/否」**：那一行和五条点评挤在同一次调用里，3B 会先看技术名词
+  （简历里的 Java/Python）就判「切题:是」，随后 36 分既不 <5 也不判跑题，自动云端复核根本不会触发。
+- **新增一步（`runAnalysis` 中紧随全文落库之后）**：
+  1. `callRelevance` —— 独立 prompt（`MaterialScorePrompts.RELEVANCE_SYSTEM`），输入只有
+     **课题名 + 材料前 6000 字（保头保尾）**，输出只有两行：`相关:是/否` + `理由:…`；
+     显式写明「**技术名词不能作为相关依据**」，并给一个"简历 vs 仓储系统"的示例。
+  2. `DocScoreParser.parseRelevance` → `TRUE` / `FALSE` / `null`。
+     **`null`（没给出可识别结论）一律按「相关」继续正常评分**——预检没跑成不能把合格报告压成 0 分。
+  3. 判 `FALSE` → `finishAsSuspectTopic`：**不再跑五维**，直接出 0 分成绩单并跳过点评/评分两次调用；
+     成绩单首行写 `⚠️ 【疑似跑题】…`，列出理由与"请点云端复审"的说明，五维各为
+     `⚠️ 表达（0分）：未评分——关联性预检判定材料与课题不是同一主题`；综合评价也写清"未进入五维评分"。
+  4. 落库：`report_doc_score=0` + `completeReportDefense` → 列表直接显示 0 分，状态 completed。
+- **「疑似」标签怎么落到列表**：不新增数据库列。成绩单首行的 `【疑似跑题】`（常量
+  `DocScoreParser.SUSPECT_TOPIC_MARK`）就是判据——两端列表 SQL 加
+  `CASE WHEN dr.report_doc_analysis LIKE '%【疑似跑题】%' THEN 1 ELSE 0 END AS relevanceSuspect`，
+  VO 暴露 `relevanceSuspect`，教师端列表打「疑似跑题·待复审」、学生端打「疑似跑题」（琥珀色 `g-tag-warn`）。
+  **改这个常量必须同步 mapper 的 LIKE 与两端前端。**
+- **与原有闸门的关系**：三条并存 —— ① 关联性预检（前置，命中即归零）；② 五维点评里的
+  `切题:否`（第二道，仍会触发自动云端复核）；③ `looksLikeResume` 体裁闸门（简历类，
+  逐字扫描，且不接受云端改判切题）。
+
+**验证**：`mvn -o test` **103/103**（新增 `parseRelevance` 4 条）；`node --check` 两端通过；
+XML 由 Spring 上下文测试覆盖。**待重启后端 + 真机**：上传简历跑评析应停在预检、直接 0 分 + 列表「疑似跑题·待复审」。
+
+### 十一、通用材料裁定（推翻第十节的词表做法）
+
+用户批评（2026-10-25）：「这是复用性代码，而不是写死的特殊对待，肯定会有其他杂七杂八的文件
+而不是我们的答辩文件。」第十节的 `looksLikeResume` 是一串只为简历写的词表，
+换成合同、说明书、小说、课程作业、实验报告就漏——**材料类型是开放集合，词表不可能穷举**。
+
+- **改成一次结构化模型裁定，只认语义分类**（`MaterialVerdictService` + `MaterialVerdict`）：
+  ```
+  类型:个人简历
+  资格:非答辩材料
+  理由:讲的是求职者本人及技术栈，不是仓储系统
+  ```
+  `资格` 四选一 → `OK` / `OFF_TOPIC` / `NON_MATERIAL` / `INSUFFICIENT`；解析不出 → `UNKNOWN`（**必须放行**）。
+  代码里**没有任何文件名、行业词、格式判断**，换任何文件都走同一套。
+- **主题相关即放行**（用户口径）：体裁不标准（PPT 大纲、口述稿、结构零散）不影响资格，
+  那是"质量差"交给五维；prompt 里明确写了这条，也写了"技术名词不能作为通过依据"
+  （简历里也有 Java/Python）和"拿不准选通过"。
+- **复用性**：`MaterialVerdictService` 不依赖报告链路，视频转写/未来任何"学生提交的东西"
+  都能先过这一道；页面侧文案也抽成 `utils/materialVerdict.js`，两端共用一份映射。
+- **命中动作改为"不出分"**（用户拍板）：0 分是"评过但很差"，传错文件是"根本没评"。
+  所以 `finishAsRejected` 不写 `report_doc_score`、不调用 `completeReportDefense`，
+  只在 `report_doc_analysis` 写裁定说明（**刻意不含「总分/等级」行**，避免前端解析成 0 分成绩单）。
+- **落库改为列**：新增 `material_verdict` / `material_verdict_type` / `material_verdict_reason`
+  三列（DDL `docs/ddl_material_verdict.sql`，`schema.sql` 已同步）。列表 SQL 直接读列，
+  删掉上一版 `LIKE '%【疑似跑题】%'` 的文本判据与 `SUSPECT_TOPIC_MARK` 常量。
+- **标签**：教师端「疑似跑题·待复审 / 非答辩材料·待复审 / 内容不足·待复审」，学生端短文案；
+  详情页有 `doc-verdict` 说明块（材料类型 + 理由 + 未评原因）。
+- **复审联动**：教师点「云端复审」→ 后端评完把 `material_verdict` 改回 `ok`（人工认可材料），
+  标签随之消失；`status()` 在缓存命中时补一次主键查询把裁定带回前端。
+- **前端坑修正**：`Number("") === 0`，不出分时后端回 `score: ""` 会被渲染成"0 分"——
+  新增 `toScoreOrNull`，空串/null/'null' 一律 `null`。
+- **删除**：`DocScoreParser.looksLikeResume`、`parseRelevance`、`extractRelevanceReason`、
+  `SUSPECT_TOPIC_MARK`、`MaterialScorePrompts.RELEVANCE_SYSTEM`（对应 8 条旧测试一并删除）。
+
+**验证**：`mvn -o test` **101/101**（新增 `MaterialVerdictTest` 6 条：四类资格 + UNKNOWN 放行 + 容错解析）；
+`node --check` 三个前端文件通过；XML 由 Spring 上下文测试覆盖。
+**上线前需执行** `mysql -uroot -p ai_helper < docs/ddl_material_verdict.sql`，然后重启后端 + 重编小程序。
+
+**2026-10-25 当晚踩坑与加固**：漏执行 DDL 时，两端列表接口全部 500，前端只显示「服务器处理失败」，
+日志里才看到 `Unknown column 'dr.material_verdict'`。已在本地执行 DDL 并验证三列存在；
+另加 `MaterialVerdictSchemaCheck`（`ApplicationRunner`，只读 `information_schema`）：
+启动时缺列直接打 ERROR 并附执行命令，不再让"缺列"表现成"整站报错"。
+
+### 十二、本轮收口与遗留 P0（2026-10-25）
+
+本轮到此暂告一段落（编译通过 + 101/101 单测 + `ddl_material_verdict.sql` 已执行）。
+用户口述的两件事已登记为 **P0**，并写进 `AGENTS.md` 顶部的「下次开工先提醒」块：
+
+1. **N87 · 学生端详情页信息分层 + 复审改动空间**
+   - `答辩记录页 → 答辩详情` **只显示五维评分**（总分 + 等级 + 五维分项）；
+   - **综合评价正文**（`report_doc_summary`）移到 `答辩记录页 → 答辩详情 → 查看回答详情`；
+   - 学生端「复审」交互仍有改动空间（当前只读、无入口），形态待确认。
+2. **N88 · 两端「文档答辩」整体测试与优化**
+   - 上传 → 材料裁定 → 五维评分 → 综合评价 → 云端复审 全链路；
+   - 边界：空材料 / 只有封面目录 / 裁定不合格 / 长报告 / docx 图片 OCR / 断网与未配 key / 幂等。
+
+---
+
 ## 2026-10-21
 
 ### 学生端列表排序：改按「最后活动时间」

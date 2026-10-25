@@ -16,7 +16,7 @@
 
 ---
 
-## 当前进度（2026-10-21，最新提交 `e0bf405`）
+## 当前进度（2026-10-25，最新提交 `bddd1fc`；工作区有未提交改动：记录误删修复 + 低分云端复核）
 
 ### 已完成 ✅
 
@@ -60,6 +60,7 @@
 | 报告图片 OCR + 报告模板 + 只收 docx（2026-10-20） | ✅ 81/81 单测通过（待真机） | **前提**：3B 是纯文本模型（无视觉），图片只能 OCR 成文字才能参与评判。**实现**：① `DocTextExtractor.extractWithImages` 单遍 zip 取 `word/media/*`，按 `<a:blip r:embed>` 正文顺序原位插占位（私有区字符 `\uE000IMG:rIdN\uE001`，避开 `trim()` 截断）；② `DocImageOcr`：位图（png/jpg/gif/bmp/tiff）→ 白底+放大+灰度 → PNG → `tesseract chi_sim+eng`；矢量（emf/wmf/svg）跳过并占位；③ `OcrServiceImpl` **优先 Windows 自带 OCR**（零下载，`scripts/windows-ocr.ps1` 桥接 WinRT），tesseract 仅兜底（官方源实测 403）；④ 图片文字原位回填 `【图N】`，成绩单加「共 N 张 / 识别 M 张」；⑤ `ReportTemplateBuilder` 动态生成 docx（**学校封面含校徽/校名图片 + 报告成绩框 + 信息栏** → 评分标准与写作要点 → 填写须知 8 条 → 六章骨架 → 自检清单），`GET /api/report/template`，学生端按钮下方「下载报告模板」；**小程序无系统另存为 API**，另提供浏览器页 `/template-download.html`（点击表格行弹系统保存对话框）；⑥ **上传白名单只留 docx**（解析代码保留，历史 pptx/xlsx/txt 仍可评析）；⑦ **组件自检**：启动 3 秒后日志打印 whisper/OCR「已安装 / 安装中 / 未安装 + 位置 + 进度」，并提供 `GET /api/system/components`（已加登录保护）。**限制**：tesseract 兜底需联网、现网官方源 403；公式/图表趋势不参与。见 `CHANGES.md` 2026-10-20 |
 
 | **ASR 输入可信改造（2026-10-20）** | 🔧 编译 + 85/85 单测通过（待实测） | 视频转写不再直接整段喂 whisper：① **VAD** 剔除静音/鼠标声（模型约 865KB，自动下载）；② 抽音轨加 `highpass + dynaudnorm`（内置 ffmpeg **没有 loudnorm**；滤镜不支持时自动退回无滤镜）；③ **有效语音闸门**（<8s 或 <5% 判「素材不足」，不再硬出分）；④ `-ojf` 保留分段/时间戳/token 置信度；⑤ **修复 `app.voice.model` 档位不生效**（此前下载 medium 仍用 small）；⑥ 外置纠错词表 `asr-corrections.txt`（14 条高置信度同音词，`AsrTextCorrector` 长词优先）。`358` 实测：平均音量 -31.1dB、静音 78.6s/128s、有效语音 42.6s；small 基线 22.0s（RTF 0.17）/置信度 0.843，`large-v3-turbo-q5_0` 43.2s/置信度 0.876。**已定：视频转写用 turbo-q5（`app.video-analysis.asr-model`），60 秒语音仍用 small**。见 `CHANGES.md` 2026-10-20 |
+| **记录误删修复 + 低分云端复核（2026-10-25）** | ✅ 编译 + 95/95 单测（**需重启后端**，待真机） | **事故**：`358`（pending + 0 作答 + 只有视频）在 10-25 19:52 随新建场次被 `deleteEmptyShellRecords` 整行删除，`CASCADE` 带走作答/评分，255MB 视频不可恢复（记录行已从 binlog 恢复，`video_url` 为空）。**修复**：① 空壳判定补「无附件 + 无转写/分析产物」双防线（后者防 358 二次误删）；② 开始答辩**复用**「已传材料、一题未答」场次，材料与作答同场；③ 附件归属改三档（空壳 → 续答窗口内 pending → 新建），读写/删除加确定性排序，避免挂到已结束场次与误删别场文件。**列表着色**：教师端判据改 `report_doc_score`（`analysis_source` 会被视频评分覆盖成 `video`，teal 会消失）；学生端新增「报告评析 / 报告已上传」标签 + teal 底色（此前与语音/文字答辩同款）。**复核**：本地 3B 先完整评一次，**总分 <5 或判跑题**才调 GLM（4.7 → 4.5-air → DeepSeek），**允许云端改五维**，失败保留本地结论，成绩单末尾标「评分引擎」。同日 harness 版已整体 `stash` 回退。**同日晚续**：教师端「答辩详情」新增报告五维评析入口（此前只在「回答详情」里，而报告场次 0 轮作答 → 打开是空白，教师找不到按钮）、旧列「AI报告分析」仅在新列无结果时兜底、详情补 `topic_name`（不再显示“未设置题目”）；列表新增「已上传未评析」浅 teal 档 + 学生端基础白卡底。见 `CHANGES.md` 2026-10-25 |
 
 ### 待开发 🔧
 

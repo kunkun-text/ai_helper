@@ -62,6 +62,19 @@ public interface DefenseRecordsService {
     Integer getOrCreateLatestDefenseRecord(Integer topicId, String userNumber, boolean createIfMissing);
 
     /**
+     * 【2026-10-25】文档答辩专用：**每次都新建一条独立场次**，不复用旧记录。
+     *
+     * <p>用户口径：上传一份文档 = 一次完整答辩。传三次就该有三次记录、三个分数，
+     * 而不是反复覆盖同一条（此前复用逻辑会把新报告写进 10-18 创建的老场次）。</p>
+     *
+     * <p>与视频不同——视频要和逐轮作答落在同一场次，仍走
+     * {@link #getOrCreateLatestDefenseRecord}。</p>
+     *
+     * @return 新建的场次 ID；用户不存在等异常情况返回 null
+     */
+    Integer createDefenseRecordForReport(Integer topicId, String userNumber);
+
+    /**
      * 开始或继续一场答辩（2026-09-28 N1）。
      *
      * <p><b>默认一定是从第 1 题开始</b>：只有调用方显式传 {@code resume = true}

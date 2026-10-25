@@ -249,7 +249,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String publicUrl = fileStorageService.toPublicUrl(relativePath);
 
         // 替换前先记住旧文件，合并成功后再删除，避免「删了旧的、新的又没写进去」
-        String oldUrl = defenseRecordsMapper.getVideoUrlByUserIdAndTopicId(internalUserId, topicId.longValue());
+        // 【2026-10-25】旧地址改用确定性读取（优先进行中场次）。旧实现 LIMIT 1 无排序，
+        // 多记录时可能取到别的场次的 URL，导致"换视频"把另一场的视频文件删掉。
+        String oldUrl = defenseRecordsMapper.getLatestVideoUrlByUserAndTopic(internalUserId, topicId);
 
         defenseRecordsMapper.updateVideoUrlById(defenseId.longValue(), publicUrl);
 

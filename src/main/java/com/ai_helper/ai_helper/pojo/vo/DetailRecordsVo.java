@@ -39,6 +39,17 @@ public class DetailRecordsVo {
 
     private Double reportDocScore;
 
+    // ---------- 【2026-10-25】通用材料裁定 ----------
+
+    /** ok / suspect_offtopic / suspect_nonmaterial / insufficient；null=未裁定 */
+    private String materialVerdict;
+
+    /** 模型判定的材料类型（答辩报告 / 个人简历 / 合同 …） */
+    private String materialVerdictType;
+
+    /** 裁定理由（约 40 字） */
+    private String materialVerdictReason;
+
     /** 评析来源：report=基于上传报告；为空=未生成 */
     private String analysisSource;
 

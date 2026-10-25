@@ -30,8 +30,17 @@ function parse(text) {
   const warnings = [];
   let total = '';
   let grade = '';
+  // 【2026-10-25】评分引擎：本地 3B / 本地 3B + 云端复核。
+  // 这一行是"低分是否真的调了 GLM 复核"的唯一可见证据，必须单独拎出来展示，
+  // 否则解析成功后只渲染总分+五维，引擎行会被丢掉（用户会以为云端复核没实现）。
+  let engine = '';
   if (!raw) {
-    return { summary: null, dims: dims, raw: raw };
+    return { summary: null, dims: dims, raw: raw, engine: engine };
+  }
+
+  const engineMatch = raw.match(/评分引擎\s*[:：]\s*([^\r\n]+)/);
+  if (engineMatch) {
+    engine = engineMatch[1].trim();
   }
 
   // 总分与等级同一行：`总分：36/50　等级：优秀`
@@ -66,7 +75,8 @@ function parse(text) {
   return {
     summary: (total || grade) ? { total: total, grade: grade, warnings: warnings } : null,
     dims: dims,
-    raw: raw
+    raw: raw,
+    engine: engine
   };
 }
 

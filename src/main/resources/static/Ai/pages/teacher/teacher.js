@@ -5,6 +5,23 @@ const auth = require('../../utils/auth.js');
 const radar = require('../../utils/radar.js');
 const scoreCard = require('../../utils/scoreCard.js');
 const gradeSheet = require('../../utils/gradeSheet.js');
+// 【2026-10-25】材料裁定枚举 → 文案（两端共用）
+const verdictText = require('../../utils/materialVerdict.js');
+
+/**
+ * 【2026-10-25】后端分数 → number | null。
+ *
+ * <p><b>为什么不能直接 Number(v)</b>：材料裁定不合格时后端回 {@code score: ""}
+ * （不出分），而 {@code Number("")} 等于 **0**，会被渲染成"0 分"——
+ * 把"没评"变成"评了 0 分"，正是这次要消除的语义错误。</p>
+ */
+function toScoreOrNull(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (s === '' || s === 'null') return null;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+}
 
 /**
  * 【C2 · 2026-10-05】统一处理 401/403：token 过期 / 角色不符时，
@@ -90,6 +107,14 @@ Page({
     answerDocDims: [], // 解析后的五维小卡片：[{ name, score, comment, missing }]
     answerDocSummary: null, // 解析后的总分/等级/警告：{ total, grade, warnings }
     answerDocRaw: '', // 解析失败时的原文兜底（保证内容不丢）
+    // 【2026-10-25】成绩单里的「评分引擎」行（本地 3B / 云端 glm-4.7）。
+    // 这是"低分是否真的调了云端复核"的唯一可见证据，必须单独展示。
+    answerDocEngine: '',
+    // 【2026-10-25】「答辩详情」弹层里的报告评析状态（与「回答详情」分开，
+    // 避免两个弹层互相覆盖同一组 answerDoc*）。
+    detailDocDims: [],
+    detailDocSummary: null,
+    detailDocRaw: '',
     docAnalyzing: false, // 分析进行中（按钮禁用 + 显示进度条）
     docStage: '', // 当前阶段文案（由后端 stage 下发）
     docPercent: 0, // 进度百分比（按阶段估算，不假装精确）
@@ -154,8 +179,14 @@ Page({
       ? Number(record.reportDocScore) : null;
     const docScore = (rawDoc !== null && !isNaN(rawDoc)) ? rawDoc : null;
     const analysisSource = record.analysisSource || '';
-    const hasReport = analysisSource === 'report' && docScore !== null;
-    const primaryIsReport = hasReport && !(scoreValue > 0);
+    // 【2026-10-25】着色判据改用「有没有报告分」，不再依赖 analysis_source：
+    // 该列是报告/视频共用单列，视频评分跑完会把 'report' 覆盖成 'video'，
+    // 报告评析的 teal 标签就无故消失（实测 defenseId=366）。
+    // report_doc_score 才是「这份报告评析过」的强事实。
+    const docAnalyzed = docScore !== null;
+    // 已上传报告（未评析也算）：列表用它打「报告已上传」标签，让文档答辩与语音/文字答辩能区分。
+    const reportUploaded = !!record.hasReport;
+    const primaryIsReport = docAnalyzed && !(scoreValue > 0);
 
     const defenseTime = record.defenseTime || '暂无时间';
     const date = record.defenseTime ? String(record.defenseTime).split(' ')[0] : '暂无日期';
@@ -171,15 +202,29 @@ Page({
       // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表打红标用。
       // 后端给的是 1/0（CASE WHEN），这里统一转布尔，避免 wxml 里出现 0 被当成"有值"。
       hasVideo: !!record.hasVideo,
+      // 【2026-10-25】通用材料裁定：后端直接给 verdict 枚举，前端只做文案映射，
+      // 不再解析成绩单文本、也没有任何"某类文件"的硬编码判断。
+      materialVerdict: record.materialVerdict || '',
+      materialVerdictType: record.materialVerdictType || '',
+      materialVerdictReason: record.materialVerdictReason || '',
+      verdictLabel: verdictText.label(record.materialVerdict),
+      // 【2026-10-25】列表区分「文档答辩」：已上传（reportUploaded）与已评析（docAnalyzed）分开。
+      reportUploaded: reportUploaded,
+      // 【2026-10-25】报告地址随列表下发：「查看回答详情」可直接用它渲染评析入口，
+      // 不再依赖第二次详情请求（那次慢/失败就是一片空白）。
+      reportUrl: record.reportUrl || '',
+      docAnalyzed: docAnalyzed,
       // 列表主分数与标签
       displayScore: primaryIsReport ? docScore : scoreValue,
       scoreKind: primaryIsReport ? 'report' : 'defense',
-      docTagText: hasReport ? (primaryIsReport ? '基于报告' : ('报告评析 ' + docScore + '分')) : '',
+      docTagText: docAnalyzed
+        ? (primaryIsReport ? '基于报告' : ('报告评析 ' + docScore + '分'))
+        : (reportUploaded ? '报告已上传' : ''),
       date: date,
       defenseTime: defenseTime,
       feedback: scoreValue > 0
         ? `本次答辩得分：${scoreValue}分。`
-        : (hasReport ? `报告评析得分：${docScore}分。` : '暂无评分数据')
+        : (docAnalyzed ? `报告评析得分：${docScore}分。` : (reportUploaded ? '报告已上传，尚未评析。' : '暂无评分数据'))
     };
   },
 
@@ -1069,9 +1114,18 @@ loadMoreTopics() {
       topicName: detailData.topicName,
       topic: detailData.topicName
     };
+    // 【2026-10-25】详情里直接渲染报告评析：报告场次常常 0 轮作答，
+    // 不能要求教师再进「回答详情」才能看到本地模型的评析结果。
+    const parsedDoc = this.parseReportDocAnalysis(feedbackDetail.reportDocAnalysis || '');
     this.setData({
       selectedRecord: feedbackDetail,
-      // 换了一场记录：视频评分状态必须整体复位，否则会显示上一场的成绩单
+      detailDocDims: parsedDoc.dims,
+      detailDocSummary: parsedDoc.summary,
+      detailDocRaw: parsedDoc.raw,
+      // 换了一场记录：视频评分/报告评析的运行状态必须整体复位
+      docAnalyzing: false,
+      docStage: '',
+      docPercent: 0,
       videoAnalyzing: false,
       videoStage: '',
       videoPercent: 0,
@@ -1514,6 +1568,42 @@ loadMoreTopics() {
     return gradeSheet.parse(text);
   },
 
+  /**
+   * 【2026-10-25】在「答辩详情」里直接触发报告评析。
+   *
+   * <p>此前入口只在「回答详情」里，而报告场次通常**一轮都没答**：教师打开详情看到
+   * 「AI 报告分析：暂无」，找不到任何可点的按钮，误以为本地模型评析功能没了。
+   * 这里把详情页已有字段拼成 answerDocInfo，复用同一套触发/轮询流程，
+   * 结果写回 detailDoc*（详情页）与 selectedRecord（同屏文本）。</p>
+   */
+  analyzeReportDocFromDetail() {
+    if (this.data.docAnalyzing) return;
+    const r = this.data.selectedRecord;
+    if (!r || !r.id) {
+      wx.showToast({ title: '未找到该场次的报告信息', icon: 'none' });
+      return;
+    }
+    const reportUrl = r.defenseReportUrl || '';
+    if (!reportUrl || reportUrl === 'abc') {
+      wx.showToast({ title: '该场次没有可评析的报告', icon: 'none' });
+      return;
+    }
+    this.setData({
+      answerDocInfo: {
+        id: String(r.id),
+        defenseReportUrl: reportUrl,
+        reportDocAnalysis: r.reportDocAnalysis || '',
+        reportDocScore: r.reportDocScore,
+        analysisSource: r.analysisSource,
+        // 【2026-10-25】材料裁定（列表项已带）：不合格材料不出分，详情要讲清"是什么、为什么"
+        materialVerdict: r.materialVerdict || '',
+        materialVerdictType: r.materialVerdictType || '',
+        materialVerdictReason: r.materialVerdictReason || '',
+        verdictLabel: verdictText.label(r.materialVerdict)
+      }
+    }, () => this.analyzeReportDoc());
+  },
+
   /** 触发评析。幂等：同一份内容未变的报告会直接返回上次结果，不会重复调模型。 */
   analyzeReportDoc() {
     if (this.data.docAnalyzing) return; // 防连点
@@ -1555,7 +1645,7 @@ loadMoreTopics() {
           const data = res.data.data || {};
           if (data.status === 'COMPLETED') {
             // 幂等命中：这份报告之前已评析过且文件没变
-            this.applyReportDocResult(record.id, data.analysis, data.score);
+            this.applyReportDocResult(record.id, data.analysis, data.score, null, data.materialVerdict);
             this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
             closeLoading();
             wx.showToast({ title: '已返回上次评析结果', icon: 'none' });
@@ -1577,6 +1667,74 @@ loadMoreTopics() {
       },
       complete: () => {
         closeLoading();
+      }
+    });
+  },
+
+  /**
+   * 【2026-10-25】云端复审：本地 3B 判不出「材料其实是个人简历」这类问题时的人工兜底。
+   *
+   * <p>与「重新生成评析」的区别：后者仍走本地 3B 主评（低分/跑题才会碰云端），
+   * 本合同步请求 {@code /reportDoc/review/{id}}，**强制走云端**（GLM-4.7 → 4.5-air → DeepSeek），
+   * 用云端结论覆盖五维、分数与综合评价。后端失败时不写库，原成绩单保持不变。</p>
+   *
+   * <p>耗时：2~3 次云端调用，通常 20~60 秒，所以用 loading 遮罩 + 独立超时（180s）。</p>
+   */
+  reviewReportDoc() {
+    if (this.data.docAnalyzing) return; // 与「重新生成评析」互斥，避免并发改同一行
+    // 「回答详情」用 answerDocInfo；「答辩详情」没有这个对象，回退到 selectedRecord
+    const record = (this.data.answerDocInfo && this.data.answerDocInfo.id)
+      ? this.data.answerDocInfo
+      : this.data.selectedRecord;
+    if (!record || !record.id) {
+      wx.showToast({ title: '未找到该场次的报告信息', icon: 'none' });
+      return;
+    }
+    const serverUrl = config.getBaseUrl();
+    const token = wx.getStorageSync('token');
+    this.setData({ docAnalyzing: true, docStage: '云端复审中（约 20~60 秒）…', docPercent: 50 });
+    wx.showLoading({ title: '云端复审中…', mask: true });
+    let loadingClosed = false;
+    const closeLoading = () => {
+      if (!loadingClosed) {
+        loadingClosed = true;
+        wx.hideLoading();
+      }
+    };
+    wx.request({
+      url: `${serverUrl}/teacher/defense/reportDoc/review/${record.id}`,
+      method: 'POST',
+      timeout: 180000,
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? 'Bearer ' + token : ''
+      },
+      success: (res) => {
+        if (handleUnauthorized(res)) {
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+          closeLoading();
+          return;
+        }
+        if (res.data && res.data.code === 1) {
+          const data = res.data.data || {};
+          this.applyReportDocResult(record.id, data.analysis, data.score, data.summary, data.materialVerdict);
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
+          closeLoading();
+          wx.showToast({ title: '云端复审完成', icon: 'success' });
+        } else {
+          this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+          closeLoading();
+          wx.showToast({
+            title: (res.data && res.data.msg) || '复审失败，原结果未改动',
+            icon: 'none',
+            duration: 3500
+          });
+        }
+      },
+      fail: () => {
+        this.setData({ docAnalyzing: false, docStage: '', docPercent: 0 });
+        closeLoading();
+        wx.showToast({ title: '复审请求超时或网络错误', icon: 'none', duration: 3500 });
       }
     });
   },
@@ -1617,7 +1775,7 @@ loadMoreTopics() {
         const data = res.data.data || {};
         if (data.status === 'COMPLETED') {
           this.stopReportDocPolling();
-          this.applyReportDocResult(defenseId, data.analysis, data.score);
+          this.applyReportDocResult(defenseId, data.analysis, data.score, null, data.materialVerdict);
           this.setData({ docAnalyzing: false, docStage: '', docPercent: 100 });
           wx.showToast({ title: '评析已生成', icon: 'success' });
         } else if (data.status === 'FAILED') {
@@ -1666,7 +1824,7 @@ loadMoreTopics() {
           this.startReportDocPolling(defenseId);
         } else if (data.status === 'COMPLETED' && data.analysis) {
           // 库里有结果但详情接口没带过来（理论上不会），补一次
-          this.applyReportDocResult(defenseId, data.analysis, data.score);
+          this.applyReportDocResult(defenseId, data.analysis, data.score, null, data.materialVerdict);
         }
       },
       fail: () => { /* 探测失败不影响详情展示 */ }
@@ -1697,28 +1855,60 @@ loadMoreTopics() {
   },
 
   /** 结果写回：回答详情用路径式 setData；列表做一次原地更新，让 teal 标签立刻出现 */
-  applyReportDocResult(defenseId, analysis, score) {
+  applyReportDocResult(defenseId, analysis, score, summaryText, verdictCode) {
     const updates = {};
+    const verdictLabel = verdictText.label(verdictCode);
     if (this.data.answerDocInfo && String(this.data.answerDocInfo.id) === String(defenseId) && analysis) {
       const parsed = this.parseReportDocAnalysis(analysis);
       updates['answerDocInfo.reportDocAnalysis'] = analysis;
-      updates['answerDocInfo.reportDocScore'] = score;
+      updates['answerDocInfo.reportDocScore'] = toScoreOrNull(score);
       updates['answerDocInfo.analysisSource'] = 'report';
+      // 【2026-10-25】裁定结果回写：不合格材料不出分，界面要立刻显示「是什么、为什么」
+      updates['answerDocInfo.materialVerdict'] = verdictCode || '';
+      updates['answerDocInfo.verdictLabel'] = verdictLabel;
       updates.answerDocDims = parsed.dims;
       updates.answerDocSummary = parsed.summary;
       updates.answerDocRaw = parsed.raw;
+      updates.answerDocEngine = parsed.engine || '';
+    }
+    // 【2026-10-25】「答辩详情」同步：从详情页触发时，结果要落回 selectedRecord 与 detailDoc*，
+    // 否则要关掉弹层再打开才看得到（用户会以为没跑）。
+    if (analysis && this.data.selectedRecord
+        && String(this.data.selectedRecord.id) === String(defenseId)) {
+      const parsedDetail = this.parseReportDocAnalysis(analysis);
+      const detailScore = toScoreOrNull(score);
+      updates['selectedRecord.reportDocAnalysis'] = analysis;
+      updates['selectedRecord.reportDocScore'] = detailScore;
+      updates['selectedRecord.analysisSource'] = 'report';
+      updates['selectedRecord.materialVerdict'] = verdictCode || '';
+      updates['selectedRecord.verdictLabel'] = verdictLabel;
+      // 【2026-10-25】云端复审会重建综合评价：不带回来就会继续显示旧总评（与新分数矛盾）
+      if (summaryText) {
+        updates['selectedRecord.reportDocSummary'] = summaryText;
+      }
+      updates.detailDocDims = parsedDetail.dims;
+      updates.detailDocSummary = parsedDetail.summary;
+      updates.detailDocRaw = parsedDetail.raw;
     }
     const patch = (list) => (list || []).map((it) => {
       if (String(it.id) !== String(defenseId)) return it;
-      const rawDoc = Number(score);
-      const docNum = isNaN(rawDoc) ? null : rawDoc;
+      const docNum = toScoreOrNull(score);
       const primaryIsReport = !(Number(it.score) > 0) && docNum !== null;
+      // 不出分时不能拼出「报告评析 null分」；裁定不合格的标签由 verdictLabel 承担
+      let docTagText = it.docTagText;
+      if (docNum !== null) {
+        docTagText = primaryIsReport ? '基于报告' : ('报告评析 ' + docNum + '分');
+      } else if (verdictCode) {
+        docTagText = '';
+      }
       return Object.assign({}, it, {
         analysisSource: 'report',
         reportDocScore: docNum,
+        materialVerdict: verdictCode || '',
+        verdictLabel: verdictLabel,
         displayScore: primaryIsReport ? docNum : it.displayScore,
         scoreKind: primaryIsReport ? 'report' : it.scoreKind,
-        docTagText: primaryIsReport ? '基于报告' : ('报告评析 ' + docNum + '分')
+        docTagText: docTagText
       });
     });
     if (this.data.homeDefenseRecords && this.data.homeDefenseRecords.length) {
@@ -2258,11 +2448,34 @@ loadMoreTopics() {
     // 请求序号：快速切换记录时，先发的请求晚到也不能覆盖后一场的数据
     const detailReqSeq = (this._answerDocSeq || 0) + 1;
     this._answerDocSeq = detailReqSeq;
+
+    // 【2026-10-25】先用列表里已经下发的报告地址占位：
+    // 详情请求（DetailRecords）慢或失败时，评析入口照样能出现，
+    // 不再出现"弹层打开却一片空白"。请求成功后会补上已有的评析结果。
+    const listItem = (this.data.homeDefenseRecords || [])
+      .concat(this.data.defenseRecords || [], this.data.searchDefenseRecords || [])
+      .find((it) => String(it.id) === String(defenseId));
+    const fallbackReportUrl = listItem && listItem.reportUrl
+      ? uploader.resolveFileUrl(listItem.reportUrl)
+      : '';
     this.setData({
-      answerDocInfo: null,
+      answerDocInfo: (fallbackReportUrl && fallbackReportUrl !== 'abc')
+        ? {
+            id: String(defenseId),
+            defenseReportUrl: fallbackReportUrl,
+            reportDocAnalysis: '',
+            reportDocScore: listItem ? listItem.reportDocScore : null,
+            analysisSource: '',
+            materialVerdict: (listItem && listItem.materialVerdict) || '',
+            materialVerdictType: (listItem && listItem.materialVerdictType) || '',
+            materialVerdictReason: (listItem && listItem.materialVerdictReason) || '',
+            verdictLabel: verdictText.label(listItem && listItem.materialVerdict)
+          }
+        : null,
       answerDocDims: [],
       answerDocSummary: null,
       answerDocRaw: '',
+      answerDocEngine: '',
       docAnalyzing: false,
       docStage: '',
       docPercent: 0,
@@ -2288,25 +2501,39 @@ loadMoreTopics() {
         if (handleUnauthorized(detailRes)) { closeLoading(); return; }
         if (this._answerDocSeq !== detailReqSeq) return; // 已切到别的场次，丢弃迟到响应
         const body = detailRes && detailRes.data;
-        if (!body || body.code !== 1 || !body.data) return;
+        if (!body || body.code !== 1 || !body.data) {
+          // 【2026-10-25】不再静默返回：保留列表里的兜底地址，同时留一条日志便于排查
+          console.warn('[回答详情] 详情接口返回异常，保留列表兜底数据', body);
+          return;
+        }
         const detail = body.data;
         const parsed = this.parseReportDocAnalysis(detail.reportDocAnalysis);
+        const resolved = detail.defenseReportUrl ? uploader.resolveFileUrl(detail.defenseReportUrl) : '';
+        const keepFallback = this.data.answerDocInfo && this.data.answerDocInfo.defenseReportUrl;
         this.setData({
           answerDocInfo: {
             id: String(detail.defenseId),
-            defenseReportUrl: detail.defenseReportUrl ? uploader.resolveFileUrl(detail.defenseReportUrl) : '',
-            reportDocAnalysis: detail.reportDocAnalysis,
+            // 详情没给地址时不要清空列表兜底值，否则评析入口会突然消失
+            defenseReportUrl: resolved || keepFallback || '',
+            reportDocAnalysis: detail.reportDocAnalysis || '',
             reportDocScore: detail.reportDocScore,
-            analysisSource: detail.analysisSource
+            analysisSource: detail.analysisSource,
+            materialVerdict: detail.materialVerdict || '',
+            materialVerdictType: detail.materialVerdictType || '',
+            materialVerdictReason: detail.materialVerdictReason || '',
+            verdictLabel: verdictText.label(detail.materialVerdict)
           },
           answerDocDims: parsed.dims,
           answerDocSummary: parsed.summary,
-          answerDocRaw: parsed.raw
+          answerDocRaw: parsed.raw,
+          answerDocEngine: parsed.engine || ''
         });
         // 上次点了分析但没看完（关了弹层/切了后台）→ 重新打开时续上进度
         this.resumeReportDocIfRunning(defenseId);
       },
-      fail: () => { /* 报告信息拉取失败不影响逐轮回答展示 */ }
+      fail: (err) => {
+        console.warn('[回答详情] 详情请求失败，保留列表兜底数据', err);
+      }
     });
 
     wx.request({
@@ -2451,6 +2678,7 @@ loadMoreTopics() {
       answerDocDims: [],
       answerDocSummary: null,
       answerDocRaw: '',
+      answerDocEngine: '',
       docAnalyzing: false,
       docStage: '',
       docPercent: 0,

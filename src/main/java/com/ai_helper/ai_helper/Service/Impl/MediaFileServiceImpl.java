@@ -4,6 +4,7 @@ import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.FileStorageService;
 import com.ai_helper.ai_helper.Service.MediaFileService;
+import com.ai_helper.ai_helper.Service.ReportDocAnalysisService;
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.enums.MediaKind;
@@ -31,6 +32,14 @@ public class MediaFileServiceImpl implements MediaFileService {
     private final DefenseRecordsMapper defenseRecordsMapper;
     private final DefenseRecordsService defenseRecordsService;
 
+    /**
+     * 【2026-10-25】报告上传后自动排队评析。
+     *
+     * <p>用户口径：传完就该自己出分，不用等教师点按钮。这里只**提交**任务
+     * （{@code trigger} 同步做完前置校验后立即返回，真正的抽取+评分在线程池里跑）。</p>
+     */
+    private final ReportDocAnalysisService reportDocAnalysisService;
+
     @Override
     public Map<String, Object> saveWholeFile(String loginUserNumber, Integer topicId, MediaKind kind, MultipartFile file) {
         // 1. 先校验登录态与文件，再落盘 —— 原先「先传云端、后查用户」的写法会在用户不存在时留下孤儿文件
@@ -40,7 +49,12 @@ public class MediaFileServiceImpl implements MediaFileService {
         }
         validateFile(kind, file);
 
-        Integer defenseId = defenseRecordsService.getOrCreateLatestDefenseRecord(topicId, loginUserNumber, true);
+        // 【2026-10-25】报告改为「每次上传新建一条独立场次」：
+        // 复用会让传三次只有一条记录，且新报告写进上一场（甚至两个月前的老场次）。
+        // 视频仍复用（要和逐轮作答落在同一场次）。
+        Integer defenseId = kind == MediaKind.REPORT
+                ? defenseRecordsService.createDefenseRecordForReport(topicId, loginUserNumber)
+                : defenseRecordsService.getOrCreateLatestDefenseRecord(topicId, loginUserNumber, true);
         if (defenseId == null) {
             throw new BusinessException("无法定位答辩记录，请先在该题目下开始答辩");
         }
@@ -61,7 +75,10 @@ public class MediaFileServiceImpl implements MediaFileService {
 
         // 3. 写库；失败则回收刚落的盘，保证「要么都成、要么都不成」
         try {
-            String oldUrl = readStoredUrl(internalUserId, topicId, kind);
+            // 【2026-10-25】报告是新建场次，不存在"替换旧文件"——
+            // 若沿用 readStoredUrl 会读到自己课题**上一条**记录的报告地址并把它删掉，
+            // 直接把上一次答辩的文件弄丢。视频仍复用同一场次，需要删旧文件。
+            String oldUrl = kind == MediaKind.REPORT ? null : readStoredUrl(internalUserId, topicId, kind);
             writeStoredUrl(defenseId, kind, publicUrl);
             if (!UploadUtils.isBlank(oldUrl) && !oldUrl.trim().equals(publicUrl)) {
                 // 历史数据可能是阿里云 OSS 地址，delete 内部会识别并跳过
@@ -76,12 +93,32 @@ public class MediaFileServiceImpl implements MediaFileService {
         log.info("附件已保存 - kind: {}, defenseId: {}, url: {}, 大小: {}",
                 kind.getCode(), defenseId, publicUrl, UploadUtils.readableSize(file.getSize()));
 
+        // 【2026-10-25】报告上传成功 → 自动排队评析：学生传完不用再找任何人点按钮。
+        // 只提交任务，接口立即返回；前置校验失败/线程池拒绝都不能让上传失败。
+        if (kind == MediaKind.REPORT) {
+            submitAutoReportAnalysis(defenseId);
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("url", publicUrl);
         result.put("fileName", file.getOriginalFilename());
         result.put("fileSize", file.getSize());
         result.put("kind", kind.getCode());
         return result;
+    }
+
+    /**
+     * 【2026-10-25】提交自动评析。任何异常都吞掉——报告已经上传成功，
+     * 不能因为模型任务提交失败让用户以为"文件没传上去"；教师端仍可手动重跑。
+     */
+    private void submitAutoReportAnalysis(Integer defenseId) {
+        try {
+            reportDocAnalysisService.trigger(defenseId, false);
+            log.info("文档已上传，自动提交评析 - defenseId: {}", defenseId);
+        } catch (Exception e) {
+            log.warn("自动评析提交失败（教师端仍可手动触发）- defenseId: {}, 原因: {}",
+                    defenseId, e.getMessage());
+        }
     }
 
     @Override
@@ -100,8 +137,10 @@ public class MediaFileServiceImpl implements MediaFileService {
             throw new BusinessException("请先选择对应的答辩题目");
         }
 
-        // 删除场景不允许「为删而建」记录
-        Integer defenseId = defenseRecordsService.getOrCreateLatestDefenseRecord(topicId, loginUserNumber, false);
+        // 删除必须作用于「拥有当前展示材料的那一条」，与读取指向同一行；
+        // 否则会出现「列表显示有报告、点删除却清了另一场」（旧实现取最新一条、URL 又是另一条随机取到的）。
+        Integer defenseId = defenseRecordsMapper.selectLatestMaterialDefenseId(
+                internalUserId, topicId, kind.getCode());
         if (defenseId == null) {
             throw new BusinessException("还没有上传过" + kind.getLabel() + "，无需删除");
         }
@@ -236,10 +275,17 @@ public class MediaFileServiceImpl implements MediaFileService {
                 + (ext.isEmpty() ? "" : "." + ext.toLowerCase());
     }
 
+    /**
+     * 读取「当前该展示的」附件地址（【2026-10-25】确定排序：优先进行中场次，其次最近已结束场次）。
+     *
+     * <p>旧实现是 {@code LIMIT 1} 无排序 + 不过滤空值，一个课题有多条记录时会取到任意一行
+     * （常常是最早那条的空值），前端表现为「明明传了却显示未上传」。
+     * 这里同时排除历史脏值 {@code 'abc'}。</p>
+     */
     private String readStoredUrl(String internalUserId, Integer topicId, MediaKind kind) {
         return kind == MediaKind.VIDEO
-                ? defenseRecordsMapper.getVideoUrlByUserIdAndTopicId(internalUserId, topicId.longValue())
-                : defenseRecordsMapper.getReportUrlByUserIdAndTopicId(internalUserId, topicId);
+                ? defenseRecordsMapper.getLatestVideoUrlByUserAndTopic(internalUserId, topicId)
+                : defenseRecordsMapper.getLatestReportUrlByUserAndTopic(internalUserId, topicId);
     }
 
     private void writeStoredUrl(Integer defenseId, MediaKind kind, String url) {

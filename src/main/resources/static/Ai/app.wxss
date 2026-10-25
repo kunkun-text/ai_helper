@@ -140,6 +140,39 @@ page {
   color: #c0392b;
 }
 
+/* 【2026-10-25】关联性预检判为「疑似跑题」：与"已上传视频"的红标区分开（那是中性提示，这是警告），
+   用琥珀色底 + 深橙字，两端列表共用，语义是"这一场需要复审"。 */
+.g-tag-warn {
+  background: #fff7e6;
+  color: #ad6800;
+  border: 1rpx solid #ffd591;
+}
+
+/* 【2026-10-25】材料裁定说明块（不合格材料：不进五维、不出分）
+   学生端/教师端详情共用。左橙条 + 浅橙底，与"成绩单"视觉区分开。 */
+.doc-verdict {
+  margin-top: 12rpx;
+  padding: 16rpx 18rpx;
+  background: #fff7e6;
+  border-left: 6rpx solid #fa8c16;
+  border-radius: 8rpx;
+}
+
+.doc-verdict-title {
+  display: block;
+  font-size: 26rpx;
+  color: #ad6800;
+  font-weight: 600;
+  margin-bottom: 8rpx;
+}
+
+.doc-verdict-line {
+  display: block;
+  font-size: 24rpx;
+  color: #8c6d3f;
+  line-height: 1.6;
+}
+
 /* ================= 评分表成绩单（2026-10-20） =================
    放在 app.wxss 而不是各页 wxss：学生端与教师端的「评分表」必须长得一样、
    算得一样（数据源 defense_score_record，口径对齐报告评析）。

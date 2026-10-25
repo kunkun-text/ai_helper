@@ -5,6 +5,8 @@ const auth = require('../../utils/auth.js');
 const radar = require('../../utils/radar.js');
 const scoreCard = require('../../utils/scoreCard.js');
 const gradeSheet = require('../../utils/gradeSheet.js');
+// 【2026-10-25】材料裁定枚举 → 文案（两端共用）
+const verdictText = require('../../utils/materialVerdict.js');
 
 /**
  * 登录态失效统一处理（【C1】转交 auth 模块，行为与全站一致）。
@@ -108,6 +110,11 @@ Page({
     videoDims: [],
     videoSummary: null,
     videoRaw: '',
+    // 【2026-10-25 · 报告评析】与教师端「回答详情」同款观感：总分/等级/五维卡片 + 评分引擎
+    reportDocDims: [],
+    reportDocSummary: null,
+    reportDocRaw: '',
+    reportDocEngine: '',
     // 【F11】语音答辩逐轮录音回放（归档在 voice_responses，URL 走 /files/**）
     voiceRecords: [],
     // 【N8】五维雷达图（逐轮五维平均分）与是否可绘制
@@ -838,17 +845,41 @@ Page({
           const total = res.data.data.total || 0;
           
           // 转换后端数据格式为前端需要的格式
-          const records = backendRecords.map(record => ({
-            id: record.defenseRecordId ? record.defenseRecordId.toString() : null,
-            topic: record.topicName || '未设置题目',
-            status: record.status || 'pending',
-            score: record.score ? parseFloat(record.score) : 0,
-            date: that.formatDateTime(record.defenseTime),
-            defenseTime: that.formatDateTime(record.defenseTime),
-            // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表红标用（后端给 1/0，转布尔）
-            hasVideo: !!record.hasVideo,
-            feedback: record.score ? `本次答辩得分：${parseFloat(record.score)}分。` : '暂无评分'
-          }));
+          const records = backendRecords.map(record => {
+            // 【2026-10-25】0 分是合法分数（跑题归零 / 文档评析 0 分）：
+            // 判断「有没有分数」只看 null/undefined/''/'null'，绝不用真值判断。
+            const hasOwn = v => v !== null && v !== undefined && v !== '' && v !== 'null';
+            const roundScore = hasOwn(record.score) && !isNaN(parseFloat(record.score))
+              ? parseFloat(record.score) : null;
+            const docScore = hasOwn(record.reportDocScore) && !isNaN(Number(record.reportDocScore))
+              ? Number(record.reportDocScore) : null;
+            // 报告评析场次通常没有任何逐轮作答（score 为空）——主分数用报告分兜底，
+            // 与教师端 displayScore 同一口径，否则列表会一直挂「未完成」（用户 2026-10-25 反馈）。
+            const displayScore = roundScore !== null ? roundScore : docScore;
+            return {
+              id: record.defenseRecordId ? record.defenseRecordId.toString() : null,
+              topic: record.topicName || '未设置题目',
+              status: record.status || 'pending',
+              hasScore: displayScore !== null,
+              score: displayScore,
+              scoreFromDoc: roundScore === null && docScore !== null,
+              date: that.formatDateTime(record.defenseTime),
+              defenseTime: that.formatDateTime(record.defenseTime),
+              // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表红标用（后端给 1/0，转布尔）
+              hasVideo: !!record.hasVideo,
+              // 【2026-10-25】通用材料裁定：verdict 由后端下发，前端只映射文案
+              materialVerdict: record.materialVerdict || '',
+              materialVerdictReason: record.materialVerdictReason || '',
+              verdictLabel: verdictText.shortLabel(record.materialVerdict),
+              // 【2026-10-25】列表按材料类型区分：已评析（有报告分）→ teal 底色；已上传未评析 → 只打标签。
+              // 用 reportDocScore 判"已评析"，不用 analysisSource：后者是报告/视频共用单列，会被视频评分覆盖。
+              docAnalyzed: docScore !== null,
+              reportDocScore: docScore,
+              reportUploaded: !!record.hasReport,
+              feedback: displayScore !== null
+                ? `本次答辩得分：${displayScore}分。` : '暂无评分'
+            };
+          });
           
           let newRecords = [];
           if (isRefresh) {
@@ -957,29 +988,54 @@ Page({
             topic: detailData.topicName || '未设置题目',
             date: that.formatDateTime(detailData.defenseTime),
             defenseTime: that.formatDateTime(detailData.defenseTime),
-            score: detailData.score ? parseFloat(detailData.score) : 0,
+            // 【2026-10-25】0 分是合法分数（跑题归零 / 文档评析 0 分）：
+            // 用 null 表示"没有分数"，别再用 `score ? ... : 0` 把 0 分和缺失混在一起。
+            hasScore: detailData.score !== null && detailData.score !== undefined
+              && detailData.score !== '' && detailData.score !== 'null'
+              && !isNaN(parseFloat(detailData.score)),
+            score: (detailData.score !== null && detailData.score !== undefined
+              && detailData.score !== '' && detailData.score !== 'null'
+              && !isNaN(parseFloat(detailData.score))) ? parseFloat(detailData.score) : null,
             studentName: detailData.studentName || '',
             studentNumber: detailData.studentNumber || '',
             defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl || ''),
             defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl || ''),
-            aiVideoAnalysis: detailData.aiVideoAnalysis || '暂无视频分析',
-            aiReportAnalysis: detailData.aiReportAnalysis || '暂无报告分析',
-            aiAllAnalysis: detailData.aiAllAnalysis || '暂无综合评价',
+            // 【2026-10-25】不再塞「暂无视频分析 / 暂无报告分析 / 暂无综合评价」占位：
+            // 三个灰框会让学生以为"分析模块没了"。没有就整块不显示，界面更干净。
+            aiVideoAnalysis: detailData.aiVideoAnalysis || '',
+            aiReportAnalysis: detailData.aiReportAnalysis || '',
+            aiAllAnalysis: detailData.aiAllAnalysis || '',
             // 【2026-10-16 · 报告五维评分】基于上传报告文档的真实评析（教师端触发后才会有）。
             // 这里**不给「暂无」占位**：该链路没跑过时整块不显示，与上面几块的语义不同。
             reportDocAnalysis: detailData.reportDocAnalysis || '',
+            // 【2026-10-25】后端 report_doc_summary（约 400~700 字整体评价）此前学生端根本没映射，
+            // 五维卡片下面因此是空的，学生以为"答辩评析没出来"。
+            reportDocText: detailData.reportDocSummary || '',
             reportDocScore: detailData.reportDocScore,
+            // 【2026-10-25】材料裁定：不合格材料不出分，只在这里给出「是什么、为什么」，
+            // 学生能看懂"文件没通过资格裁定"，而不是看到一堆 0 分。
+            materialVerdict: detailData.materialVerdict || '',
+            materialVerdictType: detailData.materialVerdictType || '',
+            materialVerdictReason: detailData.materialVerdictReason || '',
+            verdictLabel: verdictText.shortLabel(detailData.materialVerdict),
             feedback: detailData.aiAllAnalysis || '暂无综合评价'
           };
           
           // 【2026-10-20 · 视频 AI 评分】后端产出的是「成绩单文本」，学生端同样拆成
           // 总分/等级/五维小卡片，与教师端、与报告评析保持同一观感（解析器三处共用）。
           const videoSheet = gradeSheet.parse(detailData.aiVideoAnalysis || '');
+          // 【2026-10-25】报告评析也用同一解析器拆成卡片（此前学生端只显示一大段裸文本，
+          // 与教师端「回答详情」观感不一致）。
+          const reportSheet = gradeSheet.parse(detailData.reportDocAnalysis || '');
           that.setData({
             selectedRecord: selectedRecord,
             videoDims: videoSheet.dims,
             videoSummary: videoSheet.summary,
-            videoRaw: videoSheet.raw
+            videoRaw: videoSheet.raw,
+            reportDocDims: reportSheet.dims,
+            reportDocSummary: reportSheet.summary,
+            reportDocRaw: reportSheet.raw,
+            reportDocEngine: reportSheet.engine || ''
           });
         } else {
           wx.showToast({

@@ -47,6 +47,42 @@ public class DefenseRecordsVo {
      */
     private Boolean hasVideo;
 
+    // ---------- 【2026-10-25】按材料类型区分列表行 ----------
+
+    /**
+     * 该场次是否已上传报告（{@code report_url} 非空且不是历史脏值 {@code 'abc'}）。
+     *
+     * <p>列表用它打「报告已上传」标签：已评析场次另有 {@code reportDocScore} 驱动 teal 底色。
+     * 没有这个字段时，「文档答辩」与普通语音/文字答辩在列表里长得一模一样，
+     * 教师无法一眼定位到可评析的那一行。</p>
+     */
+    private Boolean hasReport;
+
+    /**
+     * 【2026-10-25】该场次的报告地址（相对路径 {@code /files/reports/...}）。
+     *
+     * <p>列表带上它，「查看回答详情」就能立刻渲染评析入口，
+     * 不必再等一次详情请求（此前那次请求慢或失败，弹层里整块空白）。</p>
+     */
+    private String reportUrl;
+
+    // ---------- 【2026-10-25】通用材料裁定（报告/视频共用同一套语义） ----------
+
+    /**
+     * 材料资格裁定：{@code ok} / {@code suspect_offtopic} / {@code suspect_nonmaterial}
+     * / {@code insufficient}；{@code null} = 未裁定（历史场次）。
+     *
+     * <p>列表据此打「待复审」标签、详情据此展示裁定结论。**不再解析成绩单文本**，
+     * 因此换文案、改措辞都不会影响筛选。</p>
+     */
+    private String materialVerdict;
+
+    /** 模型判定的材料类型（答辩报告 / 个人简历 / 合同 …），供教师快速核对 */
+    private String materialVerdictType;
+
+    /** 裁定理由（约 40 字） */
+    private String materialVerdictReason;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Shanghai")
     private LocalDateTime defenseTime;
 

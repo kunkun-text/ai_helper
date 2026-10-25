@@ -67,4 +67,21 @@ public class ReportDocAnalysisController {
     public Result<Map<String, Object>> status(@PathVariable Integer defenseId) {
         return Result.success(reportDocAnalysisService.status(defenseId));
     }
+
+    /**
+     * 【2026-10-25】手动「云端复审」：用已落库的报告全文强制重跑「云端点评 → 云端评分」，
+     * 覆盖本地 3B 结论（含"材料其实是简历却给了高分"这类本地判不出来的情况）。
+     *
+     * <p>与 {@code /analyze/{id}?force=true} 的区别：后者仍走本地 3B 主评，
+     * 只有低分/跑题才会碰云端；本接口**直接走云端**，不看本地分数。</p>
+     *
+     * <p>同步返回 {@code {status, score, analysis, msg}}：复审要调 2~3 次云端模型
+     * （点评 + 评分 + 综合评价），通常 20~60 秒。前置条件不满足（没有报告全文 /
+     * 未配置云端 key / 正在评析中）会以 {@code BusinessException} 返回明确文案，
+     * 库中超时或失败**不写库**，原成绩单保持不变。</p>
+     */
+    @PostMapping("/review/{defenseId}")
+    public Result<Map<String, Object>> review(@PathVariable Integer defenseId) {
+        return Result.success(reportDocAnalysisService.review(defenseId));
+    }
 }

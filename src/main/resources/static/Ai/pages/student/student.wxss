@@ -384,22 +384,37 @@
 .record-item {
   display: flex;
   align-items: flex-start;
-  padding: 20rpx 0;
+  padding: 20rpx 16rpx;
   border-bottom: 2rpx solid #f0f0f0;
+  /* 【2026-10-25】给每条记录一个基础卡片底：
+     此前是透明底，一旦去掉分隔线整片就是"空白"，报告/视频的着色也没有承载面。
+     只补底色与圆角，不改变字号、间距与排序。 */
+  background: #ffffff;
+  border-radius: 16rpx;
 }
 
 .record-item:last-child {
   border-bottom: none;
 }
 
-/* 【VID-4 · 2026-10-20】该场次已上传答辩视频：浅红底 + 左侧红条（与教师端同款视觉）。
-   学生端 .record-item 是透明底 + 下分隔线，所以这里补圆角与内边距，避免红条贴着文字。 */
+/* 【VID-4 · 2026-10-20】该场次已上传答辩视频：浅红底 + 左侧红条（与教师端同款视觉） */
 .record-item.has-video {
   background: #fdecea;
   border-left: 6rpx solid #c0392b;
-  border-radius: 12rpx;
-  padding-left: 16rpx;
-  padding-right: 16rpx;
+}
+
+/* 【2026-10-25】该场次已上传报告但尚未评析：浅 teal（比已评析淡一档），左条同色系。
+   与「报告评析」同一色相、不同深浅，教师/学生不看文字也能分出"这条是文档答辩"。 */
+.record-item.report-uploaded {
+  background: #f1f9f8;
+  border-left: 6rpx solid #4db6ac;
+}
+
+/* 【2026-10-25】该场次已有报告评析：满色 teal + 左侧深色条，与教师端口径一致。
+   优先级由 wxml 保证：doc-analyzed > report-uploaded > has-video。 */
+.record-item.doc-analyzed {
+  background: var(--g-accent-bg, #e0f2f1);
+  border-left: 6rpx solid var(--g-accent, #00897b);
 }
 
 .record-avatar {

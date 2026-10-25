@@ -64,6 +64,19 @@
             CASE WHEN dr.video_url IS NOT NULL AND TRIM(dr.video_url) != ''
                       AND dr.video_url != 'abc'
                  THEN 1 ELSE 0 END AS hasVideo,
+            <!-- 【2026-10-25】列表按答辩类型着色：该场次是否已上传报告（不论是否已评析）。
+                 已评析场次由 report_doc_score 驱动 teal 底色；已上传未评析只打标签，
+                 让教师/学生一眼分出"文档答辩 / 视频答辩 / 纯语音文字答辩"。 -->
+            CASE WHEN dr.report_url IS NOT NULL AND TRIM(dr.report_url) != ''
+                      AND dr.report_url != 'abc'
+                 THEN 1 ELSE 0 END AS hasReport,
+            <!-- 【2026-10-25】把报告地址也带进列表：教师从列表点「查看回答详情」时，
+                 前端可立刻用这份地址渲染评析入口，不必再等第二次详情请求
+                 （此前详情请求慢/失败就整块空白）。 -->
+            dr.report_url as reportUrl,
+            dr.material_verdict AS materialVerdict,
+            dr.material_verdict_type AS materialVerdictType,
+            dr.material_verdict_reason AS materialVerdictReason,
             dr.defense_date AS defenseTime
         FROM
             defense_records dr
@@ -94,12 +107,19 @@
             dr.feedback as aiAllAnalysis,
             dr.report_doc_analysis as reportDocAnalysis,
             dr.report_doc_summary as reportDocSummary,
+            dr.material_verdict as materialVerdict,
+            dr.material_verdict_type as materialVerdictType,
+            dr.material_verdict_reason as materialVerdictReason,
             dr.report_doc_score as reportDocScore,
             dr.analysis_source as analysisSource,
-            dr.defense_mode as defenseMode
+            dr.defense_mode as defenseMode,
+            <!-- 【2026-10-25】详情页此前不返回课题名，前端只能显示默认值「未设置题目」——
+                 教师看到会以为这场答辩数据坏了。 -->
+            dt.topic_name as topicName
         from
             defense_records dr
                 join users on dr.user_id = users.user_id
+                left join defense_topics dt on dt.topic_id = dr.topic_id
         where
             dr.defense_id = #{defenseId}
     </select>
@@ -149,10 +169,18 @@
             CASE WHEN dr.video_url IS NOT NULL AND TRIM(dr.video_url) != ''
                       AND dr.video_url != 'abc'
                  THEN 1 ELSE 0 END AS hasVideo,
+            <!-- 【2026-10-25】学生端同样要能分出"文档答辩"：与教师端同一口径。 -->
+            CASE WHEN dr.report_url IS NOT NULL AND TRIM(dr.report_url) != ''
+                      AND dr.report_url != 'abc'
+                 THEN 1 ELSE 0 END AS hasReport,
+            dr.report_url as reportUrl,
             <!-- 【2026-10-21】展示与排序都用「最后活动时间」，不再用 created_at。
                  典型场景：`358` 是 10-18 建的空壳记录，视频是 10-20 才传上来的——
                  按 created_at 它会显示成"18 号"并排在一堆旧记录后面，学生会以为自己传丢了。
                  GREATEST 遇 NULL 直接返回 NULL，所以外层再 COALESCE 一次兜底。 -->
+            dr.material_verdict AS materialVerdict,
+            dr.material_verdict_type AS materialVerdictType,
+            dr.material_verdict_reason AS materialVerdictReason,
             COALESCE(GREATEST(dr.updated_at, dr.created_at), dr.updated_at, dr.created_at) as defenseTime
         from    defense_records dr
                     left join users u on u.user_id = dr.user_id
@@ -302,7 +330,8 @@
           AND user_id = #{userId}
     </select>
 
-    <!-- 附件（视频/报告）上传与删除的目标记录：取最新一条，不区分状态 -->
+    <!-- 附件（视频/报告）上传与删除的目标记录：取最新一条，不区分状态。
+         【2026-10-25】附件读写已不再用它（会挂到已结束场次），保留供"该课题下有没有场次"这类判断。 -->
     <select id="getLatestDefenseIdByUserAndTopic" resultType="java.lang.Integer">
         SELECT defense_id
         FROM defense_records
@@ -312,16 +341,85 @@
         LIMIT 1
     </select>
 
-    <select id="getDefenseIdByUserAndTopic" resultType="java.lang.Integer">
-        SELECT defense_id FROM defense_records
+    <!-- 【2026-10-25】附件该挂的那一条：待答辩空壳（pending + 一题未答 + 无追问 + 无评分）。
+         与 selectReusableMaterialDefenseId / deleteEmptyShellRecords 是同一批记录，口径必须一致，
+         否则材料与作答会分家。 -->
+    <select id="getLatestEmptyShellDefenseId" resultType="java.lang.Integer">
+        SELECT dr.defense_id
+        FROM defense_records dr
+        WHERE dr.user_id = #{userId} AND dr.topic_id = #{topicId} AND dr.status = 'pending'
+          AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = dr.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = dr.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = dr.defense_id)
+          <!-- 【2026-10-25 二次修正】已有分析产物的记录不算空壳：
+               358 是恢复出来的旧视频场次（video_url 空了但 video_analysis 还在 7/50），
+               学生上传简历时被判为空壳而挂了上去，详情里就同时出现
+               「旧视频评分」和「新报告」，看起来像两条链路串了。 -->
+          AND (dr.video_analysis IS NULL OR TRIM(dr.video_analysis) = '')
+          AND (dr.video_words IS NULL OR TRIM(dr.video_words) = '')
+          AND (dr.report_doc_analysis IS NULL OR TRIM(dr.report_doc_analysis) = '')
+          AND (dr.report_text IS NULL OR TRIM(dr.report_text) = '')
+          AND (dr.report_doc_summary IS NULL OR TRIM(dr.report_doc_summary) = '')
+          AND dr.report_doc_score IS NULL
+        ORDER BY dr.defense_id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 【2026-10-25】该课题下最新的 pending 场次（不辨是否已作答）。
+         只作退路：材料归档到「已开始答题、尚未收尾」的场次时用，
+         调用方必须再判断最后一次作答是否在续答窗口内，否则会挂到历史弃答场次上。 -->
+    <select id="getLatestPendingDefenseIdByUserAndTopic" resultType="java.lang.Integer">
+        SELECT defense_id
+        FROM defense_records
         WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
         ORDER BY defense_id DESC
         LIMIT 1
     </select>
 
-    <select id="getReportUrlByUserIdAndTopicId" resultType="java.lang.String">
-        SELECT report_url FROM defense_records
+    <!-- 【2026-10-25】读取「当前该展示的」视频地址：优先进行中场次，其次最近一次已结束场次。
+         必须有确定的 ORDER BY —— 旧实现 LIMIT 1 无排序，多记录时取哪行取决于执行计划，
+         前端会出现「视频已上传/未上传」随机跳变。'abc' 为历史脏值，视为没有。 -->
+    <select id="getLatestVideoUrlByUserAndTopic" resultType="java.lang.String">
+        SELECT video_url
+        FROM defense_records
         WHERE user_id = #{userId} AND topic_id = #{topicId}
+          AND video_url IS NOT NULL AND TRIM(video_url) != '' AND video_url != 'abc'
+        ORDER BY (status = 'pending') DESC, defense_id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 【2026-10-25】读取「当前该展示的」报告地址（口径同视频） -->
+    <select id="getLatestReportUrlByUserAndTopic" resultType="java.lang.String">
+        SELECT report_url
+        FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+          AND report_url IS NOT NULL AND TRIM(report_url) != '' AND report_url != 'abc'
+        ORDER BY (status = 'pending') DESC, defense_id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 【2026-10-25】「删除附件」定位到「拥有当前展示材料的那一条」，
+         保证删除与读取指向同一行（否则会出现列表显示有报告、点删除却清了另一场）。 -->
+    <select id="selectLatestMaterialDefenseId" resultType="java.lang.Integer">
+        SELECT defense_id
+        FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId}
+        <choose>
+            <when test="type == 'video'">
+                AND video_url IS NOT NULL AND TRIM(video_url) != '' AND video_url != 'abc'
+            </when>
+            <otherwise>
+                AND report_url IS NOT NULL AND TRIM(report_url) != '' AND report_url != 'abc'
+            </otherwise>
+        </choose>
+        ORDER BY (status = 'pending') DESC, defense_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="getDefenseIdByUserAndTopic" resultType="java.lang.Integer">
+        SELECT defense_id FROM defense_records
+        WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
+        ORDER BY defense_id DESC
         LIMIT 1
     </select>
 
@@ -335,14 +433,75 @@
         WHERE defense_id = #{defenseId}
     </update>
 
-    <!-- 开始新答辩：清理该学生该课题一题未答的空壳记录 -->
+    <!-- 【2026-10-25 · 文档答辩收尾】报告评析出分后，把这一场直接判为「已完成」并写入分数。
+         用户口径：上传文档 = 一次完整答辩，评析完就该像文字答辩一样在列表右侧显示分数，
+         而不是永远挂「未完成」。
+
+         只在**一条作答都没有**时才改：若学生先答了文字/语音再传报告，
+         总分必须以逐轮答辩为准，不能被报告分覆盖。 -->
+    <update id="completeReportDefense">
+        UPDATE defense_records
+        SET score = #{score},
+            status = 'completed',
+            updated_at = NOW()
+        WHERE defense_id = #{defenseId}
+          AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = defense_records.defense_id)
+    </update>
+
+    <!-- 开始新答辩：清理该学生该课题「一题未答且没有任何附件」的空壳记录。
+
+         【2026-10-25 · 事故修复】原语句只判「pending + 无作答/追问/评分」，不看附件：
+         「已上传视频或报告、还没开始答题」的场次同样满足条件，被当成空壳整行删除
+         （defenseId=358：pending + 0 作答 + 只有视频，2026-10-25 19:52 随新建 365 被 DELETE；
+         defense_answers / defense_score_record / defense_student_questions 均为 ON DELETE CASCADE，
+         整行一删，视频链接、转写、成绩单同时消失）。现在补上附件条件：
+         带材料的场次永远不进入"空壳"判定，由 selectReusableMaterialDefenseId 复用。
+         'abc' 是历史脏值，与列表/详情口径一致，视为"没有附件"。
+
+         注意：XML 里不能用 &lt;&gt;，一律用 != / NOT IN。 -->
     <delete id="deleteEmptyShellRecords">
         DELETE FROM defense_records
         WHERE user_id = #{userId} AND topic_id = #{topicId} AND status = 'pending'
           AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = defense_records.defense_id)
           AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = defense_records.defense_id)
           AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = defense_records.defense_id)
+          AND (video_url IS NULL OR TRIM(video_url) IN ('', 'abc'))
+          AND (report_url IS NULL OR TRIM(report_url) IN ('', 'abc'))
+          <!-- 附件链接丢了但转写/分析还在的场次不能删：358 恢复后 video_url 为空，
+               但仍有 195 字转写 + 185 字分析，再删一次就真的什么都不剩了。 -->
+          AND (video_words IS NULL OR TRIM(video_words) = '')
+          AND (video_analysis IS NULL OR TRIM(video_analysis) = '')
+          AND (report_text IS NULL OR TRIM(report_text) = '')
+          AND (report_doc_analysis IS NULL OR TRIM(report_doc_analysis) = '')
+          AND (report_doc_summary IS NULL OR TRIM(report_doc_summary) = '')
+          AND report_doc_score IS NULL
     </delete>
+
+    <!-- 开始答辩时优先复用的场次：pending + 一题未答 + 已上传视频或报告。
+         学生「先传材料、后点开始答辩」时，材料就在这条记录上；
+         复用它，材料与作答才会落在同一场次，列表也只有一条。
+         否则清理空壳会删掉材料（已修）或新建一条导致材料与作答分家。 -->
+    <select id="selectReusableMaterialDefenseId" resultType="java.lang.Integer">
+        SELECT dr.defense_id
+        FROM defense_records dr
+        WHERE dr.user_id = #{userId}
+          AND dr.topic_id = #{topicId}
+          AND dr.status = 'pending'
+          AND ((dr.video_url IS NOT NULL AND TRIM(dr.video_url) NOT IN ('', 'abc'))
+            OR (dr.report_url IS NOT NULL AND TRIM(dr.report_url) NOT IN ('', 'abc')))
+          AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = dr.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = dr.defense_id)
+          AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = dr.defense_id)
+          <!-- 【2026-10-25】同上：有分析产物的记录不复用，避免"新报告 + 旧视频评分"混在同一场次 -->
+          AND (dr.video_analysis IS NULL OR TRIM(dr.video_analysis) = '')
+          AND (dr.video_words IS NULL OR TRIM(dr.video_words) = '')
+          AND (dr.report_doc_analysis IS NULL OR TRIM(dr.report_doc_analysis) = '')
+          AND (dr.report_text IS NULL OR TRIM(dr.report_text) = '')
+          AND (dr.report_doc_summary IS NULL OR TRIM(dr.report_doc_summary) = '')
+          AND dr.report_doc_score IS NULL
+        ORDER BY dr.defense_id DESC
+        LIMIT 1
+    </select>
 
     <!-- ========== 上传报告文档的 AI 评析（2026-10-16 · 报告五维评分第一期） ========== -->
 
@@ -354,6 +513,10 @@
             dr.report_doc_analysis AS reportDocAnalysis,
             dr.report_doc_score    AS reportDocScore,
             dr.analysis_source     AS analysisSource,
+            dr.report_text         AS reportText,
+            dr.material_verdict    AS materialVerdict,
+            dr.material_verdict_type AS materialVerdictType,
+            dr.material_verdict_reason AS materialVerdictReason,
             dt.topic_name          AS topicName
         FROM defense_records dr
                  LEFT JOIN defense_topics dt ON dt.topic_id = dr.topic_id
@@ -419,6 +582,30 @@
         SET video_analysis  = #{analysis},
             analysis_source = #{source},
             updated_at      = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-25】材料裁定不合格：只写裁定三列 + 说明，**不碰分数**。
+         用户口径：不合格材料不出分（0 分是"评过但很差"，传错文件是"根本没评"），
+         所以 report_doc_score / score / status 一概不动，列表仍显示"未完成" + 「待复审」标签。 -->
+    <update id="updateReportDocRejected">
+        UPDATE defense_records
+        SET report_doc_analysis     = #{analysis},
+            material_verdict        = #{verdict},
+            material_verdict_type   = #{verdictType},
+            material_verdict_reason = #{verdictReason},
+            updated_at              = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-25】改判裁定：教师云端复审通过后置为 ok（列表「待复审」标签随之消失）。
+         只动裁定列，不碰成绩单。 -->
+    <update id="updateMaterialVerdict">
+        UPDATE defense_records
+        SET material_verdict        = #{verdict},
+            material_verdict_type   = #{verdictType},
+            material_verdict_reason = #{verdictReason},
+            updated_at              = NOW()
         WHERE defense_id = #{defenseId}
     </update>
 

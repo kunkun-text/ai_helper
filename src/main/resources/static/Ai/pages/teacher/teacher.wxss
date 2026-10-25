@@ -394,6 +394,14 @@
   border-left: 6rpx solid var(--g-accent, #00897b);
 }
 
+/* 【2026-10-25】已上传报告但尚未评析：浅 teal（比 doc-analyzed 淡一档）。
+   此前这类场次只有「报告已上传」小标签，行底色仍是默认灰蓝，
+   教师扫列表时与普通语音/文字答辩几乎分不开。 */
+.record-item.report-uploaded {
+  background: #f1f9f8;
+  border-left: 6rpx solid #4db6ac;
+}
+
 /* 【VID-4 · 2026-10-20】该场次已上传答辩视频：浅红底色 + 左侧红条。
    只在没有报告评析时生效（wxml 里已保证 doc-analyzed 优先），
    两条链路同时存在时绿色为主、红色只体现在右上角标签上。 */

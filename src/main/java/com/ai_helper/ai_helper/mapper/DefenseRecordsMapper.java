@@ -58,9 +58,49 @@ public interface DefenseRecordsMapper {
 
     /**
      * 取该用户在该题目下的最新一条答辩记录（不区分状态）。
-     * 附件上传/删除用它定位目标记录，避免每次上传都新建一条空壳记录。
+     *
+     * <p>【2026-10-25】附件归属已不再用它——它会返回已结束的场次，
+     * 导致"答辩后上传的报告挂到上一场答辩"上。附件请用
+     * {@link #getLatestEmptyShellDefenseId} / {@link #getLatestPendingDefenseIdByUserAndTopic}。</p>
      */
     Integer getLatestDefenseIdByUserAndTopic(@Param("userId") String userId, @Param("topicId") Integer topicId);
+
+    /**
+     * 【2026-10-25】「待答辩空壳」场次：pending + 一题未答 + 无追问 + 无评分。
+     *
+     * <p>附件应挂在这一条上——它也是开始答辩时会被复用的那一条，
+     * 两处口径一致，材料与作答才不会分家。</p>
+     */
+    Integer getLatestEmptyShellDefenseId(@Param("userId") String userId,
+                                         @Param("topicId") Integer topicId);
+
+    /**
+     * 【2026-10-25】该课题下最新的 pending 场次（不辨是否已作答）。
+     * 调用方须再判断最后一次作答是否在续答窗口内，否则会挂到历史弃答场次。
+     */
+    Integer getLatestPendingDefenseIdByUserAndTopic(@Param("userId") String userId,
+                                                    @Param("topicId") Integer topicId);
+
+    /**
+     * 【2026-10-25】读取「当前该展示的」视频地址（优先进行中场次，其次最近已结束场次）。
+     * 旧实现 {@code LIMIT 1} 无排序，多记录时会随机取到空值，前端表现为"传了却显示未上传"。
+     */
+    String getLatestVideoUrlByUserAndTopic(@Param("userId") String userId,
+                                           @Param("topicId") Integer topicId);
+
+    /** 【2026-10-25】读取「当前该展示的」报告地址（口径同视频） */
+    String getLatestReportUrlByUserAndTopic(@Param("userId") String userId,
+                                            @Param("topicId") Integer topicId);
+
+    /**
+     * 【2026-10-25】「删除附件」要操作的那一条：拥有当前展示材料的场次。
+     * 删除与读取必须指向同一行，否则会出现"列表显示有报告、点删除却删了另一场"。
+     *
+     * @param type {@code video} / {@code report}
+     */
+    Integer selectLatestMaterialDefenseId(@Param("userId") String userId,
+                                          @Param("topicId") Integer topicId,
+                                          @Param("type") String type);
 
     /**
      * 校验某条答辩记录是否属于指定用户，防止学生通过改 defenseId 读取他人记录。
@@ -79,11 +119,36 @@ public interface DefenseRecordsMapper {
     int createDefenseRecord(@Param("userId") String userId, @Param("topicId") Integer topicId);
 
     /**
-     * 开始新答辩：清理该学生该课题一题未答的空壳记录
+     * 【2026-10-25】文档答辩收尾：报告评析出分后把该场次判为已完成并写入分数。
+     *
+     * <p>只在「一条作答都没有」时生效——先答文字/语音再传报告的场次，
+     * 总分必须保留逐轮答辩结果，不能被报告分覆盖。</p>
+     *
+     * @return 实际更新行数（0 = 有作答记录，未覆盖）
+     */
+    int completeReportDefense(@Param("defenseId") Integer defenseId, @Param("score") double score);
+
+    /**
+     * 开始新答辩：清理该学生该课题「一题未答、没有任何附件、也没有任何分析产物」的空壳记录。
+     *
+     * <p>【2026-10-25 · 事故修复】附件条件不能省：只传了视频/报告、还没开始答题的场次
+     * 同样「pending + 0 作答」，被当成空壳整行删除后，材料与记录一起消失
+     * （{@code defenseId=358} 事故，255MB 视频不可恢复）。
+     * 带材料的场次由 {@link #selectReusableMaterialDefenseId} 复用，不会命中本方法。</p>
      *
      * @return 删除的空壳记录条数
      */
     int deleteEmptyShellRecords(@Param("userId") String userId, @Param("topicId") Integer topicId);
+
+    /**
+     * 【2026-10-25】开始答辩时优先复用的场次：
+     * pending + 一题未答 + 已上传视频或报告的最新一条。
+     *
+     * <p>不复用就会出现"材料在旧场次、作答在新场次"的分家现象
+     * （学生端看到两条记录，教师点开的那条没有材料）。</p>
+     */
+    Integer selectReusableMaterialDefenseId(@Param("userId") String userId,
+                                            @Param("topicId") Integer topicId);
 
     int saveSummary(@Param("userId") String userId,@Param("topicId") Integer topicId,@Param("summary") String summary);
 
@@ -145,6 +210,33 @@ public interface DefenseRecordsMapper {
      */
     int updateReportDocSummary(@Param("defenseId") Integer defenseId,
                                @Param("summary") String summary);
+
+    /**
+     * 【2026-10-25】材料裁定不合格：写入裁定结论 + 说明，**不碰任何分数列**。
+     *
+     * <p>与 {@link #updateReportDocAnalysis} 分开的原因就是"不写分"：0 分是"评过但很差"，
+     * 传错文件是"根本没评"。这里只落 {@code report_doc_analysis}（裁定说明）与
+     * {@code material_verdict*} 三列，{@code report_doc_score} / {@code score} / {@code status}
+     * 保持原值，列表继续显示「未完成」并带「待复审」标签。</p>
+     *
+     * @param verdict       裁定码：suspect_offtopic / suspect_nonmaterial / insufficient
+     * @param verdictType   模型判定的材料类型（答辩报告/个人简历/合同…），可为空
+     * @param verdictReason 裁定理由（约 40 字）
+     */
+    int updateReportDocRejected(@Param("defenseId") Integer defenseId,
+                                @Param("analysis") String analysis,
+                                @Param("verdict") String verdict,
+                                @Param("verdictType") String verdictType,
+                                @Param("verdictReason") String verdictReason);
+
+    /**
+     * 【2026-10-25】改判裁定（教师云端复审通过 → {@code ok}，列表「待复审」标签消失）。
+     * 只动裁定三列，不碰成绩单与分数。
+     */
+    int updateMaterialVerdict(@Param("defenseId") Integer defenseId,
+                              @Param("verdict") String verdict,
+                              @Param("verdictType") String verdictType,
+                              @Param("verdictReason") String verdictReason);
 
     // ==================== 答辩视频的 AI 评分（2026-10-20 · VID 系列） ====================
 
