@@ -514,6 +514,9 @@
             dr.report_doc_score    AS reportDocScore,
             dr.analysis_source     AS analysisSource,
             dr.report_text         AS reportText,
+            <!-- 【2026-10-27】方向判定要按课题取预设题：这里把 topic_id 一并下发，
+                 避免再查一次记录（选的是 dr.topic_id，不是 dt.topic_id——课题被删时仍能拿到原 id） -->
+            dr.topic_id            AS topicId,
             dr.material_verdict    AS materialVerdict,
             dr.material_verdict_type AS materialVerdictType,
             dr.material_verdict_reason AS materialVerdictReason,

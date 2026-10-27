@@ -3,14 +3,19 @@ package com.ai_helper.ai_helper.Service.Impl;
 import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.AiScoringService;
 import com.ai_helper.ai_helper.Service.FileStorageService;
+import com.ai_helper.ai_helper.Service.MaterialCoverageService;
 import com.ai_helper.ai_helper.Service.MaterialVerdictService;
 import com.ai_helper.ai_helper.Service.OcrService;
 import com.ai_helper.ai_helper.Service.ReportDocAnalysisService;
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
+import com.ai_helper.ai_helper.mapper.DefenseTopicsMapper;
 import com.ai_helper.ai_helper.pojo.dto.AiScoringResult;
 import com.ai_helper.ai_helper.pojo.dto.DocScoreResult;
+import com.ai_helper.ai_helper.pojo.dto.MaterialCoverage;
 import com.ai_helper.ai_helper.pojo.dto.MaterialVerdict;
+import com.ai_helper.ai_helper.pojo.dto.TopicDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.util.DocScoreParser;
 import com.ai_helper.ai_helper.util.DocTextExtractor;
 import com.ai_helper.ai_helper.util.MaterialScorePrompts;
@@ -217,6 +222,14 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
     /** 【2026-10-25】送云端复核时本地点评最多带多少字 */
     private static final int REVIEW_COMMENTS_MAX_CHARS = 1500;
 
+    /**
+     * 【2026-10-27】方向判定最多带多少道预设题。
+     *
+     * <p>成本与稳定性双闸门：题越多输出行越长，3B 漏行概率越高；正常课题 3~5 道，
+     * 取 8 已覆盖"题库导入"后的常见规模，超出部分不参与判定。</p>
+     */
+    private static final int MAX_COVERAGE_QUESTIONS = 8;
+
     // ---------- 依赖 ----------
 
     private final StringRedisTemplate stringRedisTemplate;
@@ -233,6 +246,17 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
      * 判定口径只应有一份。本类只消费 {@link MaterialVerdict.Kind}，不关心模型怎么判出来的。</p>
      */
     private final MaterialVerdictService materialVerdictService;
+
+    /**
+     * 【2026-10-27】方向判定：本课题的预设题在材料里有没有被阐释。
+     *
+     * <p>与 {@link MaterialVerdictService} 分工：资格裁定回答"这是不是答辩材料"，
+     * 本服务回答"是不是**这个课题**的材料"。两者都不依赖具体课题，换课题只换数据。</p>
+     */
+    private final MaterialCoverageService materialCoverageService;
+
+    /** 预设题来源（按课题取题，判定复用；缺题时本判定不参与） */
+    private final DefenseTopicsMapper defenseTopicsMapper;
 
     /**
      * 【2026-10-25】云端复核（GLM-4.7 → 4.5-air → DeepSeek）。
@@ -320,10 +344,12 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
 
         // ⑥ 提交异步任务。抢到锁之后的所有失败路径都必须放锁，否则这个场次会被锁满 TTL
         String topicName = str(target.get("topicName"));
+        // 【2026-10-27】预设题覆盖判定需要 topicId（题目按课题取，换课题不换代码）
+        Integer topicId = intOf(target.get("topicId"));
         try {
             putStatus(defenseId, STATUS_PROCESSING, "已排队",
                     "分析任务已提交，正在等待执行", fp, cfg);
-            docAnalysisExecutor.execute(() -> runAnalysis(defenseId, relativePath, ext, topicName, fp));
+            docAnalysisExecutor.execute(() -> runAnalysis(defenseId, relativePath, ext, topicName, topicId, fp));
         } catch (RejectedExecutionException e) {
             unlock(defenseId);
             putStatus(defenseId, STATUS_FAILED, "已失败", "分析任务排队已满，请稍后重试", fp, cfg);
@@ -514,7 +540,7 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
     // 异步任务主体
     // ==================================================================
 
-    void runAnalysis(Integer defenseId, String relativePath, String ext, String topicName, String fp) {
+    void runAnalysis(Integer defenseId, String relativePath, String ext, String topicName, Integer topicId, String fp) {
         AppProperties.ReportDoc cfg = reportDoc();
         long deadline = System.currentTimeMillis() + cfg.getBudgetSeconds() * 1000L;
         try {
@@ -540,12 +566,40 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
             putStatus(defenseId, STATUS_PROCESSING, "材料裁定", "正在核对材料能否作为本课题的答辩材料", fp, cfg);
             MaterialVerdict verdict = materialVerdictService.judge(topicName, text);
             if (verdict.isRejected()) {
-                finishAsRejected(defenseId, verdict, cfg, fp);
+                finishAsRejected(defenseId, verdict, null, cfg, fp);
                 return;
             }
-            // UNKNOWN（模型没给出可识别结论 / 裁定不可用）走正常评分，绝不据此拦截
+            // 【2026-10-27 口径变更】模型没给出可识别结论（格式漂移/调用失败）不再放行：
+            // 放行意味着"判不准也给分"，与用户"宁可漏评、不给错分"的口径相反。
             if (verdict.kind() == MaterialVerdict.Kind.UNKNOWN) {
-                log.warn("材料裁定无可用结论，按合格处理继续评分 - defenseId: {}", defenseId);
+                log.warn("材料裁定无可用结论，按待复审处理（不出分）- defenseId: {}", defenseId);
+                finishAsRejected(defenseId, MaterialVerdict.unsure("未知类型",
+                        "材料裁定未给出可识别结论（可能是模型输出格式漂移）"), null, cfg, fp);
+                return;
+            }
+
+            // 【2026-10-27】方向闸门：本课题的预设题在材料里有没有被阐释。
+            // 与资格裁定分工：资格回答"是不是答辩材料"，方向回答"是不是**这个课题**的材料"。
+            // 判据来自数据库（defense_questions），代码里没有任何学科词，A/B/C 课题通用。
+            putStatus(defenseId, STATUS_PROCESSING, "方向核对", "正在核对材料是否讲到了本课题的预设题", fp, cfg);
+            MaterialCoverage coverage = judgeCoverage(topicId, topicName, text);
+            if (coverage.isApplicable()) {
+                log.info("预设题覆盖 - defenseId: {}, 命中 {}/{}", defenseId,
+                        coverage.getHitCount(), coverage.getTotal());
+            }
+            if (coverage.isRejected()) {
+                MaterialVerdict mismatch = MaterialVerdict.offTopic("其他材料",
+                        "本课题 " + coverage.getTotal() + " 道预设题在材料里 0 道有对应内容");
+                finishAsRejected(defenseId, mismatch, coverage.summary(), cfg, fp);
+                return;
+            }
+            if (coverage.isUnknown()) {
+                String why = coverage.getTotal() == 0
+                        ? "课题未配置预设题，无法核对材料方向，请教师补题后复审"
+                        : "无法判定材料是否阐释了本课题的预设题，请教师复审";
+                MaterialVerdict unclear = MaterialVerdict.unsure("未知类型", why);
+                finishAsRejected(defenseId, unclear, coverage.summary(), cfg, fp);
+                return;
             }
 
             // 分级备料：短材料直接评；长材料先抽证据，把点评输入压到**固定长度**
@@ -616,6 +670,12 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
             // 五维成绩单是主口径：**先落库**。综合评价是附加项，生成/落库失败都不能影响它。
             String analysis = buildAnalysisText(result, grounded, comments, cfg,
                     materialText.imageTotal(), materialText.imageOcr(), offTopic, engine);
+            // 【2026-10-27】把「预设题覆盖」逐题明细附在成绩单末尾：教师能看到
+            // 命中了哪几道题、哪几道没讲——这是"为什么给出这个方向判断"的唯一依据。
+            // 放在末尾是有意的：前端解析器只认「总分行 / 维度行 / ⚠️ 行」，其余整行忽略。
+            if (coverage.isApplicable()) {
+                analysis = analysis + "\n" + coverage.summary() + "\n";
+            }
             defenseRecordsMapper.updateReportDocAnalysis(defenseId, analysis,
                     BigDecimal.valueOf(result.getTotalScore()), SOURCE_REPORT);
 
@@ -890,14 +950,17 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
      * 0 分成绩单（{@code gradeSheet.parse} 会把「总分：0/50」当真实分数）。
      * 这段是裁定说明，不是成绩单，前端会走「原文兜底」原样展示。</p>
      */
-    private void finishAsRejected(Integer defenseId, MaterialVerdict verdict,
+    private void finishAsRejected(Integer defenseId, MaterialVerdict verdict, String detail,
                                   AppProperties.ReportDoc cfg, String fp) {
         String type = UploadUtils.isBlank(verdict.materialType()) ? "未知类型" : verdict.materialType();
         String reason = UploadUtils.isBlank(verdict.reason()) ? "（模型未给出理由）" : verdict.reason();
 
+        // 【2026-10-27】detail = 预设题逐题明细（可为空）：这是"为什么判无关"的证据，
+        // 教师能直接看到第几题没讲，而不是只有一句结论。
         String analysis = "⚠️ 材料未通过资格裁定：" + verdict.label() + "\n"
                 + "材料类型：" + type + "\n"
                 + "理由：" + reason + "\n"
+                + (UploadUtils.isBlank(detail) ? "" : detail + "\n")
                 + "处置：未进入五维评分，分数留空。教师可在「查看回答详情」点「云端复审」重新评定。\n"
                 + "评分引擎：本地 " + ollamaModelName + "（材料裁定）\n";
 
@@ -912,6 +975,77 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
         putResult(defenseId, "", analysis, fp, cfg);
         log.warn("材料裁定不合格，已标记待复审（不出分）- defenseId: {}, 类型: {}, 资格: {}, 理由: {}",
                 defenseId, type, verdict.label(), reason);
+    }
+
+    /**
+     * 【2026-10-27】方向闸门：本课题的预设题在材料里有没有被阐释。
+     *
+     * <p><b>为什么要这一步：</b>资格裁定只回答"这是不是答辩材料"，回答不了"是不是**这个课题**的
+     * 材料"——2026-10-27 {@code defenseId=377} 的思政调研作业被资格闸门放行并拿 39 分。
+     * 预设题来自 {@code defense_questions}，是课题本身要求阐释的内容，因此判据与课题绑定、
+     * 代码与课题解耦（换 A/B/C 课题只换数据）。</p>
+     *
+     * <p><b>分支：</b>无预设题 → 不参与（回落资格裁定）；全部题判出且 0 命中 → 判无关；
+     * 0 命中但有漏行 → 云端复核，仍判不准 → {@link MaterialCoverage#unknown}（待复审）。</p>
+     */
+    private MaterialCoverage judgeCoverage(Integer topicId, String topicName, String text) {
+        AppProperties.MaterialCoverage cfg = appProperties.getMaterialCoverage();
+        if (!cfg.isEnabled() || topicId == null) {
+            return MaterialCoverage.notApplicable();
+        }
+        List<String> questions = loadPresetQuestions(topicId);
+        if (questions.isEmpty()) {
+            // 【2026-10-27 用户口径】没有预设题 = 无法判断方向 → 判异常（待复审、不出分）。
+            // 旧行为是"跳过判定、直接评分"，377/378 正是这样拿到 39 分的。
+            if (cfg.isRequirePresetQuestions()) {
+                log.warn("课题未配置预设题，方向判定无法进行，按待复审处理 - topicId: {}", topicId);
+                return MaterialCoverage.unknown("课题未配置预设题", questions);
+            }
+            log.info("课题没有预设题且未要求必填，跳过方向判定 - topicId: {}", topicId);
+            return MaterialCoverage.notApplicable();
+        }
+
+        String description = null;
+        try {
+            TopicDto topic = defenseTopicsMapper.getTopicById(topicId);
+            description = topic == null ? null : topic.getTopicDescription();
+        } catch (Exception e) {
+            log.warn("读取课题描述失败（不影响方向判定）- topicId: {}, 原因: {}", topicId, e.getMessage());
+        }
+
+        MaterialCoverage local = materialCoverageService.judge(topicName, description, questions, text);
+        if (!local.isApplicable() || local.getHitCount() > 0 || !local.hasUnparsed()) {
+            return local;
+        }
+        // 0 命中但模型漏了行：本地判不准，才允许上云（用户 2026-10-27 口径）
+        MaterialCoverage cloud = materialCoverageService.reviewWithCloud(topicName, description, questions, text);
+        if (cloud != null && !cloud.hasUnparsed()) {
+            return cloud;
+        }
+        return MaterialCoverage.unknown(local.getRaw(), questions);
+    }
+
+    /** 取本课题的预设题（按题号顺序），最多 {@link #MAX_COVERAGE_QUESTIONS} 道 */
+    private List<String> loadPresetQuestions(Integer topicId) {
+        List<String> out = new ArrayList<>();
+        try {
+            List<DefenseQuestions> rows = defenseTopicsMapper.getDefenseQuestionById(topicId);
+            if (rows == null) {
+                return out;
+            }
+            for (DefenseQuestions q : rows) {
+                if (q == null || UploadUtils.isBlank(q.getQuestion())) {
+                    continue;
+                }
+                out.add(q.getQuestion().trim());
+                if (out.size() >= MAX_COVERAGE_QUESTIONS) {
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取预设题失败（跳过方向判定）- topicId: {}, 原因: {}", topicId, e.getMessage());
+        }
+        return out;
     }
 
     /** 第一次调用：按五维写点评（不打分）。异常由上层按阶段处理 */
@@ -1490,6 +1624,18 @@ public class ReportDocAnalysisServiceImpl implements ReportDocAnalysisService {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /** 【2026-10-27】Map 里的数字列可能是 Integer/Long/String，统一转 Integer，转不动返回 null */
+    private static Integer intOf(Object o) {
+        if (o == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(o).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

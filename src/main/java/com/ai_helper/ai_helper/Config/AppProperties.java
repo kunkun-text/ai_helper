@@ -39,6 +39,14 @@ public class AppProperties {
     /** 上传报告文档的 AI 评析配置（2026-10-16 · 报告五维评分第一期） */
     private ReportDoc reportDoc = new ReportDoc();
 
+    /**
+     * 材料方向判定：预设题覆盖（2026-10-27）。
+     *
+     * <p>与具体课题无关——判据是"本课题的预设题在材料里有没有被阐释"，
+     * 所以 A/B/C 任何课题都走同一套；报告、视频转写、未来任何学生提交的材料都能复用。</p>
+     */
+    private MaterialCoverage materialCoverage = new MaterialCoverage();
+
     /** 答辩视频的 AI 评分配置（2026-10-20 · VID 系列：听声识别 → 五维成绩单） */
     private VideoAnalysis videoAnalysis = new VideoAnalysis();
 
@@ -600,6 +608,40 @@ public class AppProperties {
          * TEXT 的 64KB 上限会静默截断。</p>
          */
         private boolean storeText = true;
+    }
+
+    /**
+     * 材料方向判定（预设题覆盖）：判定"这份材料有没有讲本课题要求的内容"。
+     *
+     * <p><b>与课题无关的可复用组件</b>：判据是 {@code defense_questions} 里的预设题，
+     * 不维护任何学科词表，换课题只换数据不换代码。</p>
+     *
+     * <p><b>口径（用户 2026-10-27）</b>：0 命中才拦（不出分、标待复审）；
+     * 命中 1 道及以上交正常五维评分。漏行视为"判不准" → 云端复核，仍不准 → 待复审。</p>
+     */
+    @Data
+    public static class MaterialCoverage {
+
+        /** 总开关。关掉 = 回到"只做资格裁定、不做方向判定"的老行为 */
+        private boolean enabled = true;
+
+        /** 送判定的材料字数上限（保头保尾；预设题要的是"有没有讲"，不需要全文） */
+        private int maxChars = 6000;
+
+        /** 单次判定的 maxTokens 上限（按题数动态算，这里封顶） */
+        private int maxTokens = 400;
+
+        /** 0 命中但有漏行时，是否允许交云端复核（未配置 key 时自动跳过） */
+        private boolean cloudReviewEnabled = true;
+
+        /**
+         * 【2026-10-27 用户口径】课题没有预设题时是否判「异常（待复审）」。
+         *
+         * <p>方向判定的唯一依据就是预设题：一道题都没有，就无法判断材料是不是本课题的。
+         * 此时**不出分、标待复审**，比"跳过判定直接给分"安全（377/378 就是这么拿到 39 分的）。
+         * 设为 false 则退回旧行为（跳过判定）。</p>
+         */
+        private boolean requirePresetQuestions = true;
     }
 
     /**

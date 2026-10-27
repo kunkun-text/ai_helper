@@ -1,6 +1,9 @@
 package com.ai_helper.ai_helper.Controller.student;
 
 import com.ai_helper.ai_helper.Service.MediaFileService;
+import com.ai_helper.ai_helper.mapper.DefenseTopicsMapper;
+import com.ai_helper.ai_helper.pojo.dto.TopicDto;
+import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
 import com.ai_helper.ai_helper.pojo.enums.MediaKind;
 import com.ai_helper.ai_helper.result.Result;
 import com.ai_helper.ai_helper.util.ReportTemplateBuilder;
@@ -20,7 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,6 +41,9 @@ public class ReportUploadController {
 
     private final MediaFileService mediaFileService;
 
+    /** 【2026-10-27】下载模板时按课题取预设题，直接印进模板 */
+    private final DefenseTopicsMapper defenseTopicsMapper;
+
     /** 上传规则：前端据此做前置校验 */
     @GetMapping("/policy")
     public Result<Map<String, Object>> policy() {
@@ -47,10 +55,41 @@ public class ReportUploadController {
      *
      * <p>模板类型与系统唯一可分析的类型保持一致（docx），并在正文前写明填写须知，
      * 让学生知道"在哪个文件里填、怎么填才能被模型评判"。</p>
+     *
+     * <p>【2026-10-27】带 {@code topicId} 时把该课题的**预设题印进模板**：
+     * 方向判定就是逐题核对报告有没有讲这些内容，题目先给学生，
+     * 才不会出现"学生不知道要写什么、系统判 0 命中"的错杀。</p>
      */
     @GetMapping("/template")
-    public ResponseEntity<byte[]> template() {
-        byte[] body = ReportTemplateBuilder.build();
+    public ResponseEntity<byte[]> template(@RequestParam(required = false) Integer topicId) {
+        String topicName = null;
+        String topicDescription = null;
+        List<String> questions = new ArrayList<>();
+        if (topicId != null) {
+            try {
+                TopicDto topic = defenseTopicsMapper.getTopicById(topicId);
+                if (topic != null) {
+                    topicName = topic.getTopicName();
+                    topicDescription = topic.getTopicDescription();
+                }
+                List<DefenseQuestions> rows = defenseTopicsMapper.getDefenseQuestionById(topicId);
+                if (rows != null) {
+                    for (DefenseQuestions q : rows) {
+                        if (q != null && q.getQuestion() != null && !q.getQuestion().isBlank()) {
+                            questions.add(q.getQuestion().trim());
+                        }
+                        if (questions.size() >= 10) {
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // 取题失败不能挡住下载：退化为空白模板，学生仍可手填
+                log.warn("下载模板时读取课题/预设题失败（按空白模板返回）- topicId: {}, 原因: {}",
+                        topicId, e.getMessage());
+            }
+        }
+        byte[] body = ReportTemplateBuilder.build(topicName, topicDescription, questions);
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename("AI答辩报告模板.docx", StandardCharsets.UTF_8)
                 .build();

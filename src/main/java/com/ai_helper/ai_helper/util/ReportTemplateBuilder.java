@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -54,8 +55,22 @@ public final class ReportTemplateBuilder {
     private ReportTemplateBuilder() {
     }
 
-    /** 生成模板文件字节（可直接作为下载流返回） */
+    /** 生成模板文件字节（不带课题：预设题留空，学生自己填） */
     public static byte[] build() {
+        return build(null, null, null);
+    }
+
+    /**
+     * 【2026-10-27】按课题生成模板：把该课题的**预设题直接印进「课题与预设题」章节**。
+     *
+     * <p>系统方向判定的依据就是这组题（0 命中 → 判与课题无关、不出分）。模板里先写死题目，
+     * 学生照着写、老师照着核，比让学生自己抄题可靠得多。</p>
+     *
+     * @param topicName        课题名（可为空）
+     * @param topicDescription 课题描述（可为空）
+     * @param questions        该课题的预设题（为空则输出空白填写位）
+     */
+    public static byte[] build(String topicName, String topicDescription, List<String> questions) {
         byte[] header = readResource(HEADER_RESOURCE);
         boolean withImages = header != null;
 
@@ -64,7 +79,7 @@ public final class ReportTemplateBuilder {
         parts.put("_rels/.rels", bytes(rootRelationships()));
         parts.put("word/_rels/document.xml.rels", bytes(documentRelationships(withImages)));
         parts.put("word/styles.xml", bytes(styles()));
-        parts.put("word/document.xml", bytes(document(withImages)));
+        parts.put("word/document.xml", bytes(document(withImages, topicName, topicDescription, questions)));
         if (withImages) {
             parts.put(HEADER_PART, header);
         }
@@ -87,7 +102,8 @@ public final class ReportTemplateBuilder {
     // 正文内容
     // ==================================================================
 
-    private static String document(boolean withImages) {
+    private static String document(boolean withImages, String topicName,
+                                   String topicDescription, List<String> questions) {
         StringBuilder b = new StringBuilder();
         b.append(DECLARATION);
         b.append("<w:document xmlns:w=\"").append(W_NS)
@@ -110,6 +126,8 @@ public final class ReportTemplateBuilder {
         b.append(pageBreak());
 
         // ---------- 正文骨架 ----------
+        b.append(presetSection(topicName, topicDescription, questions));
+
         b.append(p("Heading1", "一、选题背景与目标"));
         b.append(p(null, "【写作提示】说明课题来源、要解决的实际问题、目标与范围。建议 400~600 字。"));
         b.append(p(null, "1.1 课题背景"));
@@ -169,6 +187,7 @@ public final class ReportTemplateBuilder {
         // ---------- 自检 ----------
         b.append(p("Heading1", "提交前自检清单"));
         b.append(p(null, "□ 文件是 .docx 格式，且不超过 50MB"));
+        b.append(p(null, "□ 已照抄课题名称与全部预设题，且正文对每道题都有实际说明（缺了会被判「与课题无关」）"));
         b.append(p(null, "□ 正文不少于 3000 字（Word / WPS 左下角可查看字数）"));
         b.append(p(null, "□ 六个章节齐全，没有留下「【在此填写】」占位文字"));
         b.append(p(null, "□ 图片里的关键信息已经用文字复述"));
@@ -264,6 +283,44 @@ public final class ReportTemplateBuilder {
         return b.toString();
     }
 
+    /**
+     * 【2026-10-27】「课题与预设题」章节（方向核对的依据）。
+     *
+     * <p>学生端下载模板时会把当前 `topicId` 传上来，这里直接把真实课题与题目印进文档：
+     * 学生不用手抄、老师一眼能核，报告里也自然会有对应内容。没有传课题时退化为空白填写位。</p>
+     */
+    private static String presetSection(String topicName, String topicDescription, List<String> questions) {
+        StringBuilder b = new StringBuilder();
+        b.append(p("Heading1", "课题与预设题（必答）"));
+        b.append(p(null, "【为什么必答】系统会用本课题的预设题逐条核对报告：一道预设题都没有对应内容，"
+                + "会被判为「与课题无关」，不出分并转教师复审。题目不要改写或缩写。"));
+        b.append(p(null, "本课题要求设计的系统：" + (isBlank(topicName)
+                ? "【在此填写，与选题列表里的名称一致】" : topicName.trim())));
+        b.append(p(null, "课题简介：" + (isBlank(topicDescription)
+                ? "【1~2 句：做什么系统、解决什么问题】" : topicDescription.trim())));
+
+        if (questions == null || questions.isEmpty()) {
+            for (int i = 1; i <= 5; i++) {
+                b.append(p(null, "预设题 " + i + "：【照抄题目" + (i > 3 ? "；没有就写「无」" : "") + "】"));
+                b.append(p(null, "　对应的说明：【1~2 句：本报告哪一章回答了它】"));
+            }
+            return b.toString();
+        }
+
+        for (int i = 0; i < questions.size(); i++) {
+            String q = questions.get(i);
+            b.append(p(null, "预设题 " + (i + 1) + "：" + (isBlank(q) ? "【在此填写】" : q.trim())));
+            b.append(p(null, "　对应的说明：【1~2 句：本报告哪一章回答了它】"));
+        }
+        b.append(p(null, "【说明】以上 " + questions.size() + " 道题是本课题的答辩预设题，"
+                + "报告正文必须逐题作出实际说明（在对应章节里展开写）；只列标题、只出现名词不算。"));
+        return b.toString();
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
     /** 第 2 页：评分标准与写作要点 */
     private static String scoringGuide() {
         StringBuilder b = new StringBuilder();
@@ -327,6 +384,9 @@ public final class ReportTemplateBuilder {
         b.append(p(null, "7. 评分口径：表达、逻辑、专业、应变、创新五个维度各 10 分，合计 50 分。"
                 + "等级：35 分及以上优秀，26~34 良好，15~25 合格，5~14 不合格，5 分以下无效。"));
         b.append(p(null, "8. 缺少章节会被直接压分并标注「缺失」；「难点与局限」这一章最容易被忽略，也最容易被压分。"));
+        b.append(p(null, "9. 方向核对（必读）：报告开头必须写明课题名称与全部预设题，正文要对这些题有实际阐述。"
+                + "系统会逐题核对——本课题的预设题一道都没对上，会被判「与课题无关」，不出分并转教师复审。"
+                + "交别的课程作业、简历、合同等与课题无关的文件同样会被拦下。"));
         return b.toString();
     }
 

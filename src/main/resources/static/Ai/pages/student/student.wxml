@@ -401,46 +401,43 @@
           <!-- 【2026-10-25】报告评析改成与教师端「回答详情」同款卡片观感：
                总分 / 等级 / 五维逐项 + 评分引擎（本地 3B 或云端复核）。
                此前学生端只显示一大段裸文本，同一条成绩单两端长得不一样。 -->
+          <!-- 【N87 · 2026-10-27】本弹层（答辩详情）只放「五维评分」：总分 + 等级 + 五维卡片。
+               「报告综合评价」正文已迁到二级页「查看回答详情」，两处不再重复。
+               样式统一按教师端「回答详情」的成绩单（doc-score-summary / doc-dim-* + 「X 分」）。 -->
           <view class="form-item" wx:if="{{(selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc') || selectedRecord.reportDocAnalysis || selectedRecord.reportDocText}}">
-            <text class="label">报告 AI 五维评分（基于上传的文件）</text>
-            <!-- 【2026-10-25】材料裁定不合格：不进五维、不出分。这里讲清"文件是什么、为什么不评"，
-                 而不是丢一堆 0 分给学生。文案由 utils/materialVerdict.js 统一映射。 -->
-            <view wx:if="{{selectedRecord.materialVerdict && selectedRecord.materialVerdict !== 'ok'}}" class="doc-verdict">
+            <text class="label">报告 AI 五维评分（本地模型）</text>
+            <!-- 【N87 · 2026-10-27】材料裁定**只做只读状态**，学生不可操作：
+                 ① 判过不合格且未复审 → 「待复审」+ 类型/理由，且不出分；
+                 ② 教师云端复审通过 → 「已复审」（后端把 material_verdict 置 ok，正常材料该列为空）；
+                 ③ 正常材料 → 什么都不显示。 -->
+            <view wx:if="{{selectedRecord.verdictState === 'pending'}}" class="doc-verdict">
               <text class="doc-verdict-title">⚠️ 材料未通过资格裁定：{{selectedRecord.verdictLabel}}</text>
               <text wx:if="{{selectedRecord.materialVerdictType}}" class="doc-verdict-line">材料类型：{{selectedRecord.materialVerdictType}}</text>
               <text wx:if="{{selectedRecord.materialVerdictReason}}" class="doc-verdict-line">理由：{{selectedRecord.materialVerdictReason}}</text>
               <text class="doc-verdict-line">未进入五维评分，分数留空；教师复审后才会有成绩。</text>
             </view>
+            <text wx:elif="{{selectedRecord.verdictState === 'reviewed'}}" class="sc-tip">✅ 材料已通过教师复审，以下为复审后的成绩。</text>
             <block wx:if="{{reportDocSummary || reportDocDims.length > 0}}">
-              <view wx:if="{{reportDocSummary}}" class="sc-summary">
-                <text class="sc-total">{{reportDocSummary.total}}</text>
-                <text class="sc-total-max">/50</text>
-                <text wx:if="{{reportDocSummary.grade}}" class="g-tag g-tag-doc">{{reportDocSummary.grade}}</text>
+              <view wx:if="{{reportDocSummary}}" class="doc-score-summary">
+                <text class="doc-total">总分 {{reportDocSummary.total}}/50</text>
+                <text wx:if="{{reportDocSummary.grade}}" class="g-tag g-tag-doc">等级 {{reportDocSummary.grade}}</text>
                 <text wx:if="{{reportDocEngine}}" class="sc-total-note">{{reportDocEngine}}</text>
               </view>
-              <view wx:for="{{reportDocSummary.warnings}}" wx:key="*this" class="sc-tip">⚠️ {{item}}</view>
-              <view wx:for="{{reportDocDims}}" wx:key="name" class="sc-round">
-                <view class="sc-round-head">
-                  <text class="sc-round-title">{{item.missing ? '⚠️ ' : ''}}{{item.name}}</text>
-                  <text class="sc-round-total">{{item.score}} / 10</text>
+              <view wx:for="{{reportDocSummary.warnings}}" wx:key="*this" class="doc-warn">⚠️ {{item}}</view>
+              <view wx:for="{{reportDocDims}}" wx:key="name" class="doc-dim-item">
+                <view class="doc-dim-head">
+                  <text class="doc-dim-name">{{item.missing ? '⚠️ ' : ''}}{{item.name}}</text>
+                  <text class="doc-dim-score">{{item.score}} 分</text>
                 </view>
-                <text class="sc-round-comment">{{item.comment}}</text>
+                <text class="doc-dim-comment">{{item.comment}}</text>
               </view>
             </block>
-            <!-- 解析不出五维时展示原文，绝不静默丢内容 -->
-            <scroll-view wx:elif="{{reportDocRaw}}" class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
+            <!-- 解析不出五维时展示原文，绝不静默丢内容；待复审场次的原文就是上面的裁定说明，
+                 再滚一遍等于重复，这里跳过 -->
+            <scroll-view wx:elif="{{reportDocRaw && selectedRecord.verdictState !== 'pending'}}" class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
               <text class="value feedback">{{reportDocRaw}}</text>
             </scroll-view>
-            <text wx:else class="muted">报告已上传，AI 正在自动评析（约 1~2 分钟）。稍后重新打开本页即可看到五维分数。</text>
-            <!-- 【2026-10-25】报告综合评价（report_doc_summary）：与五维成绩单是两次独立调用，
-                 之前学生端只映射了 reportDocAnalysis，这段正文根本没显示，看着像"答辩评析没出来"。
-                 注意必须放在 if/elif/else 链之后，插在中间会打断 wx:elif 的兄弟关系。 -->
-            <block wx:if="{{selectedRecord.reportDocText}}">
-              <text class="label" style="margin-top: 20rpx;">报告综合评价</text>
-              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 700rpx;">
-                <text class="value feedback">{{selectedRecord.reportDocText}}</text>
-              </scroll-view>
-            </block>
+            <text wx:elif="{{selectedRecord.verdictState !== 'pending'}}" class="muted">报告已上传，AI 正在自动评析（约 1~2 分钟）。稍后重新打开本页即可看到五维分数。</text>
           </view>
           <view class="detail-actions" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">
             <button class="outline-btn" bindtap="openVideo">查看答辩视频</button>
@@ -482,42 +479,20 @@
             <text class="sc-tip">五维各 10 分、合计 50 分；等级与报告评析同一把尺子（≥35 优秀 / 26~34 良好 / 15~25 合格 / 5~14 不合格 / 5 分以下无效）。</text>
           </view>
 
-          <!-- 【2026-10-25】文档报告场次**一条作答都没有**：scoreSummary / scoreCards 都为空，
-               此前整个「回答详情」弹层是空白，学生以为答辩评析没生成。这里显示报告成绩单与综合评价，
-               数据来自已加载的「查看详情」（reportDoc* 与 selectedRecord 不随弹层关闭被清）。
-               完全不请求接口：报告评析由教师端触发，学生端只读。 -->
-          <view class="form-item" wx:if="{{!scoreSummary && scoreCards.length === 0 && selectedRecord && (selectedRecord.reportDocAnalysis || selectedRecord.reportDocText)}}">
-            <text class="label">答辩评析（基于上传的报告文档）</text>
-            <!-- 【2026-10-25】同一份裁定在「回答详情」也说明一次：学生常从这里找评析 -->
-            <view wx:if="{{selectedRecord.materialVerdict && selectedRecord.materialVerdict !== 'ok'}}" class="doc-verdict">
-              <text class="doc-verdict-title">⚠️ 材料未通过资格裁定：{{selectedRecord.verdictLabel}}</text>
-              <text wx:if="{{selectedRecord.materialVerdictType}}" class="doc-verdict-line">材料类型：{{selectedRecord.materialVerdictType}}</text>
-              <text wx:if="{{selectedRecord.materialVerdictReason}}" class="doc-verdict-line">理由：{{selectedRecord.materialVerdictReason}}</text>
+          <!-- 【N87 · 2026-10-27】文档报告场次**一条作答都没有**（scoreSummary / scoreCards 皆空）。
+               分层口径（用户 2026-10-27 拍板）：五维成绩单只留在「答辩详情」，
+               本弹层只负责「报告综合评价」正文——此前两处都放五维 + 综合评价，信息重复。
+               数据来自已加载的详情，不请求接口：报告评析由教师端触发，学生端只读。 -->
+          <view class="form-item" wx:if="{{!scoreSummary && scoreCards.length === 0 && selectedRecord && selectedRecord.reportDocText}}">
+            <text class="label">报告综合评价</text>
+            <view class="doc-summary-box">
+              <text class="doc-summary-text">{{selectedRecord.reportDocText}}</text>
             </view>
-            <view wx:if="{{reportDocSummary}}" class="sc-summary">
-              <text class="sc-total">{{reportDocSummary.total}}</text>
-              <text class="sc-total-max">/50</text>
-              <text wx:if="{{reportDocSummary.grade}}" class="g-tag g-tag-doc">{{reportDocSummary.grade}}</text>
-              <text wx:if="{{reportDocEngine}}" class="sc-total-note">{{reportDocEngine}}</text>
-            </view>
-            <view wx:for="{{reportDocSummary.warnings}}" wx:key="*this" class="sc-tip">⚠️ {{item}}</view>
-            <view wx:for="{{reportDocDims}}" wx:key="name" class="sc-round">
-              <view class="sc-round-head">
-                <text class="sc-round-title">{{item.missing ? '⚠️ ' : ''}}{{item.name}}</text>
-                <text class="sc-round-total">{{item.score}} / 10</text>
-              </view>
-              <text class="sc-round-comment">{{item.comment}}</text>
-            </view>
-            <scroll-view wx:if="{{reportDocDims.length === 0 && reportDocRaw}}" class="long-text-scroll" scroll-y="true" style="max-height: 400rpx;">
-              <text class="value feedback">{{reportDocRaw}}</text>
-            </scroll-view>
-            <block wx:if="{{selectedRecord.reportDocText}}">
-              <text class="label" style="margin-top: 20rpx;">报告综合评价</text>
-              <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 700rpx;">
-                <text class="value feedback">{{selectedRecord.reportDocText}}</text>
-              </scroll-view>
-            </block>
-            <text class="sc-tip">本场次没有逐轮问答，成绩来自上传报告的 AI 评析（教师端触发）。</text>
+            <text class="sc-tip">五维评分请在「答辩详情」查看；本场次没有逐轮问答，评析来自上传报告的 AI 分析（教师端触发）。</text>
+          </view>
+          <!-- 材料未通过裁定（未复审）：没有综合评价正文，给出明确去向，别让弹层空白 -->
+          <view class="form-item" wx:elif="{{!scoreSummary && scoreCards.length === 0 && selectedRecord && selectedRecord.verdictState === 'pending'}}">
+            <text class="muted">该场次材料未通过资格裁定，暂无综合评价。裁定理由可在「答辩详情」查看，教师复审后才会出分。</text>
           </view>
 
           <!-- 逐轮判定：每轮一张卡，分数 + 等级 + 该轮大模型评语（依据） -->

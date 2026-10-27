@@ -1018,6 +1018,8 @@ Page({
             materialVerdictType: detailData.materialVerdictType || '',
             materialVerdictReason: detailData.materialVerdictReason || '',
             verdictLabel: verdictText.shortLabel(detailData.materialVerdict),
+            // 【N87 · 2026-10-27】三态只读展示：'' 正常不显示 / pending 待复审 / reviewed 已复审
+            verdictState: verdictText.state(detailData.materialVerdict),
             feedback: detailData.aiAllAnalysis || '暂无综合评价'
           };
           
@@ -1815,15 +1817,34 @@ Page({
    * - 手机端：`wx.openDocument` 打开，右上角「…」→ 另存为 / 发送给朋友；
    * - 打不开时：复制模板链接，提示用电脑浏览器打开保存（浏览器有自己的保存对话框）。
    */
+  /**
+   * 【2026-10-27】模板下载地址：带上当前选题的 topicId。
+   *
+   * <p>后端会把这个课题的**预设题直接印进模板的「课题与预设题」章节**——
+   * 方向判定是逐题核对报告有没有讲这些内容，题目先发给学生，
+   * 才不会出现"学生不知道写什么、系统判 0 命中"的错杀。没选课题时退回空白模板。</p>
+   */
+  buildReportTemplateUrl() {
+    const topicId = wx.getStorageSync('student:selectedTopicId');
+    const base = config.getBaseUrl() + '/api/report/template';
+    return topicId ? (base + '?topicId=' + encodeURIComponent(topicId)) : base;
+  },
+
   downloadReportTemplate() {
     const token = this.data.token;
     if (!token) {
       handleAuthExpired();
       return;
     }
+    // 【2026-10-27】模板里的「课题与预设题」来自当前选题：没选课题就会下载到空白模板，
+    // 学生照着空白模板写，报告很可能 0 命中预设题被判待复审——所以先拦一下。
+    if (!wx.getStorageSync('student:selectedTopicId')) {
+      wx.showToast({ title: '请先在「答辩题目」里选择课题', icon: 'none' });
+      return;
+    }
     wx.showLoading({ title: '正在下载模板...' });
     wx.downloadFile({
-      url: config.getBaseUrl() + '/api/report/template',
+      url: this.buildReportTemplateUrl(),
       header: {
         'Authorization': 'Bearer ' + token
       },
@@ -1939,7 +1960,7 @@ Page({
    */
   copyTemplateLink() {
     wx.setClipboardData({
-      data: config.getBaseUrl() + '/api/report/template',
+      data: this.buildReportTemplateUrl(),
       success: () => {
         wx.showModal({
           title: '已复制模板链接',

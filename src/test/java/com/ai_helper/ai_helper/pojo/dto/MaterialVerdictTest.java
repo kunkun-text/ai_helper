@@ -91,4 +91,45 @@ class MaterialVerdictTest {
         assertEquals(MaterialVerdict.Kind.OK,
                 MaterialVerdict.parse("类型:答辩报告\n资格:通过（主题一致）\n理由:同一系统").kind());
     }
+
+    @Test
+    @DisplayName("【2026-10-27 defenseId=377 原文】单行 + 斜杠分隔 + 无标签 → 必须判跑题")
+    void singleLineWithSlash() {
+        MaterialVerdict v = MaterialVerdict.parse(
+                "答辩报告 / 内容不足 / 通篇内容与课题无关，讲的是山区基层医疗卫生保障调查，而非成绩单验证");
+        // 模型写的是"内容不足"，但理由明确"与课题无关" → 升级为跑题（真正的失败原因是方向不符）
+        assertEquals(MaterialVerdict.Kind.OFF_TOPIC, v.kind());
+        assertTrue(v.isRejected());
+        assertEquals("suspect_offtopic", v.code());
+        assertEquals("答辩报告", v.materialType());
+        assertTrue(v.reason().contains("山区"), "理由应保留原文，便于教师核对：" + v.reason());
+    }
+
+    @Test
+    @DisplayName("单行但保留标签 → 仍按标签解析")
+    void singleLineWithLabels() {
+        MaterialVerdict v = MaterialVerdict.parse(
+                "类型:答辩报告 / 资格:通过 / 理由:讲的就是本课题的仓储系统");
+        assertEquals(MaterialVerdict.Kind.OK, v.kind());
+        assertEquals("答辩报告", v.materialType());
+        assertTrue(v.reason().contains("仓储"));
+    }
+
+    @Test
+    @DisplayName("资格写成内容不足、理由却点明与课题无关 → 升级为跑题")
+    void upgradeInsufficientToOffTopic() {
+        MaterialVerdict v = MaterialVerdict.parse(
+                "类型:课程作业\n资格:内容不足\n理由:通篇讲基层医疗调研，与本课题无关");
+        assertEquals(MaterialVerdict.Kind.OFF_TOPIC, v.kind());
+    }
+
+    @Test
+    @DisplayName("判不准：UNSURE 不出分，落库 unclear（前端映射「待复审」）")
+    void unsureIsRejected() {
+        MaterialVerdict v = MaterialVerdict.unsure("未知类型", "模型输出格式漂移");
+        assertEquals(MaterialVerdict.Kind.UNSURE, v.kind());
+        assertTrue(v.isRejected());
+        assertEquals("unclear", v.code());
+        assertEquals("无法判定", v.label());
+    }
 }
