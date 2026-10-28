@@ -3,6 +3,7 @@ package com.ai_helper.ai_helper.Controller.student;
 import com.ai_helper.ai_helper.Service.ChunkUploadService;
 import com.ai_helper.ai_helper.Service.MediaFileService;
 import com.ai_helper.ai_helper.Service.VideoProcessingService;
+import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
 import com.ai_helper.ai_helper.pojo.enums.MediaKind;
 import com.ai_helper.ai_helper.result.Result;
 import com.ai_helper.ai_helper.util.UploadUtils;
@@ -59,7 +60,7 @@ public class VideoUploadController {
                                            @RequestParam(value = "defenseId", required = false) Integer defenseId,
                                            HttpServletRequest request) {
         return Result.success(chunkUploadService.init(
-                currentUserNumber(request), topicId, defenseId, fileName, fileSize));
+                AuthInterceptor.currentUserNumber(request), topicId, defenseId, fileName, fileSize));
     }
 
     /** 上传单个分片，请求体为分片原始字节（Content-Type: application/octet-stream） */
@@ -68,28 +69,28 @@ public class VideoUploadController {
                                                  @RequestParam("partNumber") int partNumber,
                                                  @RequestBody byte[] data,
                                                  HttpServletRequest request) {
-        return Result.success(chunkUploadService.savePart(currentUserNumber(request), uploadId, partNumber, data));
+        return Result.success(chunkUploadService.savePart(AuthInterceptor.currentUserNumber(request), uploadId, partNumber, data));
     }
 
     /** 查询已成功的分片，失败重试时用于续传 */
     @GetMapping("/status")
     public Result<Map<String, Object>> status(@RequestParam("uploadId") String uploadId,
                                              HttpServletRequest request) {
-        return Result.success(chunkUploadService.status(currentUserNumber(request), uploadId));
+        return Result.success(chunkUploadService.status(AuthInterceptor.currentUserNumber(request), uploadId));
     }
 
     /** 全部分片完成后合并入库 */
     @PostMapping("/complete")
     public Result<Map<String, Object>> complete(@RequestParam("uploadId") String uploadId,
                                                HttpServletRequest request) {
-        return Result.success(chunkUploadService.complete(currentUserNumber(request), uploadId));
+        return Result.success(chunkUploadService.complete(AuthInterceptor.currentUserNumber(request), uploadId));
     }
 
     /** 放弃本次上传，清理半成品文件 */
     @PostMapping("/abort")
     public Result<Map<String, Object>> abort(@RequestParam("uploadId") String uploadId,
                                             HttpServletRequest request) {
-        chunkUploadService.abort(currentUserNumber(request), uploadId);
+        chunkUploadService.abort(AuthInterceptor.currentUserNumber(request), uploadId);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("aborted", true);
         return Result.success(data);
@@ -101,14 +102,14 @@ public class VideoUploadController {
                                              @RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
         return Result.success(mediaFileService.saveWholeFile(
-                currentUserNumber(request), topicId, MediaKind.VIDEO, file));
+                AuthInterceptor.currentUserNumber(request), topicId, MediaKind.VIDEO, file));
     }
 
     /** 查询某个题目下已上传的视频 */
     @GetMapping("/url")
     public Result<Map<String, Object>> getUrl(@RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
-        String url = mediaFileService.getFileUrl(currentUserNumber(request), topicId, MediaKind.VIDEO);
+        String url = mediaFileService.getFileUrl(AuthInterceptor.currentUserNumber(request), topicId, MediaKind.VIDEO);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("videoUrl", url);
         data.put("hasVideo", !UploadUtils.isBlank(url));
@@ -119,7 +120,7 @@ public class VideoUploadController {
     @PostMapping("/delete")
     public Result<Map<String, Object>> delete(@RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
-        mediaFileService.deleteFile(currentUserNumber(request), topicId, MediaKind.VIDEO);
+        mediaFileService.deleteFile(AuthInterceptor.currentUserNumber(request), topicId, MediaKind.VIDEO);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("deleted", true);
         return Result.success(data);
@@ -131,10 +132,5 @@ public class VideoUploadController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", videoProcessingService.getProcessingStatus(processingId));
         return Result.success(data);
-    }
-
-    private String currentUserNumber(HttpServletRequest request) {
-        Object value = request.getAttribute("userNumber");
-        return value == null ? null : String.valueOf(value);
     }
 }

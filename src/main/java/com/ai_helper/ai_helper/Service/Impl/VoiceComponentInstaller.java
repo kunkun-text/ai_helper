@@ -513,7 +513,7 @@ public class VoiceComponentInstaller {
     /** 构造 HTTP 客户端：跟随重定向（hf-mirror 会 302 到 CDN），可选用代理 */
     private HttpClient buildClient() {
         HttpClient.Builder builder = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
+                .connectTimeout(Duration.ofSeconds(appProperties.getVoice().getDownloadConnectTimeoutSeconds()))
                 .followRedirects(HttpClient.Redirect.NORMAL);
 
         String proxy = appProperties.getVoice().getProxy();
@@ -535,7 +535,7 @@ public class VoiceComponentInstaller {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .header("User-Agent", "ai-helper-voice-bootstrap")
                 .header("Accept", "application/vnd.github+json")
-                .timeout(Duration.ofSeconds(40))
+                .timeout(Duration.ofSeconds(appProperties.getVoice().getDownloadTimeoutSeconds()))
                 .GET()
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

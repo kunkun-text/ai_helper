@@ -107,6 +107,8 @@ Page({
         topicId: this.data.topicId,
         userId: this.data.userId,
         resume: !!resume,
+        // 【2026-10-28】标记答辩形式，后端写入 defense_mode
+        mode: 'text',
       },
       header: {
         'Authorization': 'Bearer ' + auth.getToken(),

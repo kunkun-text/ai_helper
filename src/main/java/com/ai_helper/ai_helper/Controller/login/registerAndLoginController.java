@@ -24,12 +24,23 @@ public class registerAndLoginController {
 
     @PostMapping("/register/student")
     public Result register(@Valid @RequestBody UserDto userDto) {
+        // 【2026-10-28】按接口路径兜底角色：此前完全依赖请求体里的 role，
+        // 缺字段时直接抛 DataIntegrityViolation（users.role 非空），前端只看到"注册失败，请稍后重试"。
+        fillRoleIfBlank(userDto, "student");
         return registerService.register(userDto);
     }
 
     @PostMapping("/register/teacher")
-    public Result Tregister(@Valid @RequestBody UserDto userDto) {
+    public Result registerTeacher(@Valid @RequestBody UserDto userDto) {
+        fillRoleIfBlank(userDto, "teacher");
         return registerService.register(userDto);
+    }
+
+    /** 请求体没带 role（或空串）时按接口路径补默认值，避免裸 500 */
+    private static void fillRoleIfBlank(UserDto dto, String role) {
+        if (dto != null && (dto.getRole() == null || dto.getRole().trim().isEmpty())) {
+            dto.setRole(role);
+        }
     }
 
     @PostMapping("/login/student")
@@ -39,7 +50,7 @@ public class registerAndLoginController {
     }
 
     @PostMapping("/login/teacher")
-    public Result Tlogin(@Valid @RequestBody UserDto userDto, HttpServletRequest request) {
+    public Result loginTeacher(@Valid @RequestBody UserDto userDto, HttpServletRequest request) {
         // 【N77 · 2026-10-15】传客户端 IP，供「失败次数过多短期锁定」计数
         return registerService.login(userDto, request.getRemoteAddr());
     }

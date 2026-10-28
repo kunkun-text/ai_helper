@@ -5,6 +5,7 @@ import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.Service.ChunkUploadService;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.FileStorageService;
+import com.ai_helper.ai_helper.Service.VideoAnalysisService;
 import com.ai_helper.ai_helper.Service.VideoProcessingService;
 import com.ai_helper.ai_helper.exception.BusinessException;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
@@ -60,6 +61,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final DefenseRecordsMapper defenseRecordsMapper;
     private final DefenseRecordsService defenseRecordsService;
     private final VideoProcessingService videoProcessingService;
+    private final VideoAnalysisService videoAnalysisService;
 
     @Override
     public Map<String, Object> init(String loginUserNumber, Integer topicId, Integer defenseId,
@@ -249,9 +251,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String publicUrl = fileStorageService.toPublicUrl(relativePath);
 
         // 替换前先记住旧文件，合并成功后再删除，避免「删了旧的、新的又没写进去」
-        // 【2026-10-25】旧地址改用确定性读取（优先进行中场次）。旧实现 LIMIT 1 无排序，
-        // 多记录时可能取到别的场次的 URL，导致"换视频"把另一场的视频文件删掉。
-        String oldUrl = defenseRecordsMapper.getLatestVideoUrlByUserAndTopic(internalUserId, topicId);
+        // 【2026-10-28】只按【本场次】取旧地址：换视频时只允许删自己这条的旧文件。
+        // 旧实现用 getLatestVideoUrlByUserAndTopic（跨场次"最新一条"），
+        // 一旦这次写的是新建场次，取到的就是上一场的 URL → 上一场视频文件被误删。
+        String oldUrl = defenseRecordsMapper.getVideoUrlByDefenseId(defenseId);
 
         defenseRecordsMapper.updateVideoUrlById(defenseId.longValue(), publicUrl);
 
@@ -265,6 +268,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String processingId = IdUtil.simpleUUID();
         videoProcessingService.processVideoAsync(processingId, relativePath, user, topicId);
 
+        // 【2026-10-28】上传完成即自动提交评分（用户口径：学生传完后台就开始打分）
+        autoTriggerVideoAnalysis(defenseId);
+
         log.info("视频上传完成 - uploadId: {}, defenseId: {}, url: {}, 大小: {}",
                 uploadId, defenseId, publicUrl, UploadUtils.readableSize(fileSize));
 
@@ -274,6 +280,33 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         result.put("fileSize", fileSize);
         result.put("totalParts", totalParts);
         return result;
+    }
+
+    /**
+     * 【2026-10-28】上传完成后自动提交视频评分任务。
+     *
+     * <p><b>为什么 try/catch 全包</b>：评分只是"锦上添花"，上传成功必须如实返回。
+     * 组件未就绪、开关关闭、同一场正在评分（任务锁被占）都只记日志，
+     * 教师端仍可手动点「AI 评分」重试。</p>
+     *
+     * <p>评分本身是异步提交（单线程池），这里不会阻塞上传响应。</p>
+     */
+    private void autoTriggerVideoAnalysis(Integer defenseId) {
+        if (defenseId == null) {
+            return;
+        }
+        AppProperties.VideoAnalysis cfg = appProperties.getVideoAnalysis();
+        if (cfg == null || !cfg.isAutoAnalyzeOnUpload()) {
+            return;
+        }
+        try {
+            Map<String, Object> status = videoAnalysisService.trigger(defenseId, false);
+            log.info("视频上传完成，已自动提交评分任务 - defenseId: {}, stage: {}",
+                    defenseId, status == null ? "" : status.get("stage"));
+        } catch (Exception e) {
+            log.warn("自动提交视频评分失败（不影响上传结果，教师可手动重试） - defenseId: {}, 原因: {}",
+                    defenseId, e.getMessage());
+        }
     }
 
     @Override

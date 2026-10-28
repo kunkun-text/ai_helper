@@ -23,6 +23,12 @@ Page({
    */
   onLoad(options) {},
 
+  // 【2026-10-28】页面卸载兜底：手势被系统中断（来电/切后台）时，密码不得残留明文显示
+  onUnload() {
+    if (this.data.longPressTimer) clearTimeout(this.data.longPressTimer);
+    if (this.data.showPwd) this.setData({ showPwd: false });
+  },
+
   // 选择身份（学生/教师）
   selectRole(e) {
     const role = e.currentTarget.dataset.role;

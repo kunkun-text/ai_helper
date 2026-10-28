@@ -7,6 +7,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -25,9 +26,13 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class ChatConfiguration {
 
+    /** 会话记忆分布式锁 TTL（秒）：默认 10，低功耗/高负载部署可按需调整（app.chat.memory-lock-ttl-seconds） */
+    @Value("${app.chat.memory-lock-ttl-seconds:10}")
+    private long memoryLockTtlSeconds;
+
     @Bean
     public ChatMemory chatMemory(RedisTemplate<String, Object> redisTemplate, StringRedisTemplate stringRedisTemplate) {
-        return new RedisChatMemory(redisTemplate, stringRedisTemplate);
+        return new RedisChatMemory(redisTemplate, stringRedisTemplate, memoryLockTtlSeconds);
     }
     
     /**
@@ -62,9 +67,14 @@ public class ChatConfiguration {
         private static final int LOCK_RETRY_TIMES = 5;
         private static final long LOCK_RETRY_INTERVAL_MILLIS = 50;
         
-        public RedisChatMemory(RedisTemplate<String, Object> redisTemplate, StringRedisTemplate stringRedisTemplate) {
+        /** 分布式锁 TTL（秒），由 app.chat.memory-lock-ttl-seconds 注入（默认 10） */
+        private final long lockTtlSeconds;
+
+        public RedisChatMemory(RedisTemplate<String, Object> redisTemplate, StringRedisTemplate stringRedisTemplate,
+                               long lockTtlSeconds) {
             this.redisTemplate = redisTemplate;
             this.stringRedisTemplate = stringRedisTemplate;
+            this.lockTtlSeconds = lockTtlSeconds;
         }
         
         @Override
@@ -143,7 +153,7 @@ public class ChatConfiguration {
         /** 取锁成功则写入消息并释放锁；取不到锁返回 false（由调用方决定是否重试） */
         private boolean appendWithLock(String key, String lockKey, String lockValue,
                                        List<Message> messages, boolean firstAttempt) {
-            Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
+            Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, lockTtlSeconds, TimeUnit.SECONDS);
             if (!Boolean.TRUE.equals(locked)) {
                 if (firstAttempt) {
                     log.warn("【Redis锁】未取得锁，进入重试 - lockKey: {}", lockKey);

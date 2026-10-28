@@ -103,6 +103,7 @@
             dr.video_url as defenseVideoUrl,
             dr.report_url as defenseReportUrl,
             dr.video_analysis as aiVideoAnalysis,
+            dr.video_summary as aiVideoSummary,
             dr.report_analysis as aiReportAnalysis,
             dr.feedback as aiAllAnalysis,
             dr.report_doc_analysis as reportDocAnalysis,
@@ -351,6 +352,14 @@
           AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = dr.defense_id)
           AND NOT EXISTS (SELECT 1 FROM defense_student_questions dsq WHERE dsq.defense_id = dr.defense_id)
           AND NOT EXISTS (SELECT 1 FROM defense_score_record dsr WHERE dsr.defense_id = dr.defense_id)
+          <!-- 【2026-10-28】必须同时判「有没有附件」：与 deleteEmptyShellRecords /
+               selectReusableMaterialDefenseId 的口径保持一致（N84 的双防线）。
+               漏判的后果（本次实测）：视频传完但教师还没触发评分时 video_words /
+               video_analysis 都是空，这条"带视频的场次"仍被当成空壳 → 学生第二次上传
+               命中本查询 → updateVideoUrlById 覆盖同一场 → 第一次的视频被挤掉，
+               旧文件还会被 complete() 顺手删掉。补上附件条件后，第二次上传会新建独立场次。 -->
+          AND (dr.video_url IS NULL OR TRIM(dr.video_url) IN ('', 'abc'))
+          AND (dr.report_url IS NULL OR TRIM(dr.report_url) IN ('', 'abc'))
           <!-- 【2026-10-25 二次修正】已有分析产物的记录不算空壳：
                358 是恢复出来的旧视频场次（video_url 空了但 video_analysis 还在 7/50），
                学生上传简历时被判为空壳而挂了上去，详情里就同时出现
@@ -386,6 +395,15 @@
           AND video_url IS NOT NULL AND TRIM(video_url) != '' AND video_url != 'abc'
         ORDER BY (status = 'pending') DESC, defense_id DESC
         LIMIT 1
+    </select>
+
+    <!-- 【2026-10-28】按【本场次】精确读旧视频地址：换视频时只允许删本场自己的旧文件。
+         旧实现用 getLatestVideoUrlByUserAndTopic（跨场次"最新一条"），
+         新建场次后旧URL属于上一场，会把上一场的视频文件误删（URL 还在、文件没了）。 -->
+    <select id="getVideoUrlByDefenseId" resultType="java.lang.String">
+        SELECT video_url
+        FROM defense_records
+        WHERE defense_id = #{defenseId}
     </select>
 
     <!-- 【2026-10-25】读取「当前该展示的」报告地址（口径同视频） -->
@@ -561,6 +579,7 @@
             dr.video_url      AS videoUrl,
             dr.video_words    AS videoWords,
             dr.video_analysis AS videoAnalysis,
+            dr.video_summary  AS videoSummary,
             dr.analysis_source AS analysisSource,
             dt.topic_name     AS topicName
         FROM defense_records dr
@@ -586,6 +605,37 @@
             analysis_source = #{source},
             updated_at      = NOW()
         WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-28】答辩形式（text / voice）。
+         此前 defense_mode 列建了但**从未写入**，列表/详情看不出这轮是语音还是文字答辩；
+         现在由 /api/chat/clear 的 mode 参数传入，只写这一列，不碰其它字段。 -->
+    <update id="updateDefenseMode">
+        UPDATE defense_records
+        SET defense_mode = #{mode}
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-28】视频综合评价：单独一个 UPDATE，只写 video_summary。
+         它是附加项——生成/落库失败不影响五维成绩单（与 report_doc_summary 同口径）。 -->
+    <update id="updateVideoSummary">
+        UPDATE defense_records
+        SET video_summary = #{summary},
+            updated_at    = NOW()
+        WHERE defense_id = #{defenseId}
+    </update>
+
+    <!-- 【2026-10-28 · 视频答辩收尾】视频评分出分后，把这一场直接判为「已完成」并写入总分。
+         用户口径与文档评析一致：一次上传 = 一次完整答辩，评完就该在列表右侧显示分数，
+         而不是永远挂「暂无评分 / 未完成」。
+         只在**一条作答都没有**时才改：先答了文字/语音再传视频的场次，总分必须以逐轮为准。 -->
+    <update id="completeVideoDefense">
+        UPDATE defense_records
+        SET score = #{score},
+            status = 'completed',
+            updated_at = NOW()
+        WHERE defense_id = #{defenseId}
+          AND NOT EXISTS (SELECT 1 FROM defense_answers da WHERE da.defense_id = defense_records.defense_id)
     </update>
 
     <!-- 【2026-10-25】材料裁定不合格：只写裁定三列 + 说明，**不碰分数**。

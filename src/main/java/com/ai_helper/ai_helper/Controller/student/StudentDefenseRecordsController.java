@@ -2,6 +2,7 @@ package com.ai_helper.ai_helper.Controller.student;
 
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
+import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
 import com.ai_helper.ai_helper.mapper.DefenseRecordsMapper;
 import com.ai_helper.ai_helper.pojo.entity.DefenseScoreRecord;
 import com.ai_helper.ai_helper.pojo.entity.DefenseTopics;
@@ -43,7 +44,7 @@ public class StudentDefenseRecordsController {
             @RequestParam(defaultValue = "10") int pageSize,
             HttpServletRequest request
     ) {
-        String userNumber = currentUserNumber(request);
+        String userNumber = AuthInterceptor.currentUserNumber(request);
         if (UploadUtils.isBlank(userNumber)) {
             return Result.error("登录状态已失效，请重新登录");
         }
@@ -101,17 +102,12 @@ public class StudentDefenseRecordsController {
      * 归属校验：该答辩记录是否属于当前登录学生。
      */
     private boolean isOwnedByCurrentUser(Integer defenseId, HttpServletRequest request) {
-        String userNumber = currentUserNumber(request);
+        String userNumber = AuthInterceptor.currentUserNumber(request);
         if (defenseId == null || UploadUtils.isBlank(userNumber)) {
             return false;
         }
         String internalUserId = defenseRecordsMapper.getUserIdByUserNumber(userNumber.trim());
         return internalUserId != null
                 && defenseRecordsMapper.countOwnedDefenseRecord(defenseId, internalUserId) > 0;
-    }
-
-    private String currentUserNumber(HttpServletRequest request) {
-        Object value = request.getAttribute("userNumber");
-        return value == null ? null : String.valueOf(value);
     }
 }

@@ -46,14 +46,31 @@ public class PasswordResetServiceImpl implements PasswordResetService {
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    /** 【N76】同一邮箱重置邮件发送冷却：60 秒一封，防邮件轰炸 */
-    private static final long RESET_EMAIL_COOLDOWN_SECONDS = 60;
+    /** 【N76】同一邮箱重置邮件发送冷却（秒）：默认 60，防邮件轰炸 */
+    @Value("${app.mail.reset-cooldown-seconds:60}")
+    private long resetCooldownSeconds;
+
+    /** 重置 token 有效期（分钟）：默认 30，可按部署环境调整 */
+    @Value("${app.mail.reset-token-ttl-minutes:30}")
+    private long resetTokenTtlMinutes;
+
+    /**
+     * 邮箱脱敏（仅用于日志）：保留首字符与域名，其余掩码。
+     * 【2026-10-28】邮箱属 PII，不再明文落日志；排障仍可定位到人。
+     */
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank() || !email.contains("@")) {
+            return "***";
+        }
+        int at = email.indexOf('@');
+        return email.charAt(0) + "***" + email.substring(at);
+    }
 
     @Override
     public Result sendResetEmail(String email) {
         // 【N76 · 2026-10-15】发送冷却（先于注册校验）：同一邮箱 60 秒内只发一封
         Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
-                "password:reset:cooldown:" + email, "1", RESET_EMAIL_COOLDOWN_SECONDS, TimeUnit.SECONDS);
+                "password:reset:cooldown:" + email, "1", resetCooldownSeconds, TimeUnit.SECONDS);
         if (!Boolean.TRUE.equals(acquired)) {
             return Result.error("发送过于频繁，请 1 分钟后再试");
         }
@@ -61,18 +78,18 @@ public class PasswordResetServiceImpl implements PasswordResetService {
         // 1. 验证邮箱是否存在。【N76】未注册不再回显「该邮箱未注册」——防枚举，统一按已发送口径回复
         UserDto user = passwordResetMapper.selectByEmail(email);
         if (user == null) {
-            log.info("密码重置请求：邮箱未注册（统一文案回复，不向调用方回显） - {}", email);
+            log.info("密码重置请求：邮箱未注册（统一文案回复，不向调用方回显） - {}", maskEmail(email));
             return Result.success("若该邮箱已注册，重置邮件将发送至该邮箱，请查收");
         }
 
         // 2. 生成 token
         String token = UUID.randomUUID().toString();
 
-        // 3. 存入 Redis，30 分钟过期
+        // 3. 存入 Redis，默认 30 分钟过期（app.mail.reset-token-ttl-minutes 可调）
         redisTemplate.opsForValue().set(
                 "password:reset:" + token,
                 email,
-                30, TimeUnit.MINUTES
+                resetTokenTtlMinutes, TimeUnit.MINUTES
         );
 
         // 4. 发送重置邮件（【N35】链接前缀与发件人均改为配置项，不再硬编码）
@@ -88,11 +105,11 @@ public class PasswordResetServiceImpl implements PasswordResetService {
 
         try {
             mailSender.send(message);
-            log.info("密码重置邮件已发送至：" + email);
+            log.info("密码重置邮件已发送至 - {}", maskEmail(email));
             return Result.success("重置邮件已发送，请查收");
         } catch (Exception e) {
             // 【F2】SMTP 细节（主机/端口/账号）只记日志，不回传前端
-            log.error("密码重置邮件发送失败 - 收件人: {}", email, e);
+            log.error("密码重置邮件发送失败 - 收件人: {}", maskEmail(email), e);
             return Result.error("邮件发送失败，请稍后重试或联系管理员");
         }
     }

@@ -1,6 +1,7 @@
 package com.ai_helper.ai_helper.Controller.student;
 
 import com.ai_helper.ai_helper.Service.MediaFileService;
+import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
 import com.ai_helper.ai_helper.mapper.DefenseTopicsMapper;
 import com.ai_helper.ai_helper.pojo.dto.TopicDto;
 import com.ai_helper.ai_helper.pojo.entity.DefenseQuestions;
@@ -106,13 +107,13 @@ public class ReportUploadController {
                                              @RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
         return Result.success(mediaFileService.saveWholeFile(
-                currentUserNumber(request), topicId, MediaKind.REPORT, file));
+                AuthInterceptor.currentUserNumber(request), topicId, MediaKind.REPORT, file));
     }
 
     @GetMapping("/url")
     public Result<Map<String, Object>> getUrl(@RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
-        String url = mediaFileService.getFileUrl(currentUserNumber(request), topicId, MediaKind.REPORT);
+        String url = mediaFileService.getFileUrl(AuthInterceptor.currentUserNumber(request), topicId, MediaKind.REPORT);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("reportUrl", url);
         data.put("hasReport", !UploadUtils.isBlank(url));
@@ -122,14 +123,9 @@ public class ReportUploadController {
     @PostMapping("/delete")
     public Result<Map<String, Object>> delete(@RequestParam("topicId") Integer topicId,
                                              HttpServletRequest request) {
-        mediaFileService.deleteFile(currentUserNumber(request), topicId, MediaKind.REPORT);
+        mediaFileService.deleteFile(AuthInterceptor.currentUserNumber(request), topicId, MediaKind.REPORT);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("deleted", true);
         return Result.success(data);
-    }
-
-    private String currentUserNumber(HttpServletRequest request) {
-        Object value = request.getAttribute("userNumber");
-        return value == null ? null : String.valueOf(value);
     }
 }

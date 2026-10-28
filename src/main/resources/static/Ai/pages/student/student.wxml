@@ -188,6 +188,8 @@
                   <text wx:if="{{item.docAnalyzed}}" class="g-tag g-tag-doc">报告评析</text>
                   <text wx:elif="{{item.reportUploaded}}" class="g-tag g-tag-doc">报告已上传</text>
                   <text wx:if="{{item.hasVideo}}" class="g-tag g-tag-video">视频已上传</text>
+                  <!-- 【2026-10-28】答辩形式：此前 defense_mode 从未写入，做完语音答辩列表里毫无标识 -->
+                  <text wx:if="{{item.defenseMode === 'voice'}}" class="g-tag">语音答辩</text>
                   <!-- 【2026-10-25】材料裁定不合格：不进五维、不出分，详情里有裁定理由 -->
                   <text wx:if="{{item.verdictLabel}}" class="g-tag g-tag-warn">{{item.verdictLabel}}</text>
                   <text class="link-sm">查看详情</text>
@@ -362,7 +364,9 @@
               <text class="sc-total">{{videoSummary.total}}</text>
               <text class="sc-total-max">/50</text>
               <text wx:if="{{videoSummary.grade}}" class="g-tag g-tag-doc">{{videoSummary.grade}}</text>
-              <text class="sc-total-note">等级与报告评析同一把尺子</text>
+              <!-- 【2026-10-28 · V1】有引擎标识就显示（本地 3B / 云端 glm:glm-4.7），与教师端一致 -->
+              <text wx:if="{{videoEngine}}" class="sc-total-note">{{videoEngine}}</text>
+              <text wx:else class="sc-total-note">等级与报告评析同一把尺子</text>
             </view>
             <view wx:for="{{videoSummary.warnings}}" wx:key="*this" class="sc-tip">⚠️ {{item}}</view>
             <view wx:for="{{videoDims}}" wx:key="name" class="sc-round">
@@ -441,7 +445,9 @@
           </view>
           <view class="detail-actions" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">
             <button class="outline-btn" bindtap="openVideo">查看答辩视频</button>
-            <button class="outline-btn" bindtap="openReport">查看答辩报告</button>
+            <!-- 【2026-10-28】没有报告就不显示「查看答辩报告」：视频场次常无报告，
+                 按钮点开只会提示"报告地址无效"，属无意义入口（用户实测反馈）。 -->
+            <button wx:if="{{selectedRecord.defenseReportUrl && selectedRecord.defenseReportUrl !== 'abc'}}" class="outline-btn" bindtap="openReport">查看答辩报告</button>
             <button class="outline-btn" bindtap="openAnswerDetail" data-id="{{selectedRecord.id}}">查看回答详情</button>
           </view>
           <view class="detail-actions" wx:else>
@@ -493,6 +499,24 @@
           <!-- 材料未通过裁定（未复审）：没有综合评价正文，给出明确去向，别让弹层空白 -->
           <view class="form-item" wx:elif="{{!scoreSummary && scoreCards.length === 0 && selectedRecord && selectedRecord.verdictState === 'pending'}}">
             <text class="muted">该场次材料未通过资格裁定，暂无综合评价。裁定理由可在「答辩详情」查看，教师复审后才会出分。</text>
+          </view>
+
+          <!-- 【2026-10-28】视频答辩场次（0 轮作答 + 无报告）：上面三个分支都不命中时，
+               弹层会只剩标题——用户实测就是这样一片空白。
+               照 N87 分层口径：五维卡在「答辩详情」，这里只给总分一行 + 明确去向，不留空白。 -->
+          <view class="form-item" wx:elif="{{!scoreSummary && scoreCards.length === 0 && selectedRecord && selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc'}}">
+            <text class="label">视频答辩综合评价（AI 总结）</text>
+            <!-- 【2026-10-28】有总结就展示正文（约 400~700 字，讲的是讲解内容本身），
+                 没有就给出明确去向，不留空白。 -->
+            <view wx:if="{{selectedRecord.aiVideoSummary}}" class="doc-summary-box">
+              <text class="doc-summary-text">{{selectedRecord.aiVideoSummary}}</text>
+            </view>
+            <view wx:else class="doc-summary-box">
+              <text class="doc-summary-text" wx:if="{{videoSummary}}">本场次为视频答辩，没有逐轮文字问答记录。视频 AI 评分：总分 {{videoSummary.total}}/50，等级 {{videoSummary.grade}}，综合评价正在生成或尚未生成。</text>
+              <text class="doc-summary-text" wx:else>本场次为视频答辩，没有逐轮文字问答记录，视频 AI 评分尚未生成。</text>
+            </view>
+            <text class="sc-tip" wx:if="{{videoSummary}}">五维逐项点评请在「答辩详情」查看。</text>
+            <text class="sc-tip" wx:else>视频上传后会自动提交评分，生成后重新打开本页即可看到。</text>
           </view>
 
           <!-- 逐轮判定：每轮一张卡，分数 + 等级 + 该轮大模型评语（依据） -->

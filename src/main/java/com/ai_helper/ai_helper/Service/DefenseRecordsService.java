@@ -98,6 +98,14 @@ public interface DefenseRecordsService {
                                                int presetQuestionCount, int totalRounds, boolean resume);
 
     /**
+     * 【2026-10-28】写入答辩形式（{@code text} / {@code voice}）。
+     *
+     * <p>由 {@code /api/chat/clear} 传入并软写：失败不影响进入答辩。
+     * 该列此前建了但从未写入，列表因此看不出「语音答辩」。</p>
+     */
+    void updateDefenseMode(Integer defenseId, String mode);
+
+    /**
      * 只读探测：是否存在「可续答」的答辩场次（<b>不写任何数据</b>）。
      *
      * <p>供前端进入答辩页时先问一次：有可续答场次 → 弹窗让用户选「继续作答 / 重新开始」；

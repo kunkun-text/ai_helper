@@ -87,6 +87,8 @@
                 <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
                 <!-- 【VID-4 · 2026-10-20】该场次已上传视频 → 详情里有「AI 评分（基于视频）」。 -->
                 <text wx:if="{{item.hasVideo}}" class="g-tag g-tag-video">视频已上传</text>
+                <!-- 【2026-10-28】答辩形式：语音答辩在教师端两个列表都要能识别 -->
+                <text wx:if="{{item.defenseMode === 'voice'}}" class="g-tag">语音答辩</text>
                 <!-- 【2026-10-25】材料裁定不合格 → 列表提示需要复审（文案由 utils/materialVerdict.js 统一映射） -->
                 <text wx:if="{{item.verdictLabel}}" class="g-tag g-tag-warn">{{item.verdictLabel}}</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
@@ -163,6 +165,8 @@
                 <text wx:if="{{item.docTagText}}" class="g-tag g-tag-doc">{{item.docTagText}}</text>
                 <!-- 【VID-4 · 2026-10-20】该场次已上传视频 → 详情里有「AI 评分（基于视频）」。 -->
                 <text wx:if="{{item.hasVideo}}" class="g-tag g-tag-video">视频已上传</text>
+                <!-- 【2026-10-28】答辩形式：语音答辩在教师端两个列表都要能识别 -->
+                <text wx:if="{{item.defenseMode === 'voice'}}" class="g-tag">语音答辩</text>
                 <!-- 【2026-10-25】材料裁定不合格 → 列表提示需要复审（文案由 utils/materialVerdict.js 统一映射） -->
                 <text wx:if="{{item.verdictLabel}}" class="g-tag g-tag-warn">{{item.verdictLabel}}</text>
                 <text class="link-sm" bindtap="openAnswerDetail" data-id="{{item.id}}">查看回答详情</text>
@@ -469,10 +473,12 @@
           </view>
           <text wx:if="{{videoAnalyzing}}" class="muted">{{videoStage}}</text>
 
-          <!-- 成绩单抬头：总分 / 等级 / 服务端警告（跑题） -->
+          <!-- 成绩单抬头：总分 / 等级 / 评分引擎 / 服务端警告（跑题） -->
           <view wx:if="{{videoSummary}}" class="doc-score-summary">
             <text class="doc-total">总分 {{videoSummary.total}}/50</text>
             <text wx:if="{{videoSummary.grade}}" class="g-tag g-tag-doc">等级 {{videoSummary.grade}}</text>
+            <!-- 【2026-10-28 · V1】评分引擎：本地 3B / 云端 glm:glm-4.7，与报告评析同款 -->
+            <text wx:if="{{videoEngine}}" class="sc-total-note">{{videoEngine}}</text>
             <view wx:for="{{videoSummary.warnings}}" wx:key="*this" class="doc-warn">⚠️ {{item}}</view>
           </view>
 
@@ -541,9 +547,9 @@
              358 这类视频链接已清、但文本残留的场次，不该再冒出视频成绩单。 -->
         <view class="form-item" wx:if="{{selectedRecord.defenseVideoUrl && selectedRecord.defenseVideoUrl !== 'abc' && selectedRecord.aiVideoAnalysis}}">
           <text class="label">AI视频分析</text>
-          <scroll-view class="long-text-scroll" scroll-y="true" style="max-height: 150rpx;">
-            <text class="value feedback">{{selectedRecord.aiVideoAnalysis}}</text>
-          </scroll-view>
+          <!-- 【2026-10-28】原来把全文塞进 150rpx 的小滚动条，五维点评根本看不全；
+               改为「查看 AI 分析」按钮 + 独立弹窗，正文在弹窗里滚动阅读。 -->
+          <button class="outline-btn" bindtap="openVideoAnalysisSheet">查看 AI 分析</button>
         </view>
         
         <!-- 【2026-10-25】旧列 report_analysis 只在新链路没有结果时兜底显示：
@@ -566,6 +572,19 @@
   </view>
   
   <!-- 回答详情模态框 -->
+  <!-- 【2026-10-28】AI 视频分析全文弹窗：正文默认收起，点「查看 AI 分析」才打开 -->
+  <view class="modal-mask" wx:if="{{showVideoAnalysisSheet}}">
+    <view class="modal-card" catchtap>
+      <view class="modal-header">
+        <text class="modal-title">AI 视频分析</text>
+        <text class="modal-close" bindtap="closeVideoAnalysisSheet">×</text>
+      </view>
+      <scroll-view class="modal-body" scroll-y="true">
+        <text class="value feedback">{{selectedRecord.aiVideoAnalysis}}</text>
+      </scroll-view>
+    </view>
+  </view>
+
   <view class="modal-mask" wx:if="{{selectedAnswers}}">
     <view class="modal-card">
       <view class="modal-header">
@@ -573,6 +592,24 @@
         <text class="modal-close" bindtap="closeAnswers">×</text>
       </view>
       <scroll-view class="modal-body" scroll-y="true">
+        <!-- 【2026-10-28】视频场次（通常 0 轮文字作答）的兜底：展示 AI 对讲解内容的整体总结。
+             此前该弹层在这种情况下**只有标题、一片空白**（用户实测截图）。
+             数据来自 video_summary（评分任务完成后的附加调用，云端优先）。 -->
+        <!-- 【2026-10-28】条件必须用 hasVideo：教师端列表映射（teacher.js:196-230）**没有**
+             defenseVideoUrl 字段（只有布尔 hasVideo），视频地址只在详情接口回填。
+             本弹层是「从列表直接打开」的，用 defenseVideoUrl 判断会永远不成立 → 一片空白。 -->
+        <!-- 【2026-10-28】注意：教师端列表每行都有「查看回答详情」链接（teacher.wxml:92/168），
+             从那里打开时 **selectedRecord 是 null**（用户没先点开详情弹层），
+             所以这里**绝不能依赖 selectedRecord** —— 只用本弹层并发的
+             /teacher/defense/DetailRecords 回调设置的 answerHasVideo / answerVideoSummary。 -->
+        <view class="form-item" wx:if="{{answerHasVideo || answerVideoSummary}}">
+          <text class="label">视频答辩综合评价（AI 总结）</text>
+          <view wx:if="{{answerVideoSummary}}" class="doc-summary-box">
+            <text class="doc-summary-text">{{answerVideoSummary}}</text>
+          </view>
+          <text wx:else class="muted">该场次还没有生成视频综合评价。视频上传后会自动提交评分；也可在「答辩详情」点「AI 评分（基于视频）」重试。</text>
+        </view>
+
         <!-- 【2026-10-18 · 报告五维评分】基于上传报告文档的 AI 评析（从「查看反馈」迁入）。
              本弹层是教师核对「AI 看到了什么」的地方；报告评析场次没有逐轮作答，
              若无本区块就是一片空白。五维拆成独立小卡片，形态对齐文字答辩「每题一条评语」。 -->

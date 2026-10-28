@@ -129,7 +129,7 @@ public class VoiceController {
         // 【D1】并发控制：whisper 同时只允许 1 个任务，排队等不到就提示稍后重试
         boolean acquired = false;
         try {
-            acquired = ASR_PERMITS.tryAcquire(3, TimeUnit.SECONDS);
+            acquired = ASR_PERMITS.tryAcquire(appProperties.getVoice().getAsrQueueWaitSeconds(), TimeUnit.SECONDS);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }

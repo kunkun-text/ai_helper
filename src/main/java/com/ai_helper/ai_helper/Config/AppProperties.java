@@ -212,6 +212,15 @@ public class AppProperties {
         /** 单次录音时长上限（秒），仅提示前端，超过会自动停止录音 */
         private int maxRecordSeconds = 60;
 
+        /** ASR 并发排队等待上限（秒）：whisper 同时只跑 1 个任务，等不到就提示稍后重试 */
+        private long asrQueueWaitSeconds = 3;
+
+        /** 组件自动下载的连接超时（秒） */
+        private long downloadConnectTimeoutSeconds = 30;
+
+        /** 组件自动下载单次请求读取超时（秒） */
+        private long downloadTimeoutSeconds = 40;
+
         /**
          * 【N78 · 2026-10-15】是否把最近一次录音的原始音频落盘到临时目录（ai-helper-asr-last.*）。
          *
@@ -400,6 +409,31 @@ public class AppProperties {
         /** 是否启用。默认开启，可一键关掉退回「只有上传没有评分」 */
         private boolean enabled = true;
 
+        /**
+         * 【2026-10-28 · V1】是否优先走云端评分（glm-4.7 → glm-4.5-air → deepseek）。
+         *
+         * <p>默认开启：本地 3B 在口语材料上给分保守（实测 2 分钟真实录像只给 8/50），
+         * 云端质量明显更稳。云端全部渠道失败时由 {@code fallbackToLocal} 决定是否回落。</p>
+         */
+        private boolean cloudEnabled = true;
+
+        /**
+         * 云端失败（未配 key / 超时 / 非 2xx / 空正文）时是否回落本地 3B。
+         *
+         * <p>默认 true：答辩现场断网也不能让功能瘫掉。设为 false 则明确失败，
+         * 不静默用本地分——需要「分数必须来自云端」的场合再关。</p>
+         */
+        private boolean fallbackToLocal = true;
+
+        /**
+         * 【2026-10-28】学生上传视频完成后是否**自动提交评分任务**。
+         *
+         * <p>用户口径：传完后台就开始打分，不用等教师点按钮。默认开启。
+         * 评分走异步单线程池（与报告评析共用 core=1），不会阻塞上传响应；
+         * 关掉即回到「教师手动触发」的旧行为。</p>
+         */
+        private boolean autoAnalyzeOnUpload = true;
+
         /** 转写文本最长保留字数（超出截断，避免 16k 上下文被撑爆；10 分钟口语约 1500~2500 字，正常碰不到） */
         private int maxChars = 20000;
 
@@ -408,6 +442,9 @@ public class AppProperties {
 
         /** 评分调用 maxTokens（只输出一行） */
         private int scoreMaxTokens = 100;
+
+        /** 【2026-10-28】综合评价调用 maxTokens（400~700 字，中文约 1 字 1~2 token，留足余量） */
+        private int summaryMaxTokens = 1200;
 
         /**
          * 单场分析总预算（秒）。超时直接失败并把原因写给学生/教师。

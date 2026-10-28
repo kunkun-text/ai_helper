@@ -88,6 +88,14 @@ public interface DefenseRecordsMapper {
     String getLatestVideoUrlByUserAndTopic(@Param("userId") String userId,
                                            @Param("topicId") Integer topicId);
 
+    /**
+     * 【2026-10-28】按【本场次】精确读取旧视频地址（换视频时只删本场自己的旧文件）。
+     *
+     * <p>不能用 {@link #getLatestVideoUrlByUserAndTopic}：它是跨场次「最新一条」，
+     * 新建场次后旧 URL 属于上一场，会把上一场的视频文件误删。</p>
+     */
+    String getVideoUrlByDefenseId(@Param("defenseId") Integer defenseId);
+
     /** 【2026-10-25】读取「当前该展示的」报告地址（口径同视频） */
     String getLatestReportUrlByUserAndTopic(@Param("userId") String userId,
                                             @Param("topicId") Integer topicId);
@@ -263,4 +271,28 @@ public interface DefenseRecordsMapper {
     int updateVideoAnalysis(@Param("defenseId") Integer defenseId,
                             @Param("analysis") String analysis,
                             @Param("source") String source);
+
+    /**
+     * 【2026-10-28】写入视频答辩综合评价（{@code video_summary}，约 400~700 字）。
+     *
+     * <p>附加写：与五维成绩单分开落库，失败只记日志、不影响成绩单。</p>
+     */
+    int updateVideoSummary(@Param("defenseId") Integer defenseId,
+                           @Param("summary") String summary);
+
+    /**
+     * 【2026-10-28】视频场次收尾：写入总分并把该场置为 {@code completed}。
+     *
+     * <p>SQL 自带「一条作答都没有」的条件——先答文字/语音再传视频的场次，
+     * 总分仍以逐轮答辩为准，不会被视频分覆盖。</p>
+     */
+    int completeVideoDefense(@Param("defenseId") Integer defenseId,
+                             @Param("score") java.math.BigDecimal score);
+
+    /**
+     * 【2026-10-28】写入答辩形式（{@code text} / {@code voice}）。
+     *
+     * <p>该列此前建了但从未写入（CLAUDE.md 挂账项），导致列表看不出「语音答辩」。</p>
+     */
+    int updateDefenseMode(@Param("defenseId") Integer defenseId, @Param("mode") String mode);
 }

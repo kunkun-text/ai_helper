@@ -12,6 +12,141 @@
 
 ---
 
+## 2026-10-28
+
+### 代码规范性整改（零功能增删，执行 `10.28优化.md` 的 A/B 两组）
+
+> 改动日期：2026-10-28，涉及 17 个文件（含删除 1 个死文件）。**状态：编译 + 全量单测 115/115 通过，待真机。**
+> 依据：`10.28优化.md`（当日全仓实证生成的整改清单）。**默认行为与改前完全一致**：所有配置项默认值 = 原硬编码值；协议标签、判分阈值、prompt 一律未动；`application.yml` 未改动、未提交。
+
+**一、改动内容**
+
+| 编号 | 位置 | 改动 |
+|---|---|---|
+| A1 | `CLAUDE.md` / `需求清单-2026-09-15.md` | 文档口径修正：Mapper XML 12→13；N89 单测数统一 115/115；「云端评分调用代码待写」改为「已接入报告评析复核，视频主评分未接」 |
+| A2 | `chatController.java:1839/1842/2076` | 三处日志不再打印整段 AI 回复/零分点评全文，改输出长度（N75 同性质的漏网点） |
+| A3 | `PasswordResetServiceImpl.java` | 新增 `maskEmail`；发送成功/失败/未注册三处日志的邮箱全部脱敏，字符串拼接改占位符 |
+| A4 | `util/TextTools.java` | **删除**（全仓零代码引用，唯一消费者 2026-09-27 已摘除；方法体全是 `System.out` 调试输出） |
+| A5 | `student.js` | 删除函数内三处重复 `require('../../utils/config.js')`（头部已引入；其中 `loadDefenseTopics` 那处本就是未使用变量） |
+| A6 | `login.js` | 补 `onUnload`：清理长按计时器并复位 `showPwd`，手势被系统中断时密码不残留明文 |
+| A7 | `registerAndLoginController.java` | `Tregister→registerTeacher`、`Tlogin→loginTeacher`（URL 由 `@PostMapping` 决定，不受影响） |
+| B1 | `VideoUploadController` / `StudentDefenseRecordsController` / `ReportUploadController` | 三处与 `AuthInterceptor.currentUserNumber` **完全等价**的私有方法删除，13 处调用点统一走鉴权唯一出口（已逐字比对逻辑等价；`StudentFeedbackController` 本就是正确范例） |
+| B2 | `AppProperties.Voice` / `ChatConfiguration` / `VoiceController` / `VoiceComponentInstaller` / `PasswordResetServiceImpl` / `application.yml.example` | 4 处硬编码外置：会话锁 TTL 10s（`app.chat.memory-lock-ttl-seconds`）、ASR 排队 3s（`app.voice.asr-queue-wait-seconds`）、重置 token 30min + 冷却 60s（`app.mail.reset-token-ttl-minutes` / `reset-cooldown-seconds`）、下载 30/40s（`app.voice.download-connect-timeout-seconds` / `download-timeout-seconds`）。**默认值全部 = 原值** |
+| B3 | `Service/editUserInfoService.java` | 删除接口上无效的 `@Service`（实现类 `EditUserInfoServiceImpl:21` 已有，注解仅对实现类生效） |
+
+**二、验证**
+
+- `mvn -o clean compile` 通过（A/B1 后一次，B2/B3 后随测试再验）。
+- `mvn -o clean test`：**115/115**，`BUILD SUCCESS`（含 Spring 上下文加载，验证 `RedisChatMemory` 构造器变更与 `@Value` 注入不影响启动）。
+- `node --check pages/student/student.js`、`pages/login/login.js` 通过。
+- `git status --porcelain`：无 `application.yml` / `*.log` / `hs_err_pid*`；净改动 +98/−100 行。
+
+**三、视频答辩：两处实测缺陷修复 + 云端评分接入（V1）**
+
+| 项 | 位置 | 问题与修法 |
+|---|---|---|
+| **缺陷1**（用户实测） | `Mapper/DefenseRecordsMapper.xml` `getLatestEmptyShellDefenseId` | **一次课题目下第二次传视频会覆盖第一次**。根因：这条 SQL 只看「有没有转写/分析产物」，**漏判附件**——视频传完但教师还没触发评分时 `video_words/video_analysis` 都为空，该场次仍被判为「空壳」→ 第二次上传命中它 → `updateVideoUrlById` 覆盖同一场。修法：补 `video_url/report_url` 条件，与 `deleteEmptyShellRecords`(:462)、`selectReusableMaterialDefenseId`(:484) 口径统一（N84 的"双防线"此前只落地了 2/3 条）。 |
+| **缺陷1 连带** | `ChunkUploadServiceImpl.complete` + 新增 `getVideoUrlByDefenseId` | 删旧文件原来用 `getLatestVideoUrlByUserAndTopic`（跨场次"最新一条"）：一旦这次写的是**新建场次**，取到的却是上一场的 URL → **上一场的视频文件被误删**（URL 还在、文件没了）。改为按本场 `defenseId` 精确取旧地址。 |
+| **缺陷2**（用户实测） | `pages/student/student.wxml` 回答详情弹层 | 视频场次（0 轮作答 + 无报告）打开「回答详情」**一片空白**：三个分支（评分表 / 报告综合评价 / 待复审）全不命中。补第四个 `wx:elif` 分支：有视频时显示「本场次为视频答辩，没有逐轮文字问答」+ 总分一行（若已评分）+ 明确去向（五维在「答辩详情」，未评分请教师触发）。遵循 N87 分层口径，不重复五维卡片。 |
+| **V1 云端评分** | `AppProperties.VideoAnalysis` / `VideoAnalysisServiceImpl` / `application.yml.example` | 视频**主评分**从「全本地 3B」改为**云端优先**：`glm-4.7 → glm-4.5-air → deepseek`（复用 `AiScoringService`），全渠道失败再回落本地 3B；`cloud-enabled` / `fallback-to-local` 两个开关（默认 true/true）。点评与打分**各自独立回退**（云端点评成功、打分失败只回退后半段）。成绩单新增 `评分引擎：<provider:model>` 行（`gradeSheet.js` 的 `/评分引擎\s*[:：]\s*(...)/` 直接可解析），日志打印每段引擎与耗时，**不打印 key 与请求体**。 |
+
+**验证**：`mvn -o clean test` **115/115**（含 Spring 上下文，验证 Mapper 新语句可解析、`AiScoringService` 注入正常）。前端 `student.wxml` 仅新增 `wx:elif` 分支，`node --check` 不适用（wxml），已肉眼核对标签闭合。
+**待真机**：① 同一课题连传两个视频 → 应产生两条独立场次，第一条视频仍可播放；② 视频场次「回答详情」不再空白；③ 教师触发视频评分 → 日志出现「云端视频点评成功/打分成功 - 引擎: glm:glm-4.7」，成绩单抬头显示「评分引擎：glm:glm-4.7」；④ 把 `glm.api-key` 改错 → 自动回退本地、任务不失败。
+
+**四、视频成绩单显示评分引擎 + 上传后自动评分（同日续，用户实测反馈）**
+
+| 项 | 位置 | 改动 |
+|---|---|---|
+| 引擎不显示（前端漏接） | `teacher.js` `applyVideoAnalysis` / `teacher.wxml:472` / `student.js:1029` / `student.wxml:361` | 后端已写入 `评分引擎：xxx` 行，但**前端解析出 `engine` 后没取**：`applyVideoAnalysis` 只 setData 了 `videoDims/videoSummary/videoRaw`，学生端同理。补齐 `videoEngine` 并在两端卡片抬头展示（与报告评析 `answerDocEngine` 同款位置）。学生端原静态文案「等级与报告评析同一把尺子」改为「有引擎显示引擎，无引擎才显示该文案」。 |
+| 上传后自动评分 | `ChunkUploadServiceImpl.complete` + `AppProperties.VideoAnalysis.autoAnalyzeOnUpload` | 用户口径：**学生传完后台就开始打分，不等教师点按钮**。在 `complete()` 落库成功后调 `videoAnalysisService.trigger(defenseId, false)`；评分本身是异步提交（单线程池），不阻塞上传响应。**整段 try/catch 全包**：组件未就绪 / 开关关闭 / 同一场正在评分（任务锁被占）都只记日志，绝不影响「上传成功」的返回值，教师仍可手动重试。开关 `app.video-analysis.auto-analyze-on-upload`（默认 true），关掉即回到手动模式。 |
+| AI 视频分析区块太窄（教师端） | `teacher.wxml:544` / `teacher.js` `openVideoAnalysisSheet` | 原来把整段成绩单塞进 `max-height:150rpx` 的小滚动条，五维点评看不全。改为「查看 AI 分析」按钮 + 独立弹窗（复用既有 `modal-mask/modal-card/modal-body` 结构，全屏高度滚动阅读）。弹窗状态 `showVideoAnalysisSheet`：打开新记录、关闭详情（两份 `closeRecord` 同步改）均复位，避免残留上一条正文。 |
+
+**验证**：`mvn -o clean test` **115/115**（含 Spring 上下文，验证 `ChunkUploadServiceImpl → VideoAnalysisService` 构造注入无循环依赖）；`node --check teacher.js / student.js` 通过；wxml 仅新增既定 modal 结构，类名均为既存样式。
+**待真机**：① 学生传完视频后**不点任何按钮**，教师端重新打开该场次应已有成绩单；② 成绩单抬头出现「本地 qwen2.5:3b-16k」或「glm:glm-4.7」；③ 学生端详情同款可见。
+**已知缺口（未做）**：自动评分进行中时，教师打开详情**不会自动显示「正在评分」**（只有点按钮后才轮询 `/status`），需要教师自己刷新或点一次按钮。列入 V4 一起收口。
+
+**五、视频答辩综合评价（video_summary，新列）**
+
+> 用户实测：教师端「学生答辩记录页 → 查看回答详情」在视频场次下**只有标题、一片空白**（该场次 0 轮文字作答，三个既有分支全不命中）。
+> 要求：把**视频转写内容总结成一段长文字**，与五维评分、AI 分析不重复，**用云端大模型生成**。
+
+| 层 | 位置 | 改动 |
+|---|---|---|
+| DDL | 新增 `docs/ddl_video_summary.sql` + `docs/schema.sql` | 新列 `video_summary TEXT`（`AFTER video_analysis`）。**已在本机执行并复核**（`SHOW COLUMNS` 确认存在） |
+| 生成 | `VideoAnalysisServiceImpl` | 评分落库后追加**第三次调用**：输入 = 课题 + 转写全文（截断 6000 字）+ 五维成绩单（仅供判断），输出 400~700 字五段式总结（讲解内容 / 表达与逻辑 / 专业深度 / 不足与建议 / 总体结论）。**云端优先**（复用 `AiScoringService`），失败按 `fallbackToLocal` 回落本地 3B；全部失败只跳过落库，**不影响成绩单**（附加写）。新增 `summaryMaxTokens`（默认 1200） |
+| prompt | 同上 `VIDEO_SUMMARY_SYSTEM` | 与成绩单分工明确：**禁止复述分数、禁止输出评分行、禁止用「报告/文档/章节」等书面语**（这是口头讲解）；要求容忍转写同音错字 |
+| 落库 | `DefenseRecordsMapper.updateVideoSummary` | 单独 UPDATE，只写 `video_summary` |
+| 接口 | `selectVideoAnalysisTarget` / `selectVideoAnalysisTarget`→`status()` / `getDetailRecords` / `DetailRecordsVo` | 状态接口回传 `summary` + `hasSummary`；详情返回 `aiVideoSummary` |
+| 防漏执行 | 新增 `Config/VideoSummarySchemaCheck` | 启动自检 `information_schema`，缺列打 ERROR 并给出执行命令（抄 `MaterialVerdictSchemaCheck`，不自动改库） |
+| 前端 | `teacher.js` 映射 + `teacher.wxml` 回答详情；`student.js` 映射 + `student.wxml` 回答详情 | 回答详情新增「视频答辩综合评价（AI 总结）」区块：有 `aiVideoSummary` 展示正文，没有给出明确去向。学生端原纯文案分支改为「有总结显示总结，无总结显示状态说明」 |
+
+**验证**：`mvn -o clean test` **115/115**；`node --check teacher.js / student.js` 通过；DDL 已执行并复核列存在。
+**待真机**：① 新传一个视频 → 自动评分跑完 → 教师/学生「回答详情」出现 400~700 字总结；② 日志出现「视频综合评价已落库 - defenseId: x, 字数: xxxx」；③ 断网/改错 key → 回落本地、成绩单照常、总结可能为空但页面不空白。
+**注意**：**已有场次（如 380）没有 `video_summary`**，需要在教师端点「重新生成视频评分」（`force=true`，会重跑转写+点评+打分+总结）才会补上。
+
+**六、学生端「看不到评分 / 视频不能全屏 / 冗余按钮」（用户实测）**
+
+> 现象：学生端「答辩详情」得分恒显示「暂无评分」；「查看答辩视频」点了不能全屏播放；无报告的场次也显示「查看答辩报告」。
+
+| 项 | 位置 | 根因与修法 |
+|---|---|---|
+| 得分恒「暂无评分」 | `VideoAnalysisServiceImpl` + 新增 `completeVideoDefense` | **根因**：视频评分只写 `video_analysis`，`defense_records.score` 恒为 NULL，而列表/详情「得分」读的是 `score`。修法：照文档评析 `completeReportDefense` 的口径，评分出分后把总分写进 `score` 并置 `completed`。**SQL 自带「一条作答都没有」条件**——先答题再传视频的场次总分仍以逐轮为准，不会被覆盖。 |
+| 视频不能全屏 | `student.js openVideo` | **根因**：旧实现是 `wx.downloadFile` + `wx.openDocument({fileType:'video'})`，而 `openDocument` **只支持 doc/docx/xls/xlsx/ppt/pptx/pdf，不支持视频**（大文件还要先整个下载一遍才失败）。改为 `wx.previewMedia({sources:[{url,type:'video'}]})`，系统级全屏播放，不预下载。 |
+| 冗余「查看答辩报告」 | `student.wxml` 详情按钮条 | 无报告时（视频场次常见）点开只会提示「报告地址无效」。改为**有 `defenseReportUrl` 才渲染**该按钮；无报告的场次只剩「查看答辩视频 / 查看回答详情」两个入口。 |
+| 历史数据 | 一次性 SQL | `381/382`（成绩单已是 0 分但 `score` 为空）回填 `score=0` + `status='completed'`，让界面立即恢复显示（**仅本机一次性修正，不入脚本**）。 |
+
+**验证**：`mvn -o clean test` **115/115**；`node --check student.js` 通过；两场历史数据已修正。
+**澄清**：用户截图时（11:57）该场次评分尚未跑完（`updated_at=11:59:18` 才生成成绩单与总结），**不是链路故障**；「看不到评分」的真因是上面的 `score` 列未写。
+**待真机**：① 详情「得分」显示视频分（0 分也会显示，不再「暂无」）；② 「查看答辩视频」全屏播放；③ 无报告场次只有两个按钮。
+
+**七、全链路端到端测试（2026-10-28，接口层）**
+
+> 方式：注册临时账号（`9999xxxxxx` / `8888xxxxxx`）跑真实接口，不动用户数据。脚本在 `%TEMP%\e2e-part1~3.ps1`（未入库）。
+
+| 批次 | 覆盖 | 结果 |
+|---|---|---|
+| 1 | 注册 / 重复注册拦截 / 登录 / 错误密码 / 未登录 401 / 学生越权 403 / 忘记密码统一文案 / 建场 / 文字答辩 2 轮协议 / 总体评价 / 问答接口 / 记录列表 / 报告模板下载 | **14/14** |
+| 2 | 教师登录 / 记录列表 / 教师详情（含视频总结 2509 字节）/ 视频 status / 无视频时明确报错 / 报告上传 / 报告**自动评析**（材料裁定 `insufficient` → 待复审不出分）/ 学生列表 | **12/12**（语义通过） |
+| 3 | 组件状态 / 分片上传 init+abort / TTS 合成 / TTS 产物喂 ASR / 语音归档接口 | 8/9（ASR 见下） |
+
+**本轮发现并修复的缺陷**
+
+| 级别 | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| **P0** | **语音答辩 60 秒录音识别 100% 失败**（`failed to process audio`） | `app.voice.prompt` 那段中文术语表约 **600 字符**，传给 whisper-cli 后对方直接崩溃（实测 EXIT=`0xC0000409` stack buffer overrun）。视频链路用 180 字内短 prompt 所以正常，语音链路因此从未暴露。 | `WhisperAsrServiceImpl` 新增 `MAX_PROMPT_CHARS=120`，超长统一截断并 warn。**不依赖配置写得对不对**。 |
+| **P1** | 注册不传 `role` → 数据库 `Column 'role' cannot be null` → 前端只看到"注册失败，请稍后重试" | `/register/student`、`/register/teacher` 完全依赖请求体 role | 按接口路径兜底 `student` / `teacher`（`fillRoleIfBlank`） |
+
+**验证**：`mvn -o clean test` **115/115**。**需重启后端**才生效（P0 影响语音答辩全部录音识别）。
+
+**未覆盖（需人工/真机）**：小程序 UI 全流程、真机录音（麦克风采集）、视频真实录像的评分质量、忘记密码真实邮件往返。
+
+**八、语音答辩「列表无标识」（defense_mode 终于写入）**
+
+> 用户反馈：做了一轮语音答辩，但列表里完全看不出是语音答辩。
+> 排查结论：**链路是通的**——`380` 场次落库了 10 条答案 + 10 条评分（`updated_at=13:14:01`）。
+> 那 10 轮内容本身是「不知道 / 乱码 / wobuhui / 不清楚」，评分全 0 属**正确判定**，不是 bug。
+
+| 项 | 位置 | 改动 |
+|---|---|---|
+| 根因 | `defense_records.defense_mode` | 列早就建了（10-25 建），但**从未写入过**（CLAUDE.md 挂账项：需前端建场带 mode）。列表只有「视频已上传」，看不出语音答辩。 |
+| 后端 | `DefenseRecordsMapper(.xml)` 新增 `updateDefenseMode`；`DefenseRecordsService(+Impl)` 加同名方法；`chatController.clearChatMemory` | `/api/chat/clear` 接收 `mode`（只认 `text`/`voice`），拿到本场 `defenseId` 后**软写**（失败只记日志，不影响进入答辩）。**未改 `startOrResumeDefenseRecord` 签名**，diff 最小。 |
+| 前端 | `defense-voice.js` 传 `mode:'voice'`；`defense.js` 传 `mode:'text'` | 建场时声明形式 |
+| 展示 | `student.js` / `teacher.js` 列表映射加 `defenseMode`；两端 wxml 各加「语音答辩」标签（教师端两个列表 tab 都加） | 列表可识别 |
+| 数据修正 | 一次性 SQL | `380` 补 `defense_mode='voice'`（日志有 9 次 TTS，可确认是语音答辩页） |
+
+**验证**：`mvn -o clean test` **115/115**；四个页面 `node --check` 通过。
+**踩坑**：第一次编译失败——插入方法时把上面方法的 `@Override` 一起接了过来，导致 `DefenseRecordsServiceImpl:308` 出现重复 `@Override`，级联报出几十个"找不到符号"。删掉一行即恢复。
+**待真机**：语音答辩页建场后，学生/教师列表出现「语音答辩」标签；文字答辩不出现。
+**注意**：同课题「有视频、未答题」的 pending 场次会被复用（N84 口径：材料与作答必须同场），所以语音答辩会合并进已有视频场次，**不会再单独新建一条**。若需要「每次答辩独立成条」需改归属规则，另议。
+
+**九、遗留**
+
+- **需重启后端**才生效的条目：A2/A3（日志）、B2（配置读取）、B3、A4。
+- `10.28优化.md` 的 **C 组 8 条（类名/包名重命名、Map 接参、DTO 校验、`request.js` 去留、分页双封装、超大文件拆分、裸 Result 泛型）本轮未动**——均会改变对外行为或波及全仓，待用户拍板。
+- 新配置项只写进了 `application.yml.example`；本地 `application.yml` 未改（不配即用默认值，行为与改前一致）。
+
+---
+
 ## 2026-10-27
 
 ### 学生端文档答辩详情信息分层（N87 第一步 · 纯前端）

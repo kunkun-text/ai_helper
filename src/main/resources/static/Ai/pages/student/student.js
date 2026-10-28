@@ -208,7 +208,6 @@ Page({
   // 保存个人信息
   saveProfile() {
     const { editedUser, token, user } = this.data;
-    const config = require('../../utils/config.js');
     
     // 验证必填字段
     if (!editedUser.name.trim()) {
@@ -553,7 +552,6 @@ Page({
 
   // 加载答辩题目
   loadDefenseTopics() {
-    const config = require('../../utils/config.js');
     const token = this.data.token;
     
     wx.request({
@@ -679,7 +677,6 @@ Page({
   // 显示题目描述弹窗
   showTopicDescription() {
     // 从nextDefense中获取题目描述，如果有的话
-    const config = require('../../utils/config.js');
     const token = this.data.token;
     
     // 【2026-10-18】使用当前选中的题目，而不是固定 topics[0]
@@ -863,6 +860,8 @@ Page({
               hasScore: displayScore !== null,
               score: displayScore,
               scoreFromDoc: roundScore === null && docScore !== null,
+              // 【2026-10-28】答辩形式（text / voice），列表打「语音答辩」标签用
+              defenseMode: record.defenseMode || '',
               date: that.formatDateTime(record.defenseTime),
               defenseTime: that.formatDateTime(record.defenseTime),
               // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表红标用（后端给 1/0，转布尔）
@@ -1003,6 +1002,8 @@ Page({
             // 【2026-10-25】不再塞「暂无视频分析 / 暂无报告分析 / 暂无综合评价」占位：
             // 三个灰框会让学生以为"分析模块没了"。没有就整块不显示，界面更干净。
             aiVideoAnalysis: detailData.aiVideoAnalysis || '',
+            // 【2026-10-28】视频答辩综合评价（AI 对讲解内容的整体总结），「查看回答详情」展示
+            aiVideoSummary: detailData.aiVideoSummary || '',
             aiReportAnalysis: detailData.aiReportAnalysis || '',
             aiAllAnalysis: detailData.aiAllAnalysis || '',
             // 【2026-10-16 · 报告五维评分】基于上传报告文档的真实评析（教师端触发后才会有）。
@@ -1034,6 +1035,8 @@ Page({
             videoDims: videoSheet.dims,
             videoSummary: videoSheet.summary,
             videoRaw: videoSheet.raw,
+            // 【2026-10-28 · V1】与报告评析一致：让学生也能看到这分是本地还是云端给的
+            videoEngine: videoSheet.engine || '',
             reportDocDims: reportSheet.dims,
             reportDocSummary: reportSheet.summary,
             reportDocRaw: reportSheet.raw,
@@ -1077,46 +1080,28 @@ Page({
       });
       return;
     }
-    
-    wx.showLoading({
-      title: '正在加载视频...'
-    });
-    
-    wx.downloadFile({
-      url: videoUrl,
-      success: (res) => {
-        if (res.statusCode === 200) {
-          wx.openDocument({
-            filePath: res.tempFilePath,
-            fileType: 'video',
-            success: (openRes) => {
-              console.log('视频打开成功', openRes);
-            },
-            fail: (openErr) => {
-              console.error('视频打开失败', openErr);
-              wx.showToast({
-                title: '视频打开失败，请重试',
-                icon: 'error'
-              });
-            },
-            complete: () => {
-              wx.hideLoading();
-            }
-          });
-        } else {
-          wx.hideLoading();
-          wx.showToast({
-            title: '视频下载失败',
-            icon: 'error'
-          });
+
+    // 【2026-10-28】改用 wx.previewMedia **全屏播放**。
+    // 旧实现是 wx.downloadFile + wx.openDocument({fileType:'video'})，
+    // 而 openDocument 只支持 doc/docx/xls/xlsx/ppt/pptx/pdf——视频根本打不开
+    // （大文件还要先整个下载一遍才失败，用户表现为"点了没反应/不能全屏"）。
+    wx.previewMedia({
+      sources: [{
+        url: videoUrl,
+        type: 'video',
+        poster: ''
+      }],
+      current: 0,
+      fail: (err) => {
+        const msg = String((err && err.errMsg) || '');
+        // 用户主动关闭不算失败
+        if (msg.toLowerCase().indexOf('cancel') >= 0) {
+          return;
         }
-      },
-      fail: (downloadErr) => {
-        console.error('视频下载失败:', downloadErr);
-        wx.hideLoading();
+        console.error('[student] previewMedia fail:', msg);
         wx.showToast({
-          title: '视频加载失败，请检查网络',
-          icon: 'error'
+          title: '视频播放失败，请重试',
+          icon: 'none'
         });
       }
     });

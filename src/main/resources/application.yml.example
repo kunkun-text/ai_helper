@@ -142,6 +142,15 @@ app:
     # 本机调试用默认值即可；正式部署改成对外可访问的地址（如 https://你的域名）。
     # 此前该地址硬编码在 PasswordResetServiceImpl，换机器/上线必须改代码。
     reset-link-base: http://localhost:8080
+    # 【2026-10-28】重置 token 有效期（分钟），默认 30；同一邮箱发送冷却（秒），默认 60。
+    # 此前写死在 PasswordResetServiceImpl，现可按部署环境调整。
+    reset-token-ttl-minutes: 30
+    reset-cooldown-seconds: 60
+
+  chat:
+    # 【2026-10-28】会话记忆分布式锁 TTL（秒），默认 10。
+    # 高负载下若频繁"取锁失败放弃写入"，可适当调大；一般无需修改。
+    memory-lock-ttl-seconds: 10
 
   defense:
     # 续答时间窗口（分钟）。
@@ -234,6 +243,12 @@ app:
     # large-v3-turbo-q5_0 43.2s / 置信度 0.876（离线任务可接受，推荐）。
     # 60 秒语音作答仍用 app.voice.model（默认 small），避免现场等待过久。
     asr-model: "large-v3-turbo-q5_0"
+    # 【2026-10-28】云端评分：默认优先走 app.ai.scoring（glm-4.7 → 4.5-air → deepseek）。
+    # cloud-enabled=false 则退回全部本地 3B；fallback-to-local=false 时云端失败直接报错，不静默用本地分。
+    cloud-enabled: true
+    fallback-to-local: true
+    # 学生上传完成后自动提交评分任务（默认开启；关闭则回到「教师手动点按钮」）
+    auto-analyze-on-upload: true
 
   # ==========================================================================
   # 云端 AI 评分（2026-10-20）
@@ -384,6 +399,11 @@ app:
     # 缺失组件时启动后自动下载（引擎约 15MB + 模型约 487MB + ffmpeg 约 40MB）。
     # 关掉（false）则保持"只查找、不下载"的旧行为。
     auto-install: true
+    # 【2026-10-28】组件下载超时（秒）：连接 30 / 单次请求读取 40，弱网环境可调大。
+    download-connect-timeout-seconds: 30
+    download-timeout-seconds: 40
+    # ASR 并发排队等待上限（秒）：whisper 同时只跑 1 个任务，等不到就提示稍后重试，默认 3。
+    asr-queue-wait-seconds: 3
     # 自动安装目录。留空 = 自动选择本机存在的存储盘（如 F:\whisper）
     install-dir: ""
     # 模型档位：tiny / base / small / medium / large-v3-turbo；

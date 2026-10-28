@@ -305,6 +305,14 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     }
     
     @Override
+    public void updateDefenseMode(Integer defenseId, String mode) {
+        if (defenseId == null || mode == null || mode.trim().isEmpty()) {
+            return;
+        }
+        defenseRecordsMapper.updateDefenseMode(defenseId, mode.trim());
+    }
+
+    @Override
     public Integer getOrCreateLatestDefenseRecord(Integer topicId, String userNumber, boolean createIfMissing) {
         if (topicId == null || userNumber == null || userNumber.trim().isEmpty()) {
             return null;

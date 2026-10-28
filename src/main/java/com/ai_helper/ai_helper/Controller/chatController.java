@@ -539,6 +539,19 @@ public class chatController {
             chatMemory.clear(sessionId);
         }
 
+        // 【2026-10-28】记录答辩形式（text / voice）。此前 defense_mode 列建了但从未写入，
+        // 列表/详情看不出这一轮是「语音答辩」。软写：失败只记日志，不影响进入答辩。
+        String defenseMode = body.get("mode") == null ? "" : String.valueOf(body.get("mode")).trim();
+        if (resume != null && resume.getDefenseId() != null
+                && ("text".equals(defenseMode) || "voice".equals(defenseMode))) {
+            try {
+                defenseRecordsService.updateDefenseMode(resume.getDefenseId(), defenseMode);
+            } catch (Exception e) {
+                log.warn("记录答辩形式失败（不影响答辩）- defenseId: {}, mode: {}, 原因: {}",
+                        resume.getDefenseId(), defenseMode, e.getMessage());
+            }
+        }
+
         boolean resumed = resume != null && resume.isResumed();
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -1836,10 +1849,10 @@ public class chatController {
 
         if (pos == 0) {
             // 整条回复只有总结：无法安全剥离，保留原样并告警（提示词已约束，正常流程极少出现）
-            log.warn("模型在非最后一轮输出了纯总结回复，未剥离: {}", aiResponse);
+            log.warn("模型在非最后一轮输出了纯总结回复，未剥离 - 回复长度: {}", aiResponse.length());
             return aiResponse;
         }
-        log.warn("模型在非最后一轮提前输出总结，已剥离: {}", aiResponse.substring(pos));
+        log.warn("模型在非最后一轮提前输出总结，已剥离 - 剥离段长度: {}", aiResponse.length() - pos);
         return aiResponse.substring(0, pos).trim();
     }
 
@@ -2073,8 +2086,8 @@ public class chatController {
             ));
             trimChatMemory(sessionId);
 
-            log.info("学生放弃/敷衍作答，走固定零分流程 - defenseId: {}, round: {}, terminal: {}, 点评: {}",
-                    defenseId, currentRound, terminal, zeroComment);
+            log.info("学生放弃/敷衍作答，走固定零分流程 - defenseId: {}, round: {}, terminal: {}, 点评长度: {}",
+                    defenseId, currentRound, terminal, zeroComment == null ? 0 : zeroComment.length());
             return fixedResponse;
         } catch (Exception e) {
             log.error("放弃作答固定流程异常，回退正常模型流程", e);

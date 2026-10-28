@@ -26,6 +26,14 @@ public class DetailRecordsVo {
     private String defenseReportUrl;
 
     private String aiVideoAnalysis;
+
+    /**
+     * 【2026-10-28】基于视频转写全文的 AI 整体综合评价（约 400~700 字）。
+     * 与 {@link #aiVideoAnalysis} 不同：后者是五维成绩单，这里是一段叙述性总结，
+     * 供「回答详情」在视频场次（0 轮文字作答）展示，避免弹层空白。
+     */
+    private String aiVideoSummary;
+
     private String aiReportAnalysis;
     private String aiAllAnalysis;
 

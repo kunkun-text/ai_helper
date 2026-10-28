@@ -116,6 +116,7 @@ CREATE TABLE `defense_records` (
   `status` enum('pending','completed','graded') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'pending',
   `feedback` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
   `video_analysis` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `video_summary` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '基于视频转写全文的AI整体综合评价（约400~700字，教师/学生端「回答详情」展示）',
   `report_analysis` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
   `report_doc_analysis` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '基于上传报告文档的AI五维评析（区别于模型凭空写的 report_analysis）',
   `report_doc_summary` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '基于报告全文的AI整体综合评价（约400~700字，教师端「查看反馈」展示）',

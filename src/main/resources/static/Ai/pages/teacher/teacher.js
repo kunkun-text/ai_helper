@@ -69,6 +69,10 @@ Page({
     selectedRecord: null,
     selectedTopic: null, // 添加选中的题目详情
     showAddTopic: false,
+    // 【2026-10-28】AI 视频分析全文弹窗（原先把全文塞在 150rpx 小滚动条里看不全）
+    showVideoAnalysisSheet: false,
+    // 【2026-10-28】视频答辩综合评价（回答详情弹层用，由 DetailRecords 详情回调回填）
+    answerVideoSummary: '',
     isEditing: false,
     editedUser: {
       name: '',
@@ -202,6 +206,8 @@ Page({
       // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表打红标用。
       // 后端给的是 1/0（CASE WHEN），这里统一转布尔，避免 wxml 里出现 0 被当成"有值"。
       hasVideo: !!record.hasVideo,
+      // 【2026-10-28】答辩形式（text / voice），列表打「语音答辩」标签用
+      defenseMode: record.defenseMode || '',
       // 【2026-10-25】通用材料裁定：后端直接给 verdict 枚举，前端只做文案映射，
       // 不再解析成绩单文本、也没有任何"某类文件"的硬编码判断。
       materialVerdict: record.materialVerdict || '',
@@ -808,7 +814,8 @@ loadMoreTopics() {
   openRecord(e) {
     const recordId = e.currentTarget.dataset.id;
     const record = this.data.studentRecords.find((item) => item.id === recordId);
-    this.setData({ selectedRecord: record || null });
+    // 【2026-10-28】换记录时关闭 AI 分析弹窗，避免残留上一条的正文
+    this.setData({ selectedRecord: record || null, showVideoAnalysisSheet: false });
   },
 
   closeRecord() {
@@ -817,6 +824,7 @@ loadMoreTopics() {
     this.stopFeedbackSummaryPolling();
     this.setData({
       selectedRecord: null,
+      showVideoAnalysisSheet: false,
       feedbackSummaryGenerating: false,
       feedbackSummaryStage: '',
       feedbackSummaryError: ''
@@ -1105,6 +1113,8 @@ loadMoreTopics() {
       defenseVideoUrl: uploader.resolveFileUrl(detailData.defenseVideoUrl),
       defenseReportUrl: uploader.resolveFileUrl(detailData.defenseReportUrl),
       aiVideoAnalysis: detailData.aiVideoAnalysis,
+      // 【2026-10-28】视频答辩综合评价（约 400~700 字 AI 总结），「回答详情」展示
+      aiVideoSummary: detailData.aiVideoSummary || '',
       aiReportAnalysis: detailData.aiReportAnalysis,
       aiAllAnalysis: detailData.aiAllAnalysis,
       reportDocAnalysis: detailData.reportDocAnalysis,
@@ -1148,8 +1158,20 @@ loadMoreTopics() {
     this.setData({
       videoDims: parsed.dims,
       videoSummary: parsed.summary,
-      videoRaw: parsed.raw
+      videoRaw: parsed.raw,
+      // 【2026-10-28 · V1】评分引擎：本地 3B / 云端 glm:glm-4.7。
+      // 此前解析器已经返回 engine，但视频链路没取，教师看不到这分是谁给的。
+      videoEngine: parsed.engine || ''
     });
+  },
+
+  /** 【2026-10-28】「AI 视频分析」全文弹窗：原先把全文塞在 150rpx 小滚动条里，五维点评看不全 */
+  openVideoAnalysisSheet() {
+    this.setData({ showVideoAnalysisSheet: true });
+  },
+
+  closeVideoAnalysisSheet() {
+    this.setData({ showVideoAnalysisSheet: false });
   },
 
   /** 触发视频评分。已有结果时按钮是「重新生成」→ 带 force 真正重跑。 */
@@ -1483,6 +1505,7 @@ loadMoreTopics() {
     this.stopFeedbackSummaryPolling();
     this.setData({
       selectedRecord: null,
+      showVideoAnalysisSheet: false,
       feedbackSummaryGenerating: false,
       feedbackSummaryStage: '',
       feedbackSummaryError: ''
@@ -2485,7 +2508,10 @@ loadMoreTopics() {
       videoPercent: 0,
       videoDims: [],
       videoSummary: null,
-      videoRaw: ''
+      videoRaw: '',
+      // 【2026-10-28】视频答辩综合评价（详情接口回填，见下方 DetailRecords 回调）
+      answerVideoSummary: '',
+      answerHasVideo: false
     });
 
     // 拉取该场次详情：报告地址 + 已生成的报告评析。
@@ -2526,7 +2552,11 @@ loadMoreTopics() {
           answerDocDims: parsed.dims,
           answerDocSummary: parsed.summary,
           answerDocRaw: parsed.raw,
-          answerDocEngine: parsed.engine || ''
+          answerDocEngine: parsed.engine || '',
+          // 【2026-10-28】视频答辩综合评价（video_summary，约 400~700 字），回答详情弹层展示
+          answerVideoSummary: detail.aiVideoSummary || '',
+          // 该场是否带视频（决定弹层里是否渲染「视频答辩综合评价」区块）
+          answerHasVideo: !!(detail.defenseVideoUrl && detail.defenseVideoUrl !== 'abc')
         });
         // 上次点了分析但没看完（关了弹层/切了后台）→ 重新打开时续上进度
         this.resumeReportDocIfRunning(defenseId);

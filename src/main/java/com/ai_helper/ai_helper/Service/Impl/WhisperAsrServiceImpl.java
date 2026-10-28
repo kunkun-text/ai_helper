@@ -87,6 +87,17 @@ public class WhisperAsrServiceImpl implements AsrService {
     /** JSON 结果解析器（whisper.cpp 的 -ojf 输出） */
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /**
+     * 【2026-10-28】initial prompt 的硬上限（字符数）。
+     *
+     * <p><b>实测事故</b>：{@code app.voice.prompt} 默认那段中文术语表约 600 字符，
+     * 传给 whisper-cli 后对方**直接崩溃**（EXIT=0xC0000409 stack buffer overrun，
+     * 日志只留下一句 {@code failed to process audio}）。表现是**语音答辩 60 秒录音识别 100% 失败**，
+     * 而视频转写因为用的是 180 字以内的短 prompt 所以正常。
+     * 600 字符必崩、4 字符正常，故这里统一截到 120 字并记日志，不依赖配置写得对不对。</p>
+     */
+    private static final int MAX_PROMPT_CHARS = 120;
+
     /** 转写后处理纠错词表（错误写法 → 正确写法），空表表示不纠错 */
     private volatile Map<String, String> correctionRules = Map.of();
 
@@ -585,6 +596,11 @@ public class WhisperAsrServiceImpl implements AsrService {
         String prompt = UploadUtils.isBlank(initialPrompt)
                 ? appProperties.getVoice().getPrompt() : initialPrompt;
         if (!UploadUtils.isBlank(prompt)) {
+            // 【2026-10-28】硬截断：超长 prompt 会让 whisper-cli 崩溃（见 MAX_PROMPT_CHARS 注释）
+            if (prompt.length() > MAX_PROMPT_CHARS) {
+                log.warn("ASR 提示词过长，已截断 - 原长度: {}, 上限: {}", prompt.length(), MAX_PROMPT_CHARS);
+                prompt = prompt.substring(0, MAX_PROMPT_CHARS);
+            }
             command.add("--prompt");
             command.add(prompt);
         }
