@@ -1,0 +1,672 @@
+{
+  "version": "1.0",
+  "course": "大数据技术原理",
+  "generatedAt": "2026-11-12",
+  "purpose": "微调训练数据的题源。keyPoints 供生成器产出「正确/半对半错/全错但相关/完全不相关/少量正确掺杂大量错误」五种形态的答案，避免生成器凭空编造知识点。",
+  "usage": {
+    "primaryTopic": 28,
+    "primaryTopicName": "基于Hadoop的城市空气质量数据分析与可视化",
+    "note": "topic 28 的 5 道题为必选（对齐真实答辩课题）；其余题目用于扩增与复用，覆盖大数据技术原理课程主干。"
+  },
+  "existingFromDb": [
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "questionId": 45,
+      "question": "请说明Hadoop生态系统的核心组件及其在本课题中的作用。",
+      "keyPoints": ["HDFS 存原始/清洗后数据", "MapReduce 或 Spark 做批量统计", "YARN 资源调度", "Hive 做数仓与 SQL 统计", "Sqoop/Flume 采集与导入", "可视化层读结果表"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "questionId": 69,
+      "question": "空气质量数据中如何用 MapReduce 统计各城市的月均 PM2.5？",
+      "keyPoints": ["Mapper 以 城市+年月 为 key、PM2.5 为 value", "Combiner 本地预聚合降低网络传输", "Reducer 求 sum/count 得均值", "输出到 HDFS 或 Hive 表", "注意缺失值与异常值过滤"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "questionId": 70,
+      "question": "如何判断 AQI 等级并统计各等级的天数分布？",
+      "keyPoints": ["AQI 由六项污染物分指数取最大值", "按国标阈值划分优良/轻度/中度/重度/严重", "按城市+等级分组计数", "同一天多站点取均值或最大值", "结果落表供可视化"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "questionId": 71,
+      "question": "大文件存储与小文件在 HDFS 中性能差异如何？为什么会形成小文件问题？",
+      "keyPoints": ["NameNode 每文件/块约占 150 字节内存", "大量小文件耗尽 NameNode 内存", "每次读需多次 RPC 与寻址", "块大小 128MB 导致小文件占满块", "治理：合并、Har 归档、SequenceFile"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "questionId": 72,
+      "question": "如何对空气质量时间序列做趋势分析并输出可视化结果？",
+      "keyPoints": ["按日/月聚合得到时间序列", "移动平均或同比环比看趋势", "按城市分组对比", "结果导出到 MySQL/CSV", "ECharts 折线图/热力图展示"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "questionId": 46,
+      "question": "请说明 Hadoop 生态核心组件及其作用。",
+      "keyPoints": ["HDFS 分布式存储", "MapReduce 批处理计算", "YARN 资源管理", "Hive 数据仓库", "HBase 列式 NoSQL", "Flume/Sqoop 采集"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "questionId": 47,
+      "question": "HDFS 副本机制如何保证可靠性？默认副本数与机架感知策略？",
+      "keyPoints": ["默认 3 副本", "机架感知：两副本同机架、一副本跨机架", "DataNode 心跳与块报告", "副本不足自动复制", "校验和检测损坏块"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "questionId": 48,
+      "question": "MapReduce 的 Shuffle 做了什么？为何是性能瓶颈？",
+      "keyPoints": ["Map 端溢写、分区、排序、合并", "Reduce 端拉取、归并", "大量磁盘 IO 与网络传输", "数据倾斜放大耗时", "调优：Combiner、压缩、并行度"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "questionId": 49,
+      "question": "HDFS 与本地文件系统、关系型数据库在存储上有何差异？",
+      "keyPoints": ["HDFS 一次写入多次读取", "不适合低延迟随机写", "关系库强事务与索引", "HDFS 靠副本而非 RAID", "适合大文件顺序扫描"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "questionId": 50,
+      "question": "什么是数据倾斜？MapReduce/Hive 中如何缓解？",
+      "keyPoints": ["部分 key 数据量远超其他", "表现为少数 reduce 长尾", "加盐打散 key", "Map 端聚合/Combiner", "Hive 调参或拆分热点 key"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "questionId": 51,
+      "question": "RDD 是什么？有哪些特性？",
+      "keyPoints": ["弹性分布式数据集", "不可变、可分区", "血缘 lineage 支持容错", "惰性求值", "可持久化缓存"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "questionId": 52,
+      "question": "Spark 的 transformation 与 action 区别？各举两例。",
+      "keyPoints": ["transformation 惰性、返回新 RDD", "action 触发作业执行", "例：map/filter vs count/collect", "只有 action 才真正计算", "血缘在 transformation 中累积"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "questionId": 53,
+      "question": "Spark 宽依赖与窄依赖的区别及影响？",
+      "keyPoints": ["窄依赖父分区对应唯一子分区", "宽依赖需 shuffle", "宽依赖是 Stage 划分依据", "宽依赖代价高、易倾斜", "窄依赖可流水线执行"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "questionId": 54,
+      "question": "Spark 为什么比 MapReduce 快？",
+      "keyPoints": ["内存计算减少落盘", "DAG 优化与 Stage 合并", "线程模型复用 executor", "shuffle 实现更高效", "缓存中间结果"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "questionId": 55,
+      "question": "Spark 广播变量与累加器用于什么场景？",
+      "keyPoints": ["广播变量：只读小表分发到各 executor", "避免每任务重复传输", "累加器：只能加、driver 读取", "用于计数与调试统计", "累加器失败重算可能重复"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "questionId": 56,
+      "question": "数据仓库与数据库的区别？Hive 的定位？",
+      "keyPoints": ["数仓面向分析、数据库面向事务", "数仓读多写少、批量更新", "Hive 是 SQL on Hadoop 的数仓工具", "元数据在 Metastore", "查询转 MapReduce/Spark"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "questionId": 57,
+      "question": "Hive 内部表与外部表的区别？删除时行为？",
+      "keyPoints": ["内部表删表同时删数据", "外部表只删元数据、数据保留", "外部表适合共享原始数据", "Location 指向 HDFS 路径", "分区表同理"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "questionId": 58,
+      "question": "HBase 与关系型数据库在数据模型和场景上的差异？",
+      "keyPoints": ["HBase 稀疏列、按 RowKey 排序", "无复杂 join 与事务", "适合海量随机读写", "强一致单行操作", "依赖 HDFS 存储"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "questionId": 59,
+      "question": "什么是 CAP 理论？分布式大数据系统如何取舍？",
+      "keyPoints": ["一致性/可用性/分区容忍三选二", "分布式必须保 P", "HBase 偏 CP", "Cassandra 偏 AP", "按业务取舍"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "questionId": 60,
+      "question": "数据采集与 ETL 的作用？常用工具有哪些？",
+      "keyPoints": ["抽取-转换-加载", "统一格式与质量", "Flume 日志采集", "Sqoop 关系库导入导出", "Kafka 缓冲解耦"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "questionId": 61,
+      "question": "Flume 的架构由哪些组件组成？如何保证采集可靠？",
+      "keyPoints": ["Source/Channel/Sink", "Channel 暂存", "事务保证至少一次", "File Channel 持久化", "Sink 失败重试"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "questionId": 62,
+      "question": "Kafka 为什么吞吐高？它的核心概念有哪些？",
+      "keyPoints": ["顺序写磁盘 + 页缓存", "零拷贝", "分区并行", "批量与压缩", "Topic/Partition/Offset/ConsumerGroup"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "questionId": 63,
+      "question": "Sqoop 导入导出原理是什么？如何增量导入？",
+      "keyPoints": ["转 MapReduce 作业", "按 split 并行读", "append 基于自增列", "lastmodified 基于时间戳", "merge-key 合并更新"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "questionId": 64,
+      "question": "ETL 中数据清洗主要处理哪些问题？",
+      "keyPoints": ["缺失值填充或剔除", "异常值识别（超量程）", "格式统一与去重", "编码与字段映射", "口径统一与校验"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "questionId": 65,
+      "question": "批处理与流处理有何区别？各自适用场景？",
+      "keyPoints": ["批处理高吞吐、延迟高", "流处理低延迟、持续计算", "MapReduce/Spark 批", "Flink/SparkStreaming 流", "按实时性要求选择"]
+    }
+  ],
+  "newQuestions": [
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "请描述 HDFS 的写入流程（客户端到 DataNode）。",
+      "keyPoints": ["客户端向 NameNode 请求创建文件", "NameNode 返回可写 DataNode 列表", "数据按 packet 流水线写入", "副本 pipeline 复制", "写完关闭并由 NameNode 提交元数据"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "YARN 的架构是什么？一个作业是如何提交并运行的？",
+      "keyPoints": ["ResourceManager 全局资源", "NodeManager 单节点代理", "ApplicationMaster 管理单作业", "Container 分配资源", "RM 调度 AM，AM 申请 Container 跑 Task"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "SecondaryNameNode 的作用是什么？它是 NameNode 的备份吗？",
+      "keyPoints": ["不是热备", "定期合并 fsimage 与 edits", "减小 NameNode 启动时间", "HA 场景由 Standby 承担", "合并后推回 NameNode"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS 块大小为什么默认是 128MB？调大调小各有什么影响？",
+      "keyPoints": ["减少寻址开销", "块过大导致任务并行度低", "块过小增加 NameNode 压力", "按磁盘吞吐与网络带宽权衡", "与 Map 任务切分相关"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS 如何保证数据一致性？校验和与副本修复是怎么工作的？",
+      "keyPoints": ["写入时计算 checksum", "读取时校验", "DataNode 定期 block scanner", "损坏块上报 NameNode", "从其他副本复制恢复"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的运行架构由哪些角色组成？Driver 与 Executor 如何协作？",
+      "keyPoints": ["Driver 解析并调度任务", "Cluster Manager 分配资源", "Executor 执行 Task", "DAG Scheduler 划分 Stage", "Task Scheduler 下发任务"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark SQL 与 DataFrame 相比直接写 RDD 有什么优势？",
+      "keyPoints": ["Catalyst 优化器", "Tungsten 代码生成", "schema 带来类型与统计信息", "列式处理减少开销", "API 更简洁"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的持久化级别有哪些？cache 与 persist 的区别？",
+      "keyPoints": ["MEMORY_ONLY / MEMORY_AND_DISK 等", "cache 等价 MEMORY_AND_DISK（新版）", "persist 可指定级别", "序列化降低内存占用", "用完 unpersist 释放"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 中 Stage 是如何划分的？为什么按宽依赖划分？",
+      "keyPoints": ["遇到宽依赖切分 Stage", "窄依赖可流水线合并", "宽依赖需要 shuffle 落盘", "Stage 内是 task 集合", "划分决定任务并行与容错粒度"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 任务出现数据倾斜时，你会如何定位和处理？",
+      "keyPoints": ["Spark UI 看 task 时长分布", "采样统计 key 分布", "加盐/两阶段聚合", "广播小表","提高并行度缓解"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "维度建模中星型模型与雪花模型的区别？如何选择？",
+      "keyPoints": ["星型：维度不规范化、join 少", "雪花：维度规范化、层级多", "星型查询快、冗余多", "雪花节省存储、join 复杂", "按查询性能优先选星型"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "缓慢变化维（SCD）是什么？常见的处理方式有哪些？",
+      "keyPoints": ["维度属性随时间变化", "类型1 覆盖原值", "类型2 加版本行与生效时间", "类型3 加历史列", "按是否需要追溯选择"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "Hive 分区与分桶的区别？各自适用什么场景？",
+      "keyPoints": ["分区是目录、按字段裁剪", "分桶是文件 hash 取模", "分区减少扫描量", "分桶利于 join 与采样", "分区字段不宜过多"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "HBase 的 RowKey 设计原则是什么？如何避免热点？",
+      "keyPoints": ["长度适中、散列分布", "按查询维度设计前缀", "避免单调递增导致热点", "加盐/哈希前缀/反转", "预分区"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "列式存储与行式存储的区别？为什么分析场景偏好列式？",
+      "keyPoints": ["行式按行连续存储", "列式按列连续存储", "列式只读所需列", "压缩率高", "适合聚合扫描而非点更新"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "强一致性与最终一致性有什么区别？大数据系统通常如何取舍？",
+      "keyPoints": ["强一致：读到的都是最新写入", "最终一致：短期可能读到旧值", "分布式下强一致代价高", "按业务容忍度取舍", "BASE 与 ACID 对比"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Kafka 的分区与消费者组是如何协作的？位移如何管理？",
+      "keyPoints": ["一个分区只被组内一个消费者消费", "分区数决定最大并行度", "位移提交到 __consumer_offsets", "自动/手动提交", "rebalance 触发再分配"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Flume 的 Channel 有哪几种？如何取舍？",
+      "keyPoints": ["Memory Channel 快但易丢", "File Channel 持久化但慢", "Kafka Channel 解耦缓冲", "按可靠性要求选择", "配合事务与批量"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "数据质量校验通常包含哪些维度？在 ETL 中如何落地？",
+      "keyPoints": ["完整性/唯一性/一致性/及时性/有效性", "空值与重复检查", "范围与枚举校验", "主外键关联校验", "异常落表并告警"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "关系库增量抽取有哪些常见方案？各自优缺点？",
+      "keyPoints": ["时间戳增量：简单但依赖字段维护", "自增 ID：高效但删除难捕获", "binlog CDC：实时但需权限与组件", "全量对比：准确但昂贵", "按实时性与侵入性选择"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "流处理中的 Exactly-Once 是如何实现的？",
+      "keyPoints": ["端到端一次性语义", "checkpoint 保存状态", "两阶段提交或幂等写", "故障恢复从 checkpoint 重放", "依赖 sink 支持事务"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "空气质量原始数据中常见的缺失值和异常值有哪些？你在项目中如何处理？",
+      "keyPoints": ["PM2.5 超量程或负值", "整点缺测", "重复记录", "按阈值置空并记录", "同站相邻时刻插值或剔除"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "在 Hive 中如何为空气质量数据设计分区表？为什么这样设计？",
+      "keyPoints": ["按日期分区、按城市分桶", "减少全表扫描", "按天增量导入", "分区字段与目录对应", "避免过多小分区"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "这个课题里 MapReduce 与 Spark 你如何取舍？依据是什么？",
+      "keyPoints": ["批处理两者都能做", "Spark 内存计算更快", "MapReduce 稳定但慢", "迭代分析选 Spark", "资源有限时按任务规模取舍"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "统计结果如何保证可复现？你做了哪些工程约束？",
+      "keyPoints": ["固定数据版本与分区", "统一时间口径与时区", "脚本与参数入版本库", "结果落表留痕", "重跑幂等"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "可视化层你选了什么技术？如何把 Hive 结果送到前端？",
+      "keyPoints": ["Sqoop 导出到 MySQL", "后端接口读结果表", "ECharts 渲染折线/柱状/热力图", "按城市与时间筛选", "缓存热点查询"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "如果数据量从 1GB 增长到 1TB，你的方案需要做哪些调整？",
+      "keyPoints": ["增加分区与并行度", "HDFS 扩容与副本策略", "Hive 分桶与压缩", "Spark 资源与 shuffle 调优", "结果表预聚合"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "请说明你项目中遇到的最大技术难点，以及你是怎么解决的。",
+      "keyPoints": ["明确具体难点而非泛泛而谈", "给出定位证据（日志/数据）", "说明尝试过的方案与取舍", "最终方案的收益可量化", "遗留问题诚实说明"]
+    }
+  ],
+  "extendedQuestions": [
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS 的 HA 是如何实现的？JournalNode 和 ZKFC 各起什么作用？",
+      "keyPoints": ["Active/Standby 两个 NameNode", "JournalNode 共享 edits 日志", "ZKFC 通过 ZK 选举与故障切换", "DataNode 同时向两个 NN 汇报", "避免单点故障"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS Federation（联邦）解决什么问题？和 HA 有什么区别？",
+      "keyPoints": ["单 NN 内存瓶颈", "多个 NN 各自管理命名空间", "共享 DataNode 存储", "HA 解决可用性、Federation 解决扩展性", "需要挂载表管理"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "伪分布式与完全分布式集群有什么区别？学习和生产该怎么选？",
+      "keyPoints": ["伪分布式所有角色单机", "完全分布式多节点真实分布", "生产必须完全分布式", "学习先用伪分布式验证逻辑", "完全分布式需要 SSH 与时间同步"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "NameNode 的内存是如何被消耗的？如何估算集群能存多少文件？",
+      "keyPoints": ["每个文件/目录/块约 150 字节", "块数=文件大小/128MB", "100 万文件约占数百 MB", "小文件会急剧放大元数据", "可通过 Federation 横向扩展"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS 为什么支持追加写却不支持随机修改？这对使用方式有什么约束？",
+      "keyPoints": ["一次写入多次读取模型", "随机修改需要跨块重写与多副本同步", "只允许 append", "适合日志与批处理", "需要更新用 HBase 等"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "Hadoop 常用压缩格式有哪些？Snappy、Gzip、Bzip2 如何取舍？",
+      "keyPoints": ["Snappy 快但压缩率一般、不可切分", "Gzip 通用、压缩率较高、不可切分", "Bzip2 压缩率高、可切分但慢", "按是否可切分与 CPU 开销选择", "中间结果常用 Snappy"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "DataNode 扩容或下线时，HDFS 会做哪些数据迁移？如何避免影响业务？",
+      "keyPoints": ["新增节点触发 balancer", "下线用 decommission 逐步迁移", "副本按机架感知重新分布", "限速避免打满网络", "迁移期间监控副本缺失"]
+    },
+    {
+      "topicId": 13,
+      "topicName": "大数据技术原理（Hadoop与存储）",
+      "question": "HDFS 的 safemode 是什么？什么情况下会一直停留在 safemode？",
+      "keyPoints": ["启动时等待块报告达到阈值", "副本不足时不退出", "DataNode 未全部注册", "可手动 leave 但需谨慎", "排查副本率与 DN 存活"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的 Shuffle 有哪几种实现？Hash Shuffle 与 Sort Shuffle 的差异？",
+      "keyPoints": ["Hash 按 key 哈希分文件", "Sort 先排序再合并写一个索引文件", "Sort 减少小文件与句柄", "新版默认 SortShuffleManager", "bypass 机制用于小分区数"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的统一内存管理是怎样的？execution 与 storage 如何互相借用？",
+      "keyPoints": ["统一内存池", "storage 与 execution 可动态借用", "一方空闲可被另一方占用", "不足时 spill 到磁盘", "可通过参数划分比例"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark Streaming 与 Structured Streaming 的区别？新项目该选哪个？",
+      "keyPoints": ["DStream 基于 RDD 微批", "Structured 基于 DataFrame/ Catalyst", "Structured 支持事件时间与 watermark", "新项目选 Structured Streaming", "API 更统一、易优化"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的容错依赖什么？lineage 与 checkpoint 分别解决什么问题？",
+      "keyPoints": ["lineage 重算丢失分区", "长血缘重算代价高", "checkpoint 截断血缘", "流处理必须 checkpoint", "checkpoint 存可靠存储"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 的 join 有哪些执行策略？什么情况下会走 broadcast join？",
+      "keyPoints": ["broadcast hash join", "sort-merge join", "shuffle hash join", "小表低于阈值自动广播", "广播可避免 shuffle 但占内存"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 写出结果时产生大量小文件，如何治理？",
+      "keyPoints": ["控制分区数/并行度", "写出前 coalesce/repartition", "按分区字段动态写入", "定时合并小文件", "Hive 侧也可做 compaction"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark 作业调优你会看哪些参数？executor 数量与内存怎么定？",
+      "keyPoints": ["executor 数受节点资源限制", "cores 与内存按核数配比", "driver 内存按收集量", "并行度=分区数", "先看 Spark UI 定位瓶颈"]
+    },
+    {
+      "topicId": 14,
+      "topicName": "大数据技术原理（Spark与计算）",
+      "question": "Spark UDF 与内置函数相比有什么性能问题？如何规避？",
+      "keyPoints": ["UDF 阻断 Catalyst 优化", "行式处理、序列化开销大", "优先用内置函数", "必须用时用 pandas UDF", "避免在 UDF 里做重计算"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "数据仓库为什么要分层？ODS、DWD、DWS、ADS 各放什么？",
+      "keyPoints": ["ODS 贴源原始数据", "DWD 明细清洗与规范化", "DWS 轻度汇总宽表", "ADS 面向应用的结果", "分层降低耦合、便于复用"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "拉链表是什么？在什么场景下使用？如何更新？",
+      "keyPoints": ["记录维度历史状态", "start_date/end_date 标记有效期", "变化时关链并开新链", "节省存储对比全量快照", "适合缓慢变化的维度"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "事实表有哪几种类型？事务事实表与周期快照事实表的区别？",
+      "keyPoints": ["事务事实表按事件记录", "周期快照按固定周期采状态", "累积快照跟踪流程进度", "按分析问题选择", "快照表便于趋势对比"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "Hive 的谓词下推是什么？什么情况下会失效？",
+      "keyPoints": ["过滤条件下推到扫描层", "减少读入数据量", "子查询/函数包裹可能失效", "join 场景注意分区裁剪", "可用 explain 验证"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "Hive join 出现数据倾斜怎么处理？",
+      "keyPoints": ["热点 key 导致单 reducer 长尾", "map join 广播小表", "热点 key 加随机前缀", "拆分热点单独处理", "调大 reduce 并行度"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "HBase 的写入与读取流程是怎样的？MemStore 与 HFile 的作用？",
+      "keyPoints": ["写 WAL 再写 MemStore", "MemStore 满刷成 HFile", "读先查 MemStore 再查 HFile", "BloomFilter 与 BlockCache 加速", "minor/major compaction 合并"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "HBase 不支持二级索引，业务上需要多条件查询怎么办？",
+      "keyPoints": ["设计复合 RowKey", "建索引表/ES 二级索引", "Phoenix 提供 SQL 与索引", "冗余多份 RowKey 结构", "按查询模式反推设计"]
+    },
+    {
+      "topicId": 20,
+      "topicName": "大数据技术原理（数据仓库与NoSQL）",
+      "question": "Hive 与 HBase 如何集成？什么场景适合把数据放 HBase？",
+      "keyPoints": ["Hive 外部表映射 HBase", "HBaseStorageHandler", "适合随机读写与点查", "Hive 适合批量分析", "按读写模式分工"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Flume 的 Interceptor 与 Channel Selector 分别解决什么问题？",
+      "keyPoints": ["Interceptor 过滤/改写事件", "Selector 决定写哪个 Channel", "可做多路复用与分流", "按 header 路由", "注意拦截器性能开销"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Kafka 的 ISR 与 acks 是什么？如何权衡可靠性与吞吐？",
+      "keyPoints": ["ISR 是与 leader 同步的副本集合", "acks=0/1/all", "all 最可靠但延迟高", "min.insync.replicas 配合", "按业务重要性选择"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Kafka 消息丢失和重复消费分别可能发生在哪些环节？怎么解决？",
+      "keyPoints": ["生产端 acks 与重试", "broker 刷盘与副本", "消费端先处理后提交位移", "重复靠幂等/去重表", "事务或精确一次语义"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "Sqoop 的并发度由什么决定？split-by 选错会怎样？",
+      "keyPoints": ["-m 指定 mapper 数", "split-by 用于切分范围", "字段分布不均导致倾斜", "非数值/空值会失败", "选均匀分布的主键"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "实时采集中的数据乱序与迟到数据怎么处理？",
+      "keyPoints": ["事件时间与处理时间区分", "watermark 容忍乱序", "allowed lateness 处理迟到", "侧输出流收集超期数据", "按业务容忍度设阈值"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "CDC 是什么？Canal、Flink CDC 各适合什么场景？",
+      "keyPoints": ["基于 binlog 捕获变更", "Canal 轻量、需部署 server", "Flink CDC 可直接入湖入仓", "全增量一体化", "注意位点与全量一致性"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "数据脱敏与合规在 ETL 中如何落地？",
+      "keyPoints": ["识别敏感字段", "脱敏规则（掩码/哈希/加密）", "在 ODS 后统一处理", "权限与审计", "保留可逆映射需单独管控"]
+    },
+    {
+      "topicId": 21,
+      "topicName": "大数据技术原理（数据采集与ETL）",
+      "question": "离线任务调度你了解哪些工具？如何保证任务依赖与重跑安全？",
+      "keyPoints": ["DolphinScheduler/Azkaban/Oozie", "DAG 依赖编排", "失败重试与告警", "重跑需幂等与分区覆盖", "补数按日期区间"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "这个课题你会怎么设计维度表和事实表？",
+      "keyPoints": ["城市维、日期维、污染物维", "事实表存站点小时观测", "按日期分区、城市分桶", "星型模型便于多维分析", "避免维度冗余"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "PM2.5 浓度与 AQI 是什么关系？AQI 是如何算出来的？",
+      "keyPoints": ["各污染物分指数 IAQI", "AQI 取各项最大值", "分指数按浓度限值线性插值", "PM2.5 常为首要污染物", "等级按国标阈值划分"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "如何计算同比、环比与移动平均？在 Hive/Spark 中怎么实现？",
+      "keyPoints": ["同比对去年同月", "环比对上一个月", "移动平均用窗口函数", "注意缺失月份补全", "结果落表供图表"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "统计结果最终存在 MySQL，表结构和索引你会怎么设计？",
+      "keyPoints": ["按城市+日期建联合唯一索引", "聚合结果表而非明细", "查询维度建索引", "控制单表行数", "必要时加缓存"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "各城市数据量差异很大导致数据倾斜，你怎么处理？",
+      "keyPoints": ["按城市分组时大城市倾斜", "给热点城市加随机前缀", "两阶段聚合", "提高并行度", "单独处理超大城市"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "这个课题的离线任务如何调度？增量跑批怎么设计？",
+      "keyPoints": ["按天分区增量", "调度器编排依赖", "失败重试与告警", "补数按日期区间", "重跑需覆盖写保证幂等"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "如何做数据血缘与口径文档？为什么这件事重要？",
+      "keyPoints": ["记录表与字段来源", "口径统一避免同名不同义", "变更可追溯", "新人接手成本低", "配合调度与元数据管理"]
+    },
+    {
+      "topicId": 28,
+      "topicName": "基于Hadoop的城市空气质量数据分析与可视化",
+      "question": "如果让你重新设计这个项目，你会改哪三件事？为什么？",
+      "keyPoints": ["承认现有方案不足", "给出可落地的改进点", "说明收益与代价", "优先解决数据质量与倾斜", "避免空泛"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 的运行架构由哪些组件组成？JobManager 与 TaskManager 各做什么？",
+      "keyPoints": ["JM 负责调度与 checkpoint 协调", "TM 提供 slot 执行任务", "Task 以算子链形式运行", "资源按 slot 划分", "Client 提交作业"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 的窗口类型有哪些？水印（watermark）解决什么问题？",
+      "keyPoints": ["滚动/滑动/会话窗口", "按事件时间或处理时间", "watermark 表示时间进度", "容忍乱序", "配合 allowed lateness"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 的 checkpoint 与 savepoint 有什么区别？如何保证一致性？",
+      "keyPoints": ["checkpoint 自动周期、故障恢复", "savepoint 手动、用于升级迁移", "基于 barrier 的分布式快照", "状态后端存状态", "端到端需 sink 支持事务"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 的状态后端有哪些？如何选择？",
+      "keyPoints": ["MemoryStateBackend 仅测试", "FsStateBackend 状态存文件系统", "RocksDBStateBackend 支持大状态", "按状态规模与性能选", "大状态用 RocksDB + 增量 checkpoint"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 作业出现反压（backpressure）如何定位与处理？",
+      "keyPoints": ["Web UI 看反压指标", "定位慢算子", "增加并行度或资源", "优化外部 IO 与序列化", "拆分算子链"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "Flink 与 Spark Streaming 相比有什么优势与代价？",
+      "keyPoints": ["Flink 原生流、低延迟", "Spark 微批、生态更成熟", "Flink 状态与时间语义更强", "Flink 运维复杂度更高", "按延迟与团队能力选"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "什么是流批一体？它对数仓架构有什么影响？",
+      "keyPoints": ["同一套 SQL/代码处理流与批", "存储与元数据统一", "减少两套链路维护", "实时数仓分层", "对引擎与团队要求更高"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（流处理与架构）",
+      "question": "实时数仓通常怎么分层？和离线数仓有什么不同？",
+      "keyPoints": ["ODS/DWD/DWS/ADS 仍适用", "增加实时明细与实时汇总", "Kafka 作为缓冲层", "用 Flink 做增量计算", "口径必须与离线对齐"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（基础与架构）",
+      "question": "大数据的 4V 特征是什么？分别带来什么技术挑战？",
+      "keyPoints": ["Volume 体量大", "Velocity 速度快", "Variety 类型多", "Value 价值密度低", "对应分布式存储/流处理/多模/分析挖掘"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（基础与架构）",
+      "question": "Lambda 架构与 Kappa 架构的区别？各自适合什么场景？",
+      "keyPoints": ["Lambda 批层+速度层+服务层", "Kappa 只用流、重放历史", "Lambda 口径易不一致", "Kappa 依赖消息队列留存", "按实时性与维护成本选"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（基础与架构）",
+      "question": "数据湖与数据仓库有什么区别？湖仓一体解决什么问题？",
+      "keyPoints": ["数据湖存原始多模数据", "数仓强 schema 与治理", "湖仓一体统一存储与元数据", "支持 ACID 与增量读", "减少数据搬运"]
+    },
+    {
+      "topicId": null,
+      "topicName": "大数据技术原理（基础与架构）",
+      "question": "Parquet 与 ORC 有什么区别？为什么分析场景用列式格式？",
+      "keyPoints": ["都是列式存储", "Parquet 生态更广、Spark 友好", "ORC 在 Hive 上优化好", "列裁剪与谓词下推", "压缩率高、IO 少"]
+    }
+  ]
+}

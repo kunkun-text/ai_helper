@@ -45,3 +45,15 @@ src/main/resources/application.properties
 ### 微信开发者工具在仓库根目录生成的重复配置 ###
 /project.config.json
 /project.private.config.json
+
+### 微调产物（体积大 / 合成数据，不入库） ###
+docs/ft/raw/
+docs/ft/dataset/
+*.gguf
+*.safetensors
+ft-out/
+ai-ft-env/
+unsloth_compiled_cache/
+
+### IDE 生成的技能副本（与 .claude/skills 重复，不入库） ###
+.agents/
