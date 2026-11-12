@@ -17,7 +17,7 @@
 ### 本地 3B 模型 QLoRA 微调（格式稳定性专项）
 
 > **状态：训练完成、注册并对运行时切换生效（2026-11-12 晚间）**：`application.yml` 的 `spring.ai.openai.chat.options.model` 已改为 `qwen2.5:3b-defense`，进入「边用边调」阶段；原模型 `qwen2.5:3b-16k` 保留，改回一行即可回退。
-> 完整数据、风险与定版选项见 `微调成果与定版选项-2026-11-12.md`；方案与数据规格见 `微调开工前文档-2026-11-12.md`。
+> 数据规格、训练参数、评测对比、运行与反复调试全部见 **`docs/ft/微调手册-2026-11-12.md`**（已合并原方案/开工前/成果三份文档）。
 
 **一、为什么做**
 
@@ -87,7 +87,7 @@ LoRA → GGUF（`convert_lora_to_gguf.py`，60MB）→ Ollama `ADAPTER` 挂到 `
 | 改完必做 | ① `eval_ollama.py --n 20` 看格式/档位；② 重放 `343/344/359/363/364`；③ 达标线：格式不降、`363` 仍 0 条追问、`343/359` 不明显退化 |
 | 出问题的日志关键字 | `管道格式不完整`、`未找到管道行`、`解析失败`、`FAILED`、`评分引擎：` |
 
-> 每次调试在 `微调成果与定版选项-2026-11-12.md` 的「调试记录」表里加一行（日期 / 改了什么 / 耗时 / 格式合规 / 档位命中 / 结论），只写可复现事实。
+> 每次调试在 `docs/ft/微调手册-2026-11-12.md` §7.5「调试记录」表里加一行（日期 / 改了什么 / 耗时 / 格式合规 / 档位命中 / 结论），只写可复现事实。
 
 ---
 
@@ -96,17 +96,17 @@ LoRA → GGUF（`convert_lora_to_gguf.py`，60MB）→ Ollama `ADAPTER` 挂到 `
 ### 全项目对抗性审查（整改代码已 stash，仅文档入库）
 
 > 说明：审查结论与施工方案已产出，代码整改批次①②③（P0-2/P0-4/P0-5、P1-4~P1-7、P1-10~P1-12，`mvn -o clean test` 118/118）当日曾实现，因同时段真机录音异常按用户要求整体回滚，现存于 `git stash`（`2026-11-05 审查整改 T1~T10`），**未提交**。
-> 文档：`审查清单-2026-11-05.md`（37 项，6 P0 / 12 P1 / 20 P2）、`审查修复方案-2026-11-05.md`（可派工施工指令）。
+> 文档：`docs/review/审查-2026-11-05.md`（第一部分 37 项清单：6 P0 / 12 P1 / 20 P2；第二部分可派工施工指令 T1~T11）。
 > 恢复方式：`git stash list` → `git stash pop`，再按方案文档逐条复验。
 
 ---
 
 ## 2026-10-28
 
-### 代码规范性整改（零功能增删，执行 `10.28优化.md` 的 A/B 两组）
+### 代码规范性整改（零功能增删，执行 `docs/history/10.28优化.md` 的 A/B 两组）
 
 > 改动日期：2026-10-28，涉及 17 个文件（含删除 1 个死文件）。**状态：编译 + 全量单测 115/115 通过，待真机。**
-> 依据：`10.28优化.md`（当日全仓实证生成的整改清单）。**默认行为与改前完全一致**：所有配置项默认值 = 原硬编码值；协议标签、判分阈值、prompt 一律未动；`application.yml` 未改动、未提交。
+> 依据：`docs/history/10.28优化.md`（当日全仓实证生成的整改清单）。**默认行为与改前完全一致**：所有配置项默认值 = 原硬编码值；协议标签、判分阈值、prompt 一律未动；`application.yml` 未改动、未提交。
 
 **一、改动内容**
 
@@ -231,7 +231,7 @@ LoRA → GGUF（`convert_lora_to_gguf.py`，60MB）→ Ollama `ADAPTER` 挂到 `
 **九、遗留**
 
 - **需重启后端**才生效的条目：A2/A3（日志）、B2（配置读取）、B3、A4。
-- `10.28优化.md` 的 **C 组 8 条（类名/包名重命名、Map 接参、DTO 校验、`request.js` 去留、分页双封装、超大文件拆分、裸 Result 泛型）本轮未动**——均会改变对外行为或波及全仓，待用户拍板。
+- `docs/history/10.28优化.md` 的 **C 组 8 条（类名/包名重命名、Map 接参、DTO 校验、`request.js` 去留、分页双封装、超大文件拆分、裸 Result 泛型）本轮未动**——均会改变对外行为或波及全仓，待用户拍板。
 - 新配置项只写进了 `application.yml.example`；本地 `application.yml` 未改（不配即用默认值，行为与改前一致）。
 
 ---
@@ -2362,7 +2362,7 @@ powershell -ExecutionPolicy Bypass -File .\diagnose.ps1
 
 - `utils/config.js` 新增 `env: 'dev' | 'lan' | 'prod'` 与 `devBaseUrl / lanBaseUrl / prodBaseUrl`；`getBaseUrl()` 按 env 分支：prod 时 `prodBaseUrl` 必须为 `https://` 开头，否则**直接抛错**（防止误发局域网/明文地址上线）；保留 `serverUrl / localServerUrl / useRemoteServer` 兼容旧引用。
 - 部署手册第十节、Q4 的真机地址说明同步改为 `env` 口径（原 `useRemoteServer`/`serverUrl` 写法已过时）。
-- **仍缺（等真实域名）**：`prodBaseUrl` 填值 + `project.private.config.json` 关闭 `urlCheck:false`；体验版验收见 `上线缺漏整改清单` A2。
+- **仍缺（等真实域名）**：`prodBaseUrl` 填值 + `project.private.config.json` 关闭 `urlCheck:false`；体验版验收见 `docs/history/上线缺漏整改清单-2026-10-05.md` A2。
 
 ### 五、验证
 
@@ -2495,7 +2495,7 @@ powershell -ExecutionPolicy Bypass -File .\diagnose.ps1
 
 ## 上线缺漏整改（P0/P1 全批次，A2 除外）
 
-> 依据 `上线缺漏整改清单-2026-10-05.md` 执行；**A2（小程序生产域名）不做**，需真实 HTTPS 合法域名后单独拍板。
+> 依据 `docs/history/上线缺漏整改清单-2026-10-05.md` 执行；**A2（小程序生产域名）不做**，需真实 HTTPS 合法域名后单独拍板。
 > **状态：`mvn -o -q compile` BUILD SUCCESS；全部改过的 JS `node --check` 通过；需在真机/多场答辩中复验。**
 
 ### 一、P0 阻断项
