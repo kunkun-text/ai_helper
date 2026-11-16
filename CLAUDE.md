@@ -98,7 +98,7 @@
 | **P1** | 视频转写纠错词表 | 治「文字答辩→文字打变」「部署→剥锁」「系统评分→系统平方」等同音词；按课题术语生成，外置可编辑，避免硬编码 |
 | **P0** | A2 小程序生产域名 | 配置侧已完成；**只差真实已备案 HTTPS 域名**（填 `prodBaseUrl`、切 `env:'prod'`、关 `urlCheck:false`） |
 | **P0** | F11 语音归档回放 | 🔧 2026-10-08 已开发（归档+三处回放入口），待真机实测 |
-| **P0** | V0 前端真机验证 | 9-16 起的所有改动仅开发者工具验证。**2026-10-14 新增待测清单**：① 教师端「查看回答详情」→「场次审计日志」时间线（N15）；② 语音页录音上限提示与到点自动停止、上滑取消、识别失败重试、清空重录（N12）；③ 三处语音回放（答辩页/学生详情/教师详情）；④ `/reset-password?token=abc` 提示页渲染（N35）；⑤ `diagnose.ps1 -SkipInferenceTest` 应显示「12 张必需表齐全」（`defense_rubric` 的 DDL 已于 2026-10-14 执行成功） |
+| **P0** | V0 前端真机验证 | 9-16 起的所有改动仅开发者工具验证。**2026-10-14 新增待测清单**：① 教师端「查看回答详情」→「场次审计日志」时间线（N15）；② 语音页录音上限提示与到点自动停止、上滑取消、识别失败重试、清空重录（N12）；③ 三处语音回放（答辩页/学生详情/教师详情）；④ `/reset-password?token=abc` 提示页渲染（N35）；⑤ `scripts\diagnose.ps1 -SkipInferenceTest` 应显示「12 张必需表齐全」（`defense_rubric` 的 DDL 已于 2026-10-14 执行成功） |
 | **P0** | N42 [跑题] 误判 | 2026-10-08 已收口唯一缺口（0分不带标记轮次纳入复核），待多场样本复验 |
 | **P2** | N7 评分稳定性 | temperature=0 全覆盖；路线①要点核验 + **要点清单已落库**（新表 `defense_rubric`，内存/库表双层缓存）+ **2026-10-14 口径校准**（命中判定放宽 / 与本题无关直接 0 分 / 阈值 0.50 / 指令操控词表）+ **违禁话术护栏**（N61 输入侧越狱零分 / 输出侧点评校验）；遗留：「判分规则表化」待拍板口径、"数字级小错"3B 无法稳定识别、**新口径待多场样本复验** |
 | **P3** | N16 Git 协作 | 需你决定（fork 到自账号或加协作者） |
@@ -162,41 +162,40 @@ ai/                                    # 项目根
 │       │   └── stats/                 # 数据总览（新增）
 │       └── utils/                     # 前端工具（uploader.js 等）
 ├── docs/
-│   ├── schema.sql                     # 数据库表结构（12 张表 + defense_records 报告评析 6 列）
-│   ├── ddl_defense_score_record.sql   # 评分表建表
-│   ├── ddl_system_feedback.sql        # 反馈表建表（需手动执行）
-│   ├── ddl_voice_responses.sql        # 录音归档表（存量库补）
-│   ├── ddl_defense_audit_log.sql      # 场次审计日志表（存量库补）
-│   ├── ddl_defense_rubric.sql         # 要点核验清单表（第 12 张，存量库补）
-│   ├── ddl_report_doc_analysis.sql    # 报告评析 4 列（10-16，**只能执行一次**）
-│   ├── ddl_report_text.sql            # 报告全文快照列（10-16 晚，MEDIUMTEXT）
-│   ├── ddl_report_doc_summary.sql     # 综合评价列（10-18）
 │   ├── README.md                      # 文档地图（先看这里）
+│   ├── planning/                      # 需求清单、新阶段路线图
 │   ├── ft/                            # 模型微调资料（2026-11-12）
 │   │   ├── README.md                  # 资料索引
 │   │   ├── 微调手册-2026-11-12.md      # ★ 微调唯一入口（数据/训练/评测/运行调试）
 │   │   ├── questions-bigdata.json     # 105 道题库（含 keyPoints）
 │   │   ├── system-prompt.txt          # 线上 system prompt 逐字副本
+│   │   ├── eval/                      # metrics.json + figures/（指标对比、训练曲线）
 │   │   ├── raw/                       # DeepSeek 原始结果（gitignore）
 │   │   └── dataset/                   # train/val/rejected/stats（gitignore）
 │   ├── review/审查-2026-11-05.md      # 全项目审查（清单 + 施工指令合并）
 │   ├── history/                       # 历史清单：10.28优化、上线缺漏整改清单
+│   ├── schema.sql                     # 数据库表结构（12 张表 + 报告评析 6 列）
+│   ├── ddl_*.sql                      # 增量建表脚本（评分/反馈/归档/清单/报告）
 │   ├── migration-*.sql                # 数据迁移脚本
 │   ├── 从零部署手册-8G低功耗标准.md     # 部署文档
 │   └── 答辩系统-项目情况说明.md         # 业务说明
-├── diagnose.ps1                       # 答辩前自检脚本（12张表/索引/环境/推理抽测，根目录）
+├── deploy/
+│   └── ollama/Modelfile-qwen25        # Ollama 模型定义
 ├── scripts/
+│   ├── diagnose.ps1                   # 答辩前自检（12 表/索引/环境/推理抽测）
 │   ├── install-whisper.ps1            # whisper.cpp 一键安装
-│   └── ft/                            # 模型微调脚本（2026-11-12）
+│   └── ft/                            # 微调脚本（2026-11-12）
 │       ├── gen-dataset.ps1            # DeepSeek 生成五形态训练数据（断点续跑）
-│       ├── train_qlora.py             # QLoRA 训练（unsloth）
+│       ├── gen-behavior.ps1           # 行为样本（give_up / 末轮总结）
+│       ├── train_qlora.py             # QLoRA 训练（unsloth，支持 --resume）
 │       ├── export_gguf.py             # 导出 GGUF / Modelfile
-│       └── eval_ollama.py             # 对任意 Ollama 模型做格式/档位评测
-├── CHANGES.md                         # 改动记录（重构版）
-├── 需求清单-2026-09-15.md              # 需求清单（重构版）
-├── AGENTS.md                          # AI协作入口
-├── Modelfile-qwen25                   # Ollama模型定义
-└── pom.xml                            # Maven依赖
+│       ├── eval_ollama.py             # 格式/档位/行为评测（含后端剥离模拟）
+│       └── visualize.py               # 指标对比与训练曲线出图
+├── README.md                          # 项目入口
+├── AGENTS.md                          # AI 协作入口
+├── CLAUDE.md                          # 协作契约（本文件）
+├── CHANGES.md                         # 改动记录
+└── pom.xml                            # Maven 依赖
 ```
 
 ---
@@ -226,9 +225,9 @@ ai/                                    # 项目根
 |---|---|---|
 | 1 | `docs/从零部署手册-8G低功耗标准.md` | 换新机器/从零部署/环境报错/推理变慢 |
 | 2 | `CHANGES.md` | 想了解某次改动的上下文 |
-| 2.5 | `需求清单-2026-09-15.md` 的「视频答辩评分专项」 | **接手视频评分/ASR/云端评分前必读**：现状、缺口、下一步与验收 |
-| 3 | `需求清单-2026-09-15.md` | 开工前确认当前需求状态 |
-| 3.5 | `新阶段路线图-2026-10-15.md` | **新阶段（10-15 起）的进度账本**：系统优化 OPT-* / 视频分析 VID-* / 报告分析 DOC-* / 共用底座 BASE-*，读完 §0 与 §2 即知进度 |
+| 2.5 | `docs/planning/需求清单-2026-09-15.md` 的「视频答辩评分专项」 | **接手视频评分/ASR/云端评分前必读**：现状、缺口、下一步与验收 |
+| 3 | `docs/planning/需求清单-2026-09-15.md` | 开工前确认当前需求状态 |
+| 3.5 | `docs/planning/新阶段路线图-2026-10-15.md` | **新阶段（10-15 起）的进度账本**：系统优化 OPT-* / 视频分析 VID-* / 报告分析 DOC-* / 共用底座 BASE-*，读完 §0 与 §2 即知进度 |
 | 3.6 | `docs/ft/微调手册-2026-11-12.md` | **改模型/调试评分离不开它**：§1 运行态与回退、§3 数据规格、§4 训练参数、§5 评测与能力边界、§7 调试循环与排障、§10 风险 |
 | 4 | `docs/schema.sql` | 改数据库结构前 |
 | 5 | `docs/答辩系统-项目情况说明.md` | 理解业务流程与AI输出格式 |

@@ -57,3 +57,6 @@ unsloth_compiled_cache/
 
 ### IDE 生成的技能副本（与 .claude/skills 重复，不入库） ###
 .agents/
+
+### 运行时临时目录 ###
+.tmp/

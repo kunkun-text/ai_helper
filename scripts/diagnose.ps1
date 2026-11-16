@@ -79,7 +79,8 @@ function Read-YmlDefaults {
     return $result
 }
 
-$yml = Read-YmlDefaults -ProjectRoot $PSScriptRoot
+# 【2026-11-16】脚本已移到 scripts/，项目根是上一级目录（原来直接用 $PSScriptRoot 会读不到 application.yml）
+$yml = Read-YmlDefaults -ProjectRoot (Split-Path $PSScriptRoot -Parent)
 if ($yml.Count -gt 0) {
     Write-Host "  配置来源: $($yml.Source)" -ForegroundColor DarkGray
     if ($yml.MysqlHost     -and -not $PSBoundParameters.ContainsKey('MysqlHost'))     { $MysqlHost = $yml.MysqlHost }
