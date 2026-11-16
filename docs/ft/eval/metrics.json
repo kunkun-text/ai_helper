@@ -1,0 +1,13 @@
+{
+  "evaluation_metrics": {
+    "structure_compliance": {"base": 0, "finetuned": 95},
+    "verdict_hit": {"base": 25, "finetuned": 70},
+    "sum_match": {"base": 0, "finetuned": 60},
+    "score_range_hit": {"base": 0, "finetuned": 55}
+  },
+  "training_info": {
+    "vram_peak_gb": 4.29,
+    "time_minutes": 20.4,
+    "total_steps": 210
+  }
+}
