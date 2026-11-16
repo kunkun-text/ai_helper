@@ -46,6 +46,8 @@ def parse_args():
     p.add_argument("--accum", type=int, default=8)
     p.add_argument("--smoke", action="store_true", help="只跑 10 步，验证链路")
     p.add_argument("--max-steps", type=int, default=-1)
+    p.add_argument("--resume", default="",
+                   help="从 checkpoint 续训，例：D:\\应用源文件\\AI微调环境\\ft-out\\checkpoints\\checkpoint-100")
     return p.parse_args()
 
 
@@ -162,8 +164,9 @@ def main():
         args=cfg,
     )
 
-    print("[train] start")
-    trainer.train()
+    resume = args.resume.strip()
+    print(f"[train] start (resume={resume or 'no'})")
+    trainer.train(resume_from_checkpoint=resume if resume else None)
 
     ADAPTER_DIR.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(ADAPTER_DIR))

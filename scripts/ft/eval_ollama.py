@@ -43,6 +43,25 @@ SCORE_RE = re.compile(r"^评分:\s*(\d+)/50\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d
 TAG_RE = re.compile(r"^\[(切题|错误|跑题)\]")
 
 
+def emulate_backend_strip(text, form):
+    """模拟 chatController 的解析前处理（2026-11-16 加入，保证评测与线上同口径）。
+
+    - 非末轮：stripPrematureSummary 会把「总结:」及其后内容整体截掉；
+    - 末轮：stripNextQuestionFromText 会截掉「下一题:」及其后内容。
+    """
+    for tag in ("总结:", "总结："):
+        if form != "final_round":
+            pos = text.find(tag)
+            if pos > 0:
+                text = text[:pos]
+    if form == "final_round":
+        for tag in ("下一题:", "下一题："):
+            pos = text.find(tag)
+            if pos > 0:
+                text = text[:pos]
+    return text.strip()
+
+
 def parse_output(text):
     """返回 (结构合规, 算术一致, total, dims, tag, errors)
 
@@ -126,7 +145,9 @@ def main():
             failures.append((i, form, f"请求失败: {e}", ""))
             continue
 
-        struct_ok, sum_ok, total, dims, tag, errs = parse_output(out)
+        # 与线上同口径：先做剥离，再解析（原始输出仍保留在 failures 里便于排查）
+        clean = emulate_backend_strip(out, form)
+        struct_ok, sum_ok, total, dims, tag, errs = parse_output(clean)
         lo, hi, want_tag = FORM_RANGE[form]
         if struct_ok:
             struct_cnt += 1
@@ -142,9 +163,9 @@ def main():
         # 行为专项：「我不会」必须给下一题（不是追问/总结）；末轮必须是总结
         beh_ok = True
         if form == "give_up":
-            beh_ok = ("下一题:" in out) and ("总结:" not in out) and ("0/50" in out)
+            beh_ok = ("下一题:" in clean) and ("总结:" not in clean) and ("0/50" in clean)
         elif form == "final_round":
-            beh_ok = ("总结:" in out) and ("下一题:" not in out)
+            beh_ok = ("总结:" in clean) and ("下一题:" not in clean)
         if form in ("give_up", "final_round"):
             behav_total += 1
             if not beh_ok:
