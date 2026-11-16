@@ -183,10 +183,18 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
             String nextLine = null;
             for (String line : lines) {
                 String t = line.trim();
-                if (t.startsWith(AiProtocolConstants.COMMENT_TAG) && commentLine == null) {
-                    commentLine = t.substring(AiProtocolConstants.COMMENT_TAG.length()).trim();
-                } else if (t.startsWith(AiProtocolConstants.NEXT_QUESTION_TAG) && nextLine == null) {
-                    nextLine = t.substring(AiProtocolConstants.NEXT_QUESTION_TAG.length()).trim();
+                if (t.startsWith(AiProtocolConstants.COMMENT_TAG)) {
+                    if (commentLine == null) {
+                        commentLine = t.substring(AiProtocolConstants.COMMENT_TAG.length()).trim();
+                    }
+                } else if (t.startsWith(AiProtocolConstants.NEXT_QUESTION_TAG)) {
+                    if (nextLine == null) {
+                        nextLine = t.substring(AiProtocolConstants.NEXT_QUESTION_TAG.length()).trim();
+                    }
+                } else if (commentLine == null && t.matches("^\\[(切题|错误|跑题)\\].*")) {
+                    // 【2026-11-16】模型偶尔漏写「点评:」直接以 [切题]/[错误]/[跑题] 开头（v2 实测 40 条里 4 条），
+                    // 此前该行被整行忽略，点评退化成"无评价"。这里兜底接收，标签语义不变。
+                    commentLine = t;
                 }
             }
             // 找评分管道行（优先"评分:"前缀）
@@ -241,12 +249,9 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
             // parts[1-5] = 表达分|逻辑分|专业分|应变分|创新分
             String[] dims = {"expression", "logic", "professional", "adaptability", "innovation"};
             for (int i = 0; i < dims.length; i++) {
-                try {
-                    double val = (i + 1 < parts.length) ? Double.parseDouble(parts[i + 1].trim()) : 0.0;
-                    result.put(dims[i], val);
-                } catch (NumberFormatException e) {
-                    result.put(dims[i], 0.0);
-                }
+                // 【2026-11-16】维度槽容错：模型会写成「9/10」「表达分9」「9分」，
+                // 原实现直接 parseDouble 会抛异常并落 0，导致该维被误判为 0 分。
+                result.put(dims[i], parseDimensionValue(i + 1 < parts.length ? parts[i + 1] : null));
             }
             // 强制一致性：各维度限制 0-10，总分 = 五维之和（防止 AI 乱给总分）
             double dimSum = 0;
@@ -297,6 +302,28 @@ public class ScorePersistenceServiceImpl implements ScorePersistenceService {
             return fillDefaults(result);
         }
         return result;
+    }
+
+    /**
+     * 【2026-11-16】解析单个维度槽的分数。
+     *
+     * <p>容忍 {@code 9}、{@code 9/10}、{@code 表达分9}、{@code 9分} 等写法，取第一个数字；
+     * 解析不到返回 0。原实现直接 {@code Double.parseDouble}，格式一漂就落 0 分。</p>
+     */
+    private double parseDimensionValue(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return 0.0;
+        }
+        // 允许负号：模型会给 -3，必须原样取出再交给外层 clamp 到 0
+        Matcher m = Pattern.compile("(-?\\d+(?:\\.\\d+)?)").matcher(raw);
+        if (m.find()) {
+            try {
+                return Double.parseDouble(m.group(1));
+            } catch (NumberFormatException ignored) {
+                return 0.0;
+            }
+        }
+        return 0.0;
     }
 
     /** 填充默认评分，确保流程不中断 */

@@ -47,6 +47,39 @@ class ScorePersistenceServiceImplTest {
     }
 
     @Test
+    @DisplayName("漏写「点评:」但以[切题]/[跑题]开头时，点评仍能取到（2026-11-16）")
+    void commentWithoutTagPrefix() {
+        // v2 实测：40 条里有 4 条直接以 [跑题] 开头，原实现整行忽略 → 点评退化为"无评价"
+        String ai = "[跑题]通篇讲HDFS副本机制，未提key分桶。\n"
+                + "评分:0/50|0|0|0|0|0\n"
+                + "下一题:数据倾斜会导致什么问题？";
+
+        Map<String, Object> r = service.parseScoresFromResponse(ai);
+
+        assertEquals("[跑题]通篇讲HDFS副本机制，未提key分桶。", r.get("comment"));
+        assertEquals(0.0, num(r, "totalScore"), 0.0001);
+        assertEquals("数据倾斜会导致什么问题？", r.get("question"));
+    }
+
+    @Test
+    @DisplayName("维度写成 9/10、表达分9 时取首个数字，不再落 0（2026-11-16）")
+    void tolerantDimensionSlots() {
+        String ai = "点评:[切题]要点齐全，逻辑清楚。\n"
+                + "评分:46/50|9/10|表达分9|8/10|10|10\n"
+                + "下一题:下一步如何优化？";
+
+        Map<String, Object> r = service.parseScoresFromResponse(ai);
+
+        assertEquals(9.0, num(r, "expression"), 0.0001);
+        assertEquals(9.0, num(r, "logic"), 0.0001);
+        assertEquals(8.0, num(r, "professional"), 0.0001);
+        assertEquals(10.0, num(r, "adaptability"), 0.0001);
+        assertEquals(10.0, num(r, "innovation"), 0.0001);
+        // 总分仍以五维之和为准：9+9+8+10+10 = 46
+        assertEquals(46.0, num(r, "totalScore"), 0.0001);
+    }
+
+    @Test
     @DisplayName("单维越界被夹到 0~10，总分随之重算")
     void clampOutOfRangeDimensions() {
         String ai = "评分:80/50|15|-3|7|7|7|";
