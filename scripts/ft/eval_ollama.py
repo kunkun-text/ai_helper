@@ -34,6 +34,9 @@ FORM_RANGE = {
     "all_wrong_relevant": (5, 14, "[错误]"),
     "irrelevant": (0, 0, "[跑题]"),
     "mostly_wrong_few_right": (5, 20, "[错误]"),
+    # 行为样本：标签与分数固定，另外单独校验「不出追问 / 必总结」
+    "give_up": (0, 0, "[跑题]"),
+    "final_round": (0, 50, None),
 }
 
 SCORE_RE = re.compile(r"^评分:\s*(\d+)/50\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*$")
@@ -78,6 +81,8 @@ def main():
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--url", default="http://127.0.0.1:11434/api/chat")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--behavior", action="store_true",
+                    help="追加 behavior.jsonl（放弃作答 / 末轮总结）一起评测")
     args = ap.parse_args()
 
     rows = []
@@ -85,12 +90,25 @@ def main():
         for line in f:
             if line.strip():
                 rows.append(json.loads(line))
-    rows = rows[: args.n]
+    if args.behavior:
+        beh_path = DATA.parent / "behavior.jsonl"
+        beh_rows = []
+        with open(beh_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    beh_rows.append(json.loads(line))
+        # 前 50 是 give_up、后 50 是 final_round：各取 10 条，控制耗时
+        rows = rows[: args.n] + beh_rows[:10] + beh_rows[-10:]
+    else:
+        rows = rows[: args.n]
 
     struct_cnt = 0
     sum_cnt = 0
     tag_ok = 0
+    tag_total = 0
     range_ok = 0
+    behav_total = 0
+    behav_fail = 0
     failures = []
 
     for i, r in enumerate(rows, 1):
@@ -114,19 +132,38 @@ def main():
             struct_cnt += 1
         if sum_ok:
             sum_cnt += 1
-        if tag and f"[{tag}]" == want_tag:
-            tag_ok += 1
+        if want_tag:
+            tag_total += 1
+            if tag and f"[{tag}]" == want_tag:
+                tag_ok += 1
         if total is not None and lo <= total <= hi:
             range_ok += 1
-        if not struct_ok or (tag and f"[{tag}]" != want_tag):
-            failures.append((i, form, "; ".join(errs) or "标签错", out[:160].replace("\n", " ⏎ ")))
+
+        # 行为专项：「我不会」必须给下一题（不是追问/总结）；末轮必须是总结
+        beh_ok = True
+        if form == "give_up":
+            beh_ok = ("下一题:" in out) and ("总结:" not in out) and ("0/50" in out)
+        elif form == "final_round":
+            beh_ok = ("总结:" in out) and ("下一题:" not in out)
+        if form in ("give_up", "final_round"):
+            behav_total += 1
+            if not beh_ok:
+                behav_fail += 1
+
+        if not struct_ok or (want_tag and tag and f"[{tag}]" != want_tag) or not beh_ok:
+            failures.append((i, form, "; ".join(errs) or "标签/行为不符",
+                             out[:160].replace("\n", " ⏎ ")))
 
     n = len(rows)
     print(f"model={args.model}  samples={n}")
     print(f"  结构合规率(三行+标签+可解析): {struct_cnt}/{n} = {struct_cnt/n*100:.1f}%")
     print(f"  五维和=总分           : {sum_cnt}/{n} = {sum_cnt/n*100:.1f}%")
-    print(f"  档位标记命中          : {tag_ok}/{n} = {tag_ok/n*100:.1f}%")
+    if tag_total:
+        print(f"  档位标记命中          : {tag_ok}/{tag_total} = {tag_ok/tag_total*100:.1f}%")
     print(f"  分数区间命中          : {range_ok}/{n} = {range_ok/n*100:.1f}%")
+    if behav_total:
+        ok = behav_total - behav_fail
+        print(f"  行为合规(不出追问/必总结): {ok}/{behav_total} = {ok/behav_total*100:.1f}%")
     if failures and args.verbose:
         print("  ---- 失败样例 ----")
         for f in failures[:8]:

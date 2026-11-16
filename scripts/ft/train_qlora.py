@@ -40,7 +40,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", default="Qwen/Qwen2.5-3B-Instruct")
     p.add_argument("--max-seq-length", type=int, default=1536)
-    p.add_argument("--epochs", type=float, default=2.0)
+    p.add_argument("--epochs", type=float, default=3.0)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--accum", type=int, default=8)
@@ -65,6 +65,17 @@ def main():
 
     train_rows = load_jsonl(DATA_DIR / "train.jsonl")
     val_rows = load_jsonl(DATA_DIR / "val.jsonl")
+
+    # 【2026-11-16 · v2】并入行为样本（放弃作答不出追问 / 末轮必总结），9:1 切分
+    behavior_file = DATA_DIR / "behavior.jsonl"
+    if behavior_file.exists():
+        beh = load_jsonl(behavior_file)
+        beh_train = [r for i, r in enumerate(beh) if i % 10 != 9]
+        beh_val = [r for i, r in enumerate(beh) if i % 10 == 9]
+        train_rows += beh_train
+        val_rows += beh_val
+        print(f"[data] behavior={len(beh)} (train {len(beh_train)} / val {len(beh_val)})")
+
     print(f"[data] train={len(train_rows)} val={len(val_rows)}")
     if not train_rows:
         sys.exit("训练集为空，先跑 scripts/ft/gen-dataset.ps1")
