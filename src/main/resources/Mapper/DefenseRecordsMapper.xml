@@ -51,7 +51,15 @@
             u.user_number as userNumber,
             u.profile_picture AS profilePicture,
             dt.topic_name AS topicName,
-            dr.score AS score,
+            <!-- 【2026-11-18】列表分数兜底：只答了部分轮次、未触发收尾的场次 dr.score 为 NULL
+                 （finishDefenseAggregation 只在第 10 轮收尾时写），详情页用 defense_score_record
+                 逐轮平均显示正常，列表却显示 0 分。这里同口径补算：各轮五维之和的平均；
+                 无评分记录时仍返回 NULL（前端按「无分数」处理）。 -->
+            COALESCE(dr.score,
+                     (SELECT ROUND(AVG(dsr.expression_score + dsr.logic_score + dsr.professional_score
+                                       + dsr.adaptability_score + dsr.innovation_score), 1)
+                      FROM defense_score_record dsr
+                      WHERE dsr.defense_id = dr.defense_id)) AS score,
             dr.status AS status,
             dr.report_doc_score AS reportDocScore,
             dr.analysis_source AS analysisSource,
@@ -159,7 +167,13 @@
             u.user_number as userNumber,
             u.profile_picture as profilePicture,
             dt.topic_name as topicName,
-            dr.score,
+            <!-- 【2026-11-18】与教师端同一兜底口径：未触发收尾的场次 score 为 NULL，
+                 回退 defense_score_record 逐轮平均，避免学生端列表误显示 0 分/未完成。 -->
+            COALESCE(dr.score,
+                     (SELECT ROUND(AVG(dsr.expression_score + dsr.logic_score + dsr.professional_score
+                                       + dsr.adaptability_score + dsr.innovation_score), 1)
+                      FROM defense_score_record dsr
+                      WHERE dsr.defense_id = dr.defense_id)) as score,
             dr.status,
             dr.report_doc_score as reportDocScore,
             dr.analysis_source as analysisSource,

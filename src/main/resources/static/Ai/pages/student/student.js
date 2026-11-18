@@ -855,12 +855,20 @@ Page({
             // 报告评析场次通常没有任何逐轮作答（score 为空）——主分数用报告分兜底，
             // 与教师端 displayScore 同一口径，否则列表会一直挂「未完成」（用户 2026-10-25 反馈）。
             const displayScore = roundScore !== null ? roundScore : docScore;
+            // 【2026-11-18】材料裁定明确不合格（疑似跑题 / 非答辩材料）→ 列表按 0 分展示。
+            // 这类场次按既有口径「不出分」（report_doc_score 为 NULL），此前一直显示「未完成」，
+            // 学生会以为自己没交材料；跑题本身就应是 0 分（与文字答辩跑题归零同口径）。
+            // 只处理两个明确不合格值，unclear（待复审）/ insufficient（内容不足）不动。
+            const verdictCode = record.materialVerdict || '';
+            const verdictZero = displayScore === null
+              && (verdictCode === 'suspect_offtopic' || verdictCode === 'suspect_nonmaterial');
+            const finalScore = displayScore !== null ? displayScore : (verdictZero ? 0 : null);
             return {
               id: record.defenseRecordId ? record.defenseRecordId.toString() : null,
               topic: record.topicName || '未设置题目',
               status: record.status || 'pending',
-              hasScore: displayScore !== null,
-              score: displayScore,
+              hasScore: finalScore !== null,
+              score: finalScore,
               scoreFromDoc: roundScore === null && docScore !== null,
               // 【2026-10-28】答辩形式（text / voice），列表打「语音答辩」标签用
               defenseMode: record.defenseMode || '',
@@ -869,16 +877,16 @@ Page({
               // 【VID-4 · 2026-10-20】该场次是否已上传视频：列表红标用（后端给 1/0，转布尔）
               hasVideo: !!record.hasVideo,
               // 【2026-10-25】通用材料裁定：verdict 由后端下发，前端只映射文案
-              materialVerdict: record.materialVerdict || '',
+              materialVerdict: verdictCode,
               materialVerdictReason: record.materialVerdictReason || '',
-              verdictLabel: verdictText.shortLabel(record.materialVerdict),
+              verdictLabel: verdictText.shortLabel(verdictCode),
               // 【2026-10-25】列表按材料类型区分：已评析（有报告分）→ teal 底色；已上传未评析 → 只打标签。
               // 用 reportDocScore 判"已评析"，不用 analysisSource：后者是报告/视频共用单列，会被视频评分覆盖。
               docAnalyzed: docScore !== null,
               reportDocScore: docScore,
               reportUploaded: !!record.hasReport,
-              feedback: displayScore !== null
-                ? `本次答辩得分：${displayScore}分。` : '暂无评分'
+              feedback: finalScore !== null
+                ? `本次答辩得分：${finalScore}分。` : '暂无评分'
             };
           });
           
