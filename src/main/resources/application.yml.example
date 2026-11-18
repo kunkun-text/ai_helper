@@ -334,6 +334,11 @@ app:
     # ⚠️ 对应列必须是 MEDIUMTEXT：TEXT 的 64KB 上限会静默截断 60k 中文字（约 180KB）。
     # 需先执行 docs/ddl_report_text.sql。
     store-text: true
+    # 【2026-11-18】本地评析落库后自动跑一次云端复审，覆盖本地结论。
+    # 未配置云端 key / 云端失败 / 输出无法解析时保留本地结果，评析不会 FAILED。
+    # 只覆盖 report_doc_analysis / report_doc_score，不改 material_verdict；
+    # 同一份报告（文件指纹）只自动复审一次（Redis 状态哈希里的 autoReviewFp）。
+    auto-cloud-review: true
 
     # ---- 文档内图片 OCR（2026-10-20）----
     # 模型是纯文本模型（qwen2.5:3b-16k），没有视觉能力：图片只有先 OCR 成文字，

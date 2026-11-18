@@ -660,6 +660,19 @@ public class AppProperties {
          * TEXT 的 64KB 上限会静默截断。</p>
          */
         private boolean storeText = true;
+
+        /**
+         * 【2026-11-18】本地评析落库后，是否自动跑一次云端复审覆盖本地结论。
+         *
+         * <p>流程：本地 3B 完整评一次并落库 → 云端点评（COMMENTS_SYSTEM）→ 云端打分
+         * （SCORE_SYSTEM）→ 服务端守护 → 覆盖 {@code report_doc_analysis/report_doc_score}。
+         * 未配置云端 key / 云端失败 / 输出无法解析时一律保留本地结论，评析不置 FAILED。</p>
+         *
+         * <p><b>与教师手动「云端复审」的区别</b>：自动复审只覆盖成绩单与分数，
+         * <b>不改材料裁定</b>（{@code material_verdict} 是教师人工认可的语义）。
+         * 同一份报告（指纹 fp）只自动复审一次，标记写在 Redis 状态哈希里。</p>
+         */
+        private boolean autoCloudReview = true;
     }
 
     /**

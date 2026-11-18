@@ -1,6 +1,7 @@
 # AI 答辩辅助系统 — 改动记录
 
 > 基于 git commit `508d803`（母版），代码基线 `a4c4381`（2026-10-15 审查整改批次H N68~N78 已提交）+ 报告文档 AI 五维评分第一期（2026-10-16，未提交）；
+> 2026-11-18：**报告评析「本地先评 → 自动云端复审」**（教师手动复审接口未动）、**视频 ASR 提示词按课题动态生成技术词 + 表达分不被转写错字拖累**、**微调评测图改用 v2 数据**、**文字答辩要点核验提示词强化**，见 [2026-11-18](#2026-11-18) 节；
 > 2026-10-20：**里程碑「10.19 视频答辩开端」入库并推送**（视频转写 + 五维评分 + 教师/学生端展示 + 列表红标，见 [2026-10-20](#2026-10-20) 节）；
 > 同日：**报告文档图片 OCR + 报告模板下载 + 上传格式收口为 docx**。
 > 2026-10-21：**ASR 输入可信改造 + GLM-4.7 评分配置骨架**已提交 `e0bf405`（云端评分调用代码尚未接，视频评分仍走本地 3B；**二者均已于 2026-10-28 接上，见 [2026-11-17](#2026-11-17) 节口径修正**）；
@@ -60,6 +61,94 @@
 - 3B 逐条判断仍有噪声（个别轮次把「说了相反内容」标成未命中、或 evidence 与条目轻微错位），但命中率与五形态分数区间已稳定达标；不阻塞交付。
 - 半对形态落在 0~12（低于理想的 15~30），原因是同时触发错误档上限与既有复核；验收口径「明显低于全对」已满足。
 - 后端已停止；下次启动后端即生效。
+
+### 报告评析：本地评完后自动云端复审
+
+> **状态**：代码改动完成，`mvn -o -q clean test` **123/123** 通过；真实接口验证通过。**需重启后端生效**。教师手动复审接口 `review(Integer)` 一行未动。
+
+**一、改动**
+
+| 文件 | 改动 |
+|---|---|
+| `Config/AppProperties.java` | `ReportDoc` 新增 `autoCloudReview`（默认 `true`） |
+| `application.yml.example` | 新增 `app.report-doc.auto-cloud-review: true` 说明 |
+| `Service/Impl/ReportDocAnalysisServiceImpl.java` | `runAnalysis` 在本地 `updateReportDocAnalysis` 落库后调用新增的 `autoReviewWithCloud(...)`；新增 `AutoReviewOutcome`、`markAutoReviewAttempt` 与 Redis 字段 `autoReviewFp` |
+
+自动复审顺序与手动 `review()` 一致：云端点评（`COMMENTS_SYSTEM`）→ 云端打分（`SCORE_SYSTEM`）→ `DocScoreParser.parse` → 缺失压分/跑题归零 → `buildAnalysisText`（引擎写 `云端自动复审 <provider:model>`）→ `updateReportDocAnalysis`。**不调用 `updateMaterialVerdict`**，综合评价仍只跑原有的一次 `generateSummary`。
+
+**二、方向安全与幂等**
+
+- 未配置云端 key：`自动云端复审跳过：未配置云端渠道 - defenseId: {}`，本地结果保持，状态 `COMPLETED`。
+- 云端返回空/解析失败/调用异常：`自动云端复审放弃：...保留本地结论`，不置 `FAILED`。
+- 同一报告指纹 `fp` 只自动复审一次：标记写在 Redis 状态哈希 `autoReviewFp`（随状态键 TTL 过期）。
+
+**三、验证（defenseId=408）**
+
+1. 有 key：本地评完后自动复审成功，`总分 41/50`，成绩单含 `评分引擎：云端自动复审 glm:glm-4.7`，日志 `自动云端复审成功`。
+2. 临时清空 GLM key（测试后已恢复）：日志 `自动云端复审跳过：未配置云端渠道 - defenseId: 408`，状态 `COMPLETED`，保留本地分数 38 与 `评分引擎：本地 qwen2.5:3b-16k`。
+3. 同一 fp 再次 `force=true`：日志 `自动云端复审跳过：同一份报告已自动复审过 - defenseId: 408, fp: ...`，不再调用云端。
+4. 手动 `POST /teacher/defense/reportDoc/review/408` 返回字段与行为不变：`status/score/analysis/summary/materialVerdict/msg` 齐全，引擎 `云端复审 glm:glm-4.7`。
+
+**四、测试环境说明与遗留**
+
+- 当前线上主模型 `qwen2.5:3b-defense-v2` 在 408 上会复现 N93（本地评分行解析失败 → FAILED），自动复审没有机会执行。为验证本次功能，测试时临时把主模型切到 `qwen2.5:3b-16k`、并在无 key 用例中临时关闭方向判定；**测试后已恢复 v2、恢复 key、删除临时配置，后端已按 v2 重启**。
+- N93（本地 v2 报告评分解析失败）仍未解决，不属于本次范围；它会导致「本地都没评出来」时自动复审无法触发。
+- **与旧「低分/跑题复核」并存**：`runAnalysis` 在自动复审之前仍有 `reviewWithCloud`（总分 <5 或判跑题才触发）。低分时同一份材料会被云端评两次，且自动复审会覆盖低分复核结论；若目标是「本地第一轮 + 自动复审」单一固定出口，需要合并/删除低分复核。
+- **自动复审无预算保护**：`autoReviewWithCloud` 前后没有 `checkBudget`。云端三档渠道 × 两次调用、`read-timeout=120s`，最坏约 720s，超过 `budget-seconds: 240`；随后 `generateSummary` 的 `checkBudget` 会抛「分析超时」，整场被置 `FAILED`（此时成绩单与分数已落库，出现「有分数但状态失败」）。建议用剩余预算裁剪复审超时。
+- **「服务会挂」未定位**：用户反馈的第二件事在本轮所有改动中均未涉及，也没有对应修复；需要具体现象（进程崩溃 / 卡死 / 必现操作）与日志后再排。
+
+### 微调成果图改用 v2 数据
+
+> **状态**：`docs/ft/eval/metrics.json` + `scripts/ft/visualize.py` 重做，两张 PNG 已重新生成并覆盖。
+
+**一、旧图的问题**
+
+旧柱状图与训练曲线用的是 v1 数据（95/70/60/55、20.4 分钟），与线上 v2 的评测结果（90/86.7/72.5/70、行为合规 95、33.6 分钟）不一致，继续用会讲错版本。
+
+**二、改动**
+
+| 文件 | 改动 |
+|---|---|
+| `docs/ft/eval/metrics.json` | 改为 **v1 → v2 同口径对比**（40 条 = 20 验证 + 20 行为），新增「行为合规」；训练信息改为 v2（4.29GB / 33.6 分钟 / 210 步 / 最终 loss 0.8376）；新增 `training_curves` 真实日志序列（42 个记录点，来自 `train-v2-full.log`） |
+| `scripts/ft/visualize.py` | 柱状图改为 v1/v2 双系列、五项指标；训练曲线优先读 `training_curves` 真实数据，缺失才回退模拟；标题标注 v2 |
+| `docs/ft/eval/figures/metrics_comparison.png` | 重新生成（v1 → v2） |
+| `docs/ft/eval/figures/training_curves.png` | 重新生成（v2 真实曲线） |
+
+**三、数据来源**
+
+- v1：`D:\应用源文件\AI微调环境\logs\eval-v1-final.log`（72.5 / 70.0 / 50.0 / 47.5 / 40.0）
+- v2：`D:\应用源文件\AI微调环境\logs\eval-v2-final.log`（90.0 / 86.7 / 72.5 / 70.0 / 95.0）
+- 训练：`train-v2-full.log`（loss 4.705 → 0.4371，`train_loss` 0.8376）
+
+### 视频评析：转写错字不再扣「表达」分 + ASR 提示词按课题动态生成
+
+> **状态**：代码改动完成，编译 + 单测通过；`defenseId=411` 已实跑验证。**需重启后端生效**。
+
+**一、背景（实测 411）**
+
+TTS 合成答辩视频转写 1809 字，十余处专有名词被听错（Ollama→OLAMA、FAISS→Face、重排序→病重排序、语义块→羽翼快等）。云端点评原先把这些当成学生的口头错误，写出「表达（6分）：存在“幻觉意志”“病重排序”等明显语音转写口误」——实际是 ASR 问题。
+
+**二、改动**
+
+| 文件 | 位置 | 改动 |
+|---|---|---|
+| `Service/Impl/VideoAnalysisServiceImpl.java` | `callComments` user prompt | 追加约束：转写可能有同音错字，专有名词按上下文理解，**不得因转写错字扣表达分**；表达只评价组织是否清晰、是否连贯、有无有效信息 |
+| 同上 | `buildAsrPrompt` / `buildTopicTerms` / `collectAsrTerms` | 在原通用术语表基础上，从**课题名 + 课题简介 + 该课题预设题**中抽取英文缩写与括号内术语，去重后拼成「技术词：…。」；总长 180 字，超长先裁通用词，保证课题名与技术词优先 |
+| 同上 | `runAnalysis` | 新增日志：`视频转写提示词 - defenseId / 长度 / 内容`（转写前打印实际 prompt） |
+| `Mapper/DefenseRecordsMapper.xml` | `selectVideoAnalysisTarget` | 补 `dr.topic_id AS topicId`、`dt.topic_description AS topicDescription`，供动态术语表使用 |
+
+未改评分口径、五维权重、云端/本地回退逻辑；本次视频改动未动 `ReportDocAnalysisServiceImpl` 与 `chatController`（报告评析的自动复审是同日另一节）。
+
+**三、验证（411 重跑）**
+
+- 表达分：**6 → 8**；点评不再把「幻觉意志/病重排序」当学生口误，改为「陈述连贯清晰、数据具体、口头语少」。
+- 总分 42/50，状态 completed。
+- 提示词日志：长度 99 → 110，内容包含 `课题：基于 Ollama 的本地知识库问答系统` 与 `技术词：Ollama`。
+- 耗时：同一视频（音频 416.8s），改前 `13:34:02→13:40:18 = 376s`，改后 `13:42:56→13:49:39 = 403s`，增加约 7%；差别远小于 prompt 11 个字符，属 GPU/系统波动，未见结构性劣化；RTF 约 0.90~0.97。
+
+**四、已知边界**
+
+- 课题 39 的五道预设题本身**不含英文技术词**（题目是「文档解析与切片策略如何设计」这类中文表述，标准答案为空），因此 411 只能从课题名里抽到 `Ollama`。若希望提示词带上 FAISS/bge/Q4_K_M/IVF-Flat，需要这些词先出现在该课题的预设题或简介里（数据侧补充），代码本身已支持抽取。
 
 ---
 

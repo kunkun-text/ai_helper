@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""AI-helper 微调成果可视化（2026-11-16）
+"""AI-helper 微调成果可视化（2026-11-18 · v2 数据版）
 
 读取 docs/ft/eval/metrics.json，生成两张论文风格图表：
 
-  docs/ft/eval/figures/metrics_comparison.png  微调前后四项指标分组柱状图
-  docs/ft/eval/figures/training_curves.png     训练过程三联图（Loss / LR / Grad-norm）
+  docs/ft/eval/figures/metrics_comparison.png  v1 → v2 五项指标对比柱状图
+  docs/ft/eval/figures/training_curves.png     v2 真实训练三联图（Loss / LR / Grad-norm）
 
 约定：
   - **数据一律来自 metrics.json**，脚本内不写死任何指标数值；
+  - 训练曲线优先使用 metrics.json 里的真实日志序列（training_curves），
+    缺失时才回退到确定性模拟曲线；
   - 中文字体 SimHei（缺失时回落 Microsoft YaHei），负号正常显示；
   - 配色为学术论文常用的低饱和灰 + 深蓝；
   - dpi=300，PNG 输出。
@@ -35,8 +37,8 @@ plt.rcParams["figure.dpi"] = 300
 plt.rcParams["savefig.dpi"] = 300
 
 # 学术风格配色（低饱和）
-COLOR_BASE = "#9C9C9C"          # 灰：微调前
-COLOR_FT = "#2F5597"            # 深蓝：微调后
+COLOR_V1 = "#9C9C9C"            # 灰：v1（首版微调）
+COLOR_V2 = "#2F5597"            # 深蓝：v2（行为样本 + 3 epoch）
 COLOR_GRID = "#DCDCDC"
 COLOR_TEXT = "#333333"
 
@@ -45,6 +47,7 @@ METRIC_LABELS = {
     "verdict_hit": "档位命中",
     "sum_match": "五维相加",
     "score_range_hit": "分数区间",
+    "behavior_compliance": "行为合规",
 }
 
 
@@ -59,31 +62,32 @@ def plot_metrics_comparison(data: dict, out_path: Path) -> None:
     metrics = data["evaluation_metrics"]
     keys = [k for k in METRIC_LABELS if k in metrics]
     labels = [METRIC_LABELS[k] for k in keys]
-    base_vals = [metrics[k]["base"] for k in keys]
-    ft_vals = [metrics[k]["finetuned"] for k in keys]
+    v1_vals = [metrics[k]["v1"] for k in keys]
+    v2_vals = [metrics[k]["v2"] for k in keys]
 
     x = np.arange(len(keys))
     width = 0.36
 
-    fig, ax = plt.subplots(figsize=(8.2, 4.8))
-    bars1 = ax.bar(x - width / 2, base_vals, width, label="Base（微调前）",
-                   color=COLOR_BASE, edgecolor="white", linewidth=0.8, zorder=3)
-    bars2 = ax.bar(x + width / 2, ft_vals, width, label="Finetuned（微调后）",
-                   color=COLOR_FT, edgecolor="white", linewidth=0.8, zorder=3)
+    fig, ax = plt.subplots(figsize=(9.2, 4.9))
+    bars1 = ax.bar(x - width / 2, v1_vals, width, label="v1（首版微调）",
+                   color=COLOR_V1, edgecolor="white", linewidth=0.8, zorder=3)
+    bars2 = ax.bar(x + width / 2, v2_vals, width, label="v2（行为样本 + 3 epoch）",
+                   color=COLOR_V2, edgecolor="white", linewidth=0.8, zorder=3)
 
     for bars in (bars1, bars2):
         for bar in bars:
             h = bar.get_height()
-            ax.annotate(f"{h:.0f}%",
+            ax.annotate(f"{h:.1f}%",
                         xy=(bar.get_x() + bar.get_width() / 2, h),
                         xytext=(0, 4), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=9, color=COLOR_TEXT)
+                        ha="center", va="bottom", fontsize=8.8, color=COLOR_TEXT)
 
     ax.set_ylabel("达标率（%）", fontsize=11, color=COLOR_TEXT)
-    ax.set_title("微调前后评测指标对比", fontsize=13, color=COLOR_TEXT, pad=12)
+    ax.set_title("微调迭代评测指标对比（v1 → v2）", fontsize=13, color=COLOR_TEXT, pad=12)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10.5)
-    ax.set_ylim(0, 112)
+    # 留出顶部空间，避免图例压住 95% 这类高柱子的数值标签
+    ax.set_ylim(0, 130)
     ax.yaxis.grid(True, color=COLOR_GRID, linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     for spine in ("top", "right"):
@@ -139,7 +143,16 @@ def plot_training_curves(data: dict, out_path: Path) -> None:
     vram = info["vram_peak_gb"]
     minutes = info["time_minutes"]
 
-    steps, loss, lr, grad = simulate_curves(total_steps)
+    curves = data.get("training_curves")
+    if isinstance(curves, dict) and all(
+            k in curves for k in ("steps", "loss", "learning_rate", "grad_norm")):
+        steps = np.asarray(curves["steps"], dtype=float)
+        loss = np.asarray(curves["loss"], dtype=float)
+        lr = np.asarray(curves["learning_rate"], dtype=float)
+        grad = np.asarray(curves["grad_norm"], dtype=float)
+    else:
+        # 数据文件里没有真实日志时才回退到模拟曲线
+        steps, loss, lr, grad = simulate_curves(total_steps)
 
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.2))
     panels = [
@@ -159,17 +172,19 @@ def plot_training_curves(data: dict, out_path: Path) -> None:
 
     axes[1].ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
 
-    # 文本框：显存峰值 + 总耗时 + 总步数
+    # 文本框：显存峰值 + 总耗时 + 总步数（+ 最终 loss）
+    box_text = f"显存峰值 {vram} GB / 6 GB\n总耗时 {minutes} 分钟\n总步数 {total_steps}"
+    if info.get("train_loss") is not None:
+        box_text += f"\n最终 loss {info['train_loss']}"
     axes[0].text(
-        0.97, 0.95,
-        f"显存峰值 {vram} GB / 6 GB\n总耗时 {minutes} 分钟\n总步数 {total_steps}",
+        0.97, 0.95, box_text,
         transform=axes[0].transAxes,
         ha="right", va="top", fontsize=9.2, color=COLOR_TEXT,
         bbox=dict(boxstyle="round,pad=0.45", facecolor="white",
                   edgecolor="#BFBFBF", linewidth=0.8, alpha=0.9),
     )
 
-    fig.suptitle("QLoRA 微调训练过程", fontsize=13, color=COLOR_TEXT, y=1.02)
+    fig.suptitle("QLoRA 微调训练过程（v2）", fontsize=13, color=COLOR_TEXT, y=1.02)
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)

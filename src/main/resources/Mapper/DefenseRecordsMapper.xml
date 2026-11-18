@@ -576,12 +576,14 @@
     <select id="selectVideoAnalysisTarget" resultType="java.util.HashMap">
         SELECT
             dr.defense_id     AS defenseId,
+            dr.topic_id       AS topicId,
             dr.video_url      AS videoUrl,
             dr.video_words    AS videoWords,
             dr.video_analysis AS videoAnalysis,
             dr.video_summary  AS videoSummary,
             dr.analysis_source AS analysisSource,
-            dt.topic_name     AS topicName
+            dt.topic_name     AS topicName,
+            dt.topic_description AS topicDescription
         FROM defense_records dr
                  LEFT JOIN defense_topics dt ON dt.topic_id = dr.topic_id
         WHERE dr.defense_id = #{defenseId}
