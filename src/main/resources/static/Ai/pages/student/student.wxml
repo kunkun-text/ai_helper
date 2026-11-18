@@ -464,6 +464,7 @@
           <text class="modal-title">回答详情</text>
           <text class="modal-close" bindtap="closeAnswers">×</text>
         </view>
+        <!-- 【2026-11-17】bindscroll：雷达图在弹层底部、打开时在可视区外，滚到它时补画 -->
         <scroll-view class="modal-body" scroll-y="true">
           <!-- 【2026-10-20 · 评分表成绩单化】数据源仍是 defense_score_record，
                但展示口径与「报告评析」一致：总分 + 等级 + 逐项依据。
@@ -535,11 +536,29 @@
               <text wx:else class="sc-round-comment sc-muted">本轮模型未返回评语</text>
             </view>
           </view>
-          <!-- 【N8】五维雷达图（逐轮五维平均分，canvas 2d 手绘，无图表库） -->
+          <!-- 【N8】五维雷达图（逐轮五维平均分，纯 WXML/CSS 绘制，无图表库） -->
+          <!-- 【2026-11-17】雷达图两种"看不到"的兜底：
+               ① 五维全 0（旧场次「未作答」）→ 图上只剩圆心点，给一句说明；
+               ② 早期场次只有总分、没有逐轮五维明细 → 明确告知无法绘制，不留空白让人以为坏了。 -->
           <view wx:if="{{radarDims.length === 5}}" class="form-item">
             <text class="label">五维能力雷达图（逐轮平均）</text>
-            <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+            <!-- 【2026-11-17】纯 WXML/CSS 绘制（clip-path 图层），彻底不依赖 canvas：
+                 本项目弹层环境（glass-easel + wx:if 弹层 scroll-view 深处）里 canvas 节点拿不到上下文，
+                 两次 canvas 方案均真机空白，详见 CHANGES.md 2026-11-17 §六~§九。 -->
+            <view class="radar-box">
+              <view wx:for="{{radarView.rings}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+              <view wx:for="{{radarView.axes}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+              <view wx:for="{{radarView.poly}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+              <view wx:for="{{radarView.center}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+              <view wx:for="{{radarView.dots}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+              <text wx:for="{{radarView.labels}}" wx:key="key" class="radar-label" style="{{item.style}}">{{item.text}}</text>
+            </view>
             <text class="muted">{{radarText}}</text>
+            <text wx:if="{{radarAllZero}}" class="muted">该场次逐轮五维均为 0 分（多为「未作答」场次），图上只剩圆心点属正常。</text>
+          </view>
+          <view wx:elif="{{selectedAnswers && selectedAnswers.length > 0}}" class="form-item">
+            <text class="label">五维能力雷达图（逐轮平均）</text>
+            <text class="muted">该场次没有逐轮五维评分数据（早期版本只记录总分），无法绘制雷达图。</text>
           </view>
 
           <!-- 【F11】语音答辩逐轮录音回放（来源 voice_responses，仅语音答辩场次有归档） -->

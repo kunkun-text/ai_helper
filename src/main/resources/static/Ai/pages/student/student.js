@@ -120,6 +120,8 @@ Page({
     // 【N8】五维雷达图（逐轮五维平均分）与是否可绘制
     radarDims: [],
     radarText: '',
+    radarAllZero: false, // 【2026-11-17】该场次五维全 0（旧场次「未作答」），图上只剩圆心点，需额外说明
+    radarView: null, // 【2026-11-17】纯 CSS 雷达图渲染数据（radar.buildRadarView），不再用 canvas
 
     // 添加视频上传状态
     hasUploadedVideo: false,
@@ -1194,7 +1196,7 @@ Page({
     const that = this;
     // 打开即重置：上一条记录的逐轮评分若不清理，换记录后仍会显示（2026-10-01 审计 P1-3 修复）
     // 【F11】录音回放列表同样在打开时置空，避免串场；【N8】雷达图同理
-    this.setData({ scoreCards: [], scoreSummary: null, voiceRecords: [], radarDims: [], radarText: '' });
+    this.setData({ scoreCards: [], scoreSummary: null, voiceRecords: [], radarDims: [], radarText: '', radarAllZero: false, radarView: null });
     wx.showLoading({
       title: '加载回答详情...'
     });
@@ -1257,13 +1259,15 @@ Page({
                   scoreCards: scoreCard.buildRoundCards(body.data),
                   scoreSummary: scoreCard.buildSummary(body.data),
                   radarDims: dims,
-                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
+                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  '),
+                  // 【2026-11-17】旧场次里整场「未作答」会五维全 0：图只剩圆心点，需明确说明
+                  radarAllZero: !dims.some((v) => v > 0),
+                  // 【2026-11-17】纯 CSS 雷达图：数据由 radar.buildRadarView 一次性算好，无 canvas 依赖
+                  radarView: radar.buildRadarView(dims)
                 });
-                // canvas 在 wx:if 弹层里，setData 之后才能取到节点
-                wx.nextTick(() => radar.drawRadar(that, 'radarCanvas', dims));
               } else {
                 // 失败 / 空数据显式置空，避免残留上一条记录的分数（2026-10-01 审计 P1-3 修复）
-                that.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
+                that.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '', radarAllZero: false, radarView: null });
               }
             },
             fail: () => {
@@ -1325,7 +1329,9 @@ Page({
       scoreSummary: null,
       voiceRecords: [],
       radarDims: [],
-      radarText: ''
+      radarText: '',
+      radarAllZero: false,
+      radarView: null
     });
   },
 

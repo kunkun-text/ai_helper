@@ -365,3 +365,28 @@ page {
   margin-bottom:8rpx; font-size:28rpx; }
 .question-text,.answer-text { font-size:28rpx; line-height:1.5; color:#666;
   display:block; width:100%; word-break:break-word; }
+
+/* ============================================================
+   【N8 · 2026-11-17 · 雷达图纯 CSS 方案】五维能力雷达图样式
+   纯 WXML/CSS 绘制（clip-path 图层 + 旋转轴线），无 canvas 依赖。
+   图层坐标/尺寸由 utils/radar.js 的 buildRadarView 以内联 style 下发，
+   这里只提供容器与公共定位。教师端 / 学生端「回答详情」弹层共用。
+   ============================================================ */
+.radar-box {
+  position: relative;
+  width: 560rpx;
+  height: 560rpx;
+  margin: 20rpx auto;
+  overflow: hidden;
+}
+
+.radar-abs {
+  position: absolute;
+}
+
+.radar-label {
+  position: absolute;
+  font-size: 22rpx;
+  color: #4a5160;
+  white-space: nowrap;
+}

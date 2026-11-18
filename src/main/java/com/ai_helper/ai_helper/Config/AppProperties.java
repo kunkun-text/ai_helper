@@ -386,6 +386,21 @@ public class AppProperties {
 
         /** 【路线①】判"错误"档时的最终总分上限（五档表大错×0.5 → 7.5~15，取 15）。 */
         private double checklistErrorFinalCap = 15.0;
+
+        /**
+         * 【2026-11-17】判分类任务（要点核验 / 要点抽取）专用模型，必须是未微调底座。
+         *
+         * <p><b>为什么要分离</b>：线上对话模型 {@code qwen2.5:3b-defense-v2} 是 QLoRA 微调版，
+         * 只会输出答辩三段式（点评/评分/下一题），结构化 JSON 的指令遵循被覆盖掉了——
+         * 实测给它 4 条要点清单只回 1 条 {@code {"verdict":"命中"}} 且丢失 {@code relevant} 键，
+         * 导致要点核验闸门实质失效（defenseId=407：全错但切题拿 44/50）。同 prompt 下未微调底座
+         * {@code qwen2.5:3b-16k} 能正常输出 JSON。</p>
+         *
+         * <p>答辩对话仍用 {@code spring.ai.openai.chat.options.model}（v2），本项只影响
+         * {@code ensureRubric / ensureRubricForQuestion / verifyChecklist} 三处调用。
+         * 留空时回退到对话模型。</p>
+         */
+        private String judgeModel = "qwen2.5:3b-16k";
     }
 
     /**

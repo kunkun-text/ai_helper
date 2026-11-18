@@ -591,6 +591,7 @@
         <text class="modal-title">回答详情</text>
         <text class="modal-close" bindtap="closeAnswers">×</text>
       </view>
+      <!-- 【2026-11-17】bindscroll：雷达图在弹层底部、打开时在可视区外，滚到它时补画 -->
       <scroll-view class="modal-body" scroll-y="true">
         <!-- 【2026-10-28】视频场次（通常 0 轮文字作答）的兜底：展示 AI 对讲解内容的整体总结。
              此前该弹层在这种情况下**只有标题、一片空白**（用户实测截图）。
@@ -707,10 +708,28 @@
             <text wx:else class="sc-round-comment sc-muted">本轮模型未返回评语</text>
           </view>
         </view>
+        <!-- 【2026-11-17】雷达图两种"看不到"的兜底：
+             ① 五维全 0（旧场次「未作答」）→ 图上只剩圆心点，给一句说明；
+             ② 早期场次只有总分、没有逐轮五维明细 → 明确告知无法绘制，不留空白让人以为坏了。 -->
         <view wx:if="{{radarDims.length === 5}}" class="form-item">
           <text class="label">五维能力雷达图（逐轮平均）</text>
-          <canvas type="2d" id="radarCanvas" class="radar-canvas"></canvas>
+          <!-- 【2026-11-17】纯 WXML/CSS 绘制（clip-path 图层），彻底不依赖 canvas：
+               本项目弹层环境（glass-easel + wx:if 弹层 scroll-view 深处）里 canvas 节点拿不到上下文，
+               两次 canvas 方案均真机空白，详见 CHANGES.md 2026-11-17 §六~§九。 -->
+          <view class="radar-box">
+            <view wx:for="{{radarView.rings}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+            <view wx:for="{{radarView.axes}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+            <view wx:for="{{radarView.poly}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+            <view wx:for="{{radarView.center}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+            <view wx:for="{{radarView.dots}}" wx:key="key" class="radar-abs" style="{{item.style}}"></view>
+            <text wx:for="{{radarView.labels}}" wx:key="key" class="radar-label" style="{{item.style}}">{{item.text}}</text>
+          </view>
           <text class="muted">{{radarText}}</text>
+          <text wx:if="{{radarAllZero}}" class="muted">该场次逐轮五维均为 0 分（多为「未作答」场次），图上只剩圆心点属正常。</text>
+        </view>
+        <view wx:elif="{{selectedAnswers && selectedAnswers.length > 0}}" class="form-item">
+          <text class="label">五维能力雷达图（逐轮平均）</text>
+          <text class="muted">该场次没有逐轮五维评分数据（早期版本只记录总分），无法绘制雷达图。</text>
         </view>
 
         <!-- 【N15】场次审计日志：开始 / 中途续答 / 结束 的时间线 -->

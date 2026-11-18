@@ -161,11 +161,8 @@
   font-size: 24rpx;
 }
 
-/* 【N8】五维雷达图 + 标准答案对照 */
-.radar-canvas {
-  width: 100%;
-  height: 420rpx;
-}
+/* 【N8】五维雷达图 + 标准答案对照
+   【2026-11-17】canvas 已弃用，雷达图改为纯 WXML/CSS（样式见 app.wxss 的 .radar-box/.radar-abs/.radar-label） */
 
 .standard-answer {
   color: #1f6b3b;

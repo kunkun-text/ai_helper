@@ -103,6 +103,8 @@ Page({
     scoreSummary: null, // 整场汇总：{ totalText, grade, roundCount, dims }
     radarDims: [], // 【N8】五维雷达图数据（逐轮平均）
     radarText: '', // 【N8】雷达图下方的文字汇总
+    radarAllZero: false, // 【2026-11-17】该场次五维全 0（旧场次「未作答」），图上只剩圆心点，需额外说明
+    radarView: null, // 【2026-11-17】纯 CSS 雷达图渲染数据（radar.buildRadarView），不再用 canvas
     importMode: 'append', // 【N10】题库导入方式：append=追加 / replace=覆盖
     importing: false, // 【N10】导入进行中，防重复提交
     // 【2026-10-16 · 报告五维评分】基于上传报告的 AI 评析
@@ -2590,7 +2592,9 @@ loadMoreTopics() {
             scoreCards: [],
             scoreSummary: null,
             radarDims: [],
-            radarText: ''
+            radarText: '',
+            radarAllZero: false,
+            radarView: null
           });
 
           // 【F11】并行拉取该场答辩的逐轮录音（voice_responses）；无归档/请求失败时列表为空，不影响其它内容
@@ -2638,11 +2642,14 @@ loadMoreTopics() {
                   scoreCards: scoreCard.buildRoundCards(scoreBody.data),
                   scoreSummary: scoreCard.buildSummary(scoreBody.data),
                   radarDims: dims,
-                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  ')
+                  radarText: dims.map((v, i) => radar.DIM_LABELS[i] + ' ' + v).join('  '),
+                  // 【2026-11-17】旧场次里整场「未作答」会五维全 0：图只剩圆心点，需明确说明
+                  radarAllZero: !dims.some((v) => v > 0),
+                  // 【2026-11-17】纯 CSS 雷达图：数据由 radar.buildRadarView 一次性算好，无 canvas 依赖
+                  radarView: radar.buildRadarView(dims)
                 });
-                wx.nextTick(() => radar.drawRadar(this, 'radarCanvas', dims));
               } else {
-                this.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '' });
+                this.setData({ scoreCards: [], scoreSummary: null, radarDims: [], radarText: '', radarAllZero: false, radarView: null });
               }
             },
             fail: () => {
@@ -2704,6 +2711,8 @@ loadMoreTopics() {
       scoreSummary: null,
       radarDims: [],
       radarText: '',
+      radarAllZero: false,
+      radarView: null,
       answerDocInfo: null,
       answerDocDims: [],
       answerDocSummary: null,

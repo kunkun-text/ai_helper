@@ -9,14 +9,14 @@
 | 项目 | AI-helper（AI 答辩辅助系统） |
 |---|---|
 | 技术栈 | Spring Boot 3.5.11 + Java 17 + Spring AI 1.1.2 + MyBatis + Redis + MySQL |
-| AI 模型 | 本地 Ollama `qwen2.5:3b-16k`（`http://localhost:11434`） |
+| AI 模型 | 本地 Ollama `qwen2.5:3b-defense-v2`（`http://localhost:11434`，底座 `qwen2.5:3b-16k`）；云端 GLM-4.7 / DeepSeek 用于视频评分主评与报告评析复核 |
 | 前端 | 微信小程序原生（`src/main/resources/static/Ai/`） |
 | 数据库 | 12 张表（见 `docs/schema.sql`，含 `system_feedback` / `defense_audit_log` / `defense_rubric`） |
 | 运行环境 | 荣耀猎人 V700 / i5-10300H / 16GB / RTX 2060 6GB / Win10 22H2 |
 
 ---
 
-## 当前进度（2026-11-12，运行时已切到微调模型 `qwen2.5:3b-defense`，边用边调）
+## 当前进度（2026-11-17，运行时已切到微调模型 `qwen2.5:3b-defense-v2`，边用边调）
 
 > ### 🔴 运行现状（改任何模型相关代码前必看）
 >
@@ -25,7 +25,7 @@
 > | 当前模型 | **`qwen2.5:3b-defense-v2`**（2026-11-16 切换，补行为样本 + 3 epoch） |
 > | 配置位置 | `application.yml` → `spring.ai.openai.chat.options.model`（该文件 gitignore，不入库） |
 > | 生效条件 | **必须重启后端**；改配置不重启无效 |
-> | 回退 | 逐级：`qwen2.5:3b-defense`（v1）→ `qwen2.5:3b-16k`（底座），改一行 + 重启 |
+> | 回退 | 逐级：`qwen2.5:3b-defense`（v1）→ `qwen2.5:3b-16k`（底座），改一行 + 重启。**三个 tag 2026-11-17 已核实在位**（此前曾只剩 v2，已重建验证），重建命令见 `docs/ft/微调手册-2026-11-12.md` §11.6 |
 > | 已知边界 | 结构合规 **90%**、档位 **86.7%**、五维和=总分 72.5%（后端重算，不影响入库）、**行为合规 95%**（v1 仅 40%） |
 > | 反复调试 | 见 `docs/ft/微调手册-2026-11-12.md` §7；训练环境 `D:\应用源文件\AI微调环境` |
 >
@@ -47,7 +47,7 @@
 | 答辩链路鉴权 | ✅ 已加固 | A1：/api/chat、/api/final-evaluate、/api/voice/** 纳入登录保护，身份取登录态 |
 | 低功耗加固 | ✅ 已落地 | 异步线程池改 `app.async`（2/4/50）；`diagnose.ps1 -StrictLowPower` 校验低功耗变量**取值** |
 | 小程序环境 | ✅ 配置侧就绪 | A2：`config.js` 三环境 dev/lan/prod，prod 强制 HTTPS（等真实域名填 `prodBaseUrl`） |
-| 详情页增强 | 已开发待实测 | N8：原生 canvas 五维雷达图（逐轮平均）+ 标准答案对照；学生/教师两端 |
+| 详情页增强 | 已开发待实测 | N8：原生 canvas 五维雷达图（逐轮平均）+ 标准答案对照；学生/教师两端。**2026-11-17 修复雷达图空白**：画布在弹层可视区外时取不到尺寸 → 改为「自动重试 + 弹层 `bindscroll` 补画」，详见 `CHANGES.md` 2026-11-17 §六 |
 | 题库批量导入 | 已开发待实测 | N10：CSV 模板下载 + 追加/覆盖导入 + 逐行校验与跳过原因 |
 | 教师端统计导出 | 已开发待实测 | N9：`/teacher/stats/topics` + 按课题导出 + 课题统计 CSV |
 | 场次审计日志 | 已开发待实测 | N15：新表 `defense_audit_log` + START/RESUME/FINISH 埋点（**教师端可视化入口 2026-10-14 已补**） |
@@ -94,7 +94,7 @@
 | **P2** | 报告评析遗留 | ① ~~导出列未做~~ → **2026-10-16 已做**（末尾追加「报告评析得分/等级」列，并修复「按课题导出」查询漏查新列）；② ~~`report_text` 未落库~~ → **2026-10-16 已做**（MEDIUMTEXT 列 + 评分前落库，需执行 `docs/ddl_report_text.sql`）；③ **`defense_mode` 已建列但未写入**（文字/语音答辩走同一套 `/api/chat`，服务端分辨不出，需前端建场带 `mode`，约 3 行改动落在 `chatController`——**红线大文件，等你拍板**）；④ `report_text` 目前只在库里，**教师端还没有查看入口**（待拍板是否加） |
 | **P0** | ~~N80 答辩页视频上传~~ | 🔧 2026-10-20 已开发，待真机：答辩页新增视频上传条（选择/进度/取消/重试续传/预览，不阻塞答题），`/api/video/init` 增 `defenseId` 显式绑定本场，教师端「视频已上传」红标已落地。**只剩真机验证**（小程序端选视频、断点续传、上传后教师端能看到红标） |
 | **P0** | ~~视频 ASR 模型基准~~ | ✅ 2026-10-20 已跑：small 22.0s/0.843 vs `large-v3-turbo-q5_0` 43.2s/0.876。**视频用 turbo-q5，60 秒语音仍用 small**；medium 全量模型下载慢，未纳入。脚本 `scripts/asr-benchmark.ps1` 可随时复跑 |
-| **P1** | 视频评分接入 GLM/DeepSeek | 已拍板：**GLM-4.7 推理包为主 → GLM-4.5-air → DeepSeek → 本地 3B**；只发转写文本 + 声学指标，不发视频。**配置骨架已加**（`app.ai.scoring.*`，key 填本地 `application.yml` 的 `glm.api-key`，该文件 gitignore）；`AiScoringService`（OpenAI 兼容适配器）已落地并接入**报告评析低分/跑题复核**（2026-10-25）；**视频主评分仍未接**（`VideoAnalysisServiceImpl.callComments/callScores` 仍本地 3B） |
+| **P1** | ~~视频评分接入 GLM/DeepSeek~~ | ✅ **2026-10-28 已接（2026-11-17 文档口径修正）**：`VideoAnalysisServiceImpl` 的 `callComments` / `callScores` / `summarizeVideo` **全部云端优先**，顺序 `glm-4.7 → glm-4.5-air → deepseek → 本地 3B`，三段各自独立回退，成绩单抬头写「评分引擎：provider:model」。只发转写文本、不发视频；开关 `app.video-analysis.cloud-enabled` / `fallback-to-local`（默认 true/true）；上传完成自动提交评分（`auto-analyze-on-upload`）。**剩余**：真实答辩录像端到端复测（`358` 是录屏、分数不可用）+ 视频链路四个工程缺口（数值分列 / 转写全文查看 / 僵态清理 / 声学指标，见需求清单 D-P1-1~4） |
 | **P1** | 视频转写纠错词表 | 治「文字答辩→文字打变」「部署→剥锁」「系统评分→系统平方」等同音词；按课题术语生成，外置可编辑，避免硬编码 |
 | **P0** | A2 小程序生产域名 | 配置侧已完成；**只差真实已备案 HTTPS 域名**（填 `prodBaseUrl`、切 `env:'prod'`、关 `urlCheck:false`） |
 | **P0** | F11 语音归档回放 | 🔧 2026-10-08 已开发（归档+三处回放入口），待真机实测 |

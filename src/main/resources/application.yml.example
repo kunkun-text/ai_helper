@@ -195,6 +195,10 @@ app:
     checklist-error-hit-rate-max: 0.50
     # 判"错误"档时的最终总分上限（五档表大错×0.5 → 7.5~15）
     checklist-error-final-cap: 15.0
+    # 【2026-11-17】判分类任务（要点抽取 / 要点核验）专用模型：必须是未微调底座。
+    # 微调模型 qwen2.5:3b-defense-v2 只会输出答辩三段式，结构化 JSON 指令遵循已被覆盖，
+    # 会给核验喂回 1 条 verdict 导致闸门失效。留空则回退 spring.ai.openai.chat.options.model。
+    judge-model: qwen2.5:3b-16k
 
   # ==========================================================================
   # 答辩视频的 AI 评分（2026-10-20 · VID 系列）

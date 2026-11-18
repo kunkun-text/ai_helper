@@ -28,6 +28,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ai_helper.ai_helper.Config.AppProperties;
 import com.ai_helper.ai_helper.interceptor.AuthInterceptor;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.DefenseTopicsService;
@@ -105,6 +108,87 @@ public class chatController {
     /** 判分阈值统一入口：改默认值需同步 AppProperties.Scoring 字段默认值与 application.yml(.example) */
     private AppProperties.Scoring scoring() {
         return appProperties.getScoring();
+    }
+
+    /**
+     * 【2026-11-17】要点清单 JSON 解析（Jackson 已在 Spring Boot 依赖内，无新增依赖）。
+     * 必须开启 FAIL_ON_TRAILING_TOKENS：readTree 默认会忽略首段 JSON 之后的多余内容，
+     * 而模型偶发输出多个相邻数组（{@code ["a"] ["b"] ["c"]}），不开启会把清单条数误判成 1。
+     */
+    private static final ObjectMapper RUBRIC_JSON = new ObjectMapper()
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
+    /** 单个 JSON 数组片段（用于解析模型输出的「多个相邻数组」形态） */
+    private static final Pattern RUBRIC_ARRAY_BLOCK = Pattern.compile("\\[[^\\[\\]]*\\]");
+
+    /**
+     * 【2026-11-17】判分类任务（要点抽取 / 要点核验）实际使用的模型。
+     *
+     * <p>必须是未微调底座：微调模型只会输出答辩三段式，结构化 JSON 指令遵循已被覆盖
+     * （见 {@link AppProperties.Scoring#getJudgeModel()} 的说明）。未配置时回退对话模型，
+     * 与改动前行为一致。</p>
+     */
+    private String judgeModelName() {
+        String m = scoring().getJudgeModel();
+        return (m == null || m.trim().isEmpty()) ? ollamaModelName : m.trim();
+    }
+
+    /**
+     * 【2026-11-17】解析要点清单条数。
+     *
+     * <p>rubric 来自 {@code defense_rubric.rubric}，正常是模型输出的 JSON 字符串数组
+     * （如 {@code ["要点1","要点2"]}）。历史数据可能是纯文本清单，此时返回 -1，
+     * 由调用方回退「模型返回条数」口径并打日志标注。</p>
+     */
+    static int parseRubricSize(String rubric) {
+        if (rubric == null) return -1;
+        String text = rubric.trim();
+        // ① 标准形态：整体是一个 JSON 数组
+        int start = text.indexOf('[');
+        int end = text.lastIndexOf(']');
+        if (start >= 0 && end > start) {
+            try {
+                JsonNode arr = RUBRIC_JSON.readTree(text.substring(start, end + 1));
+                // 空数组（如 {"items":[]}）不是可用的要点清单，按非 JSON 处理
+                if (arr.isArray() && arr.size() > 0) return arr.size();
+            } catch (Exception ignored) {
+                // 落到 ②：模型偶发输出多个相邻数组，如 ["a"] ["b"] ["c"]
+            }
+        }
+        // ② 兜底形态：逐段解析所有数组并求和
+        java.util.regex.Matcher blocks = RUBRIC_ARRAY_BLOCK.matcher(text);
+        int sum = 0;
+        while (blocks.find()) {
+            try {
+                JsonNode arr = RUBRIC_JSON.readTree(blocks.group());
+                if (arr.isArray()) sum += arr.size();
+            } catch (Exception ignored) {
+                // 单段解析失败不影响其余段
+            }
+        }
+        return sum > 0 ? sum : -1;
+    }
+
+    /**
+     * 【2026-11-17】要点核验命中率（分母对齐）。
+     *
+     * <p>分母取<b>清单条数</b>而不是模型实际返回的 verdict 条数：模型少回的条目按「未命中」计，
+     * 否则 3B 只回 1 条时命中率恒为 1/1 = 100%、闸门形同虚设。</p>
+     *
+     * <p>健康检查：模型返回条数不足清单条数的一半 → 返回 -1（核验不可用，调用方维持原判），
+     * 宁可漏判也不拿 1 条判定全中。rubric 不是合法 JSON 数组时（{@code rubricSize <= 0}）
+     * 回退为「模型返回条数」口径，行为与改动前一致。</p>
+     *
+     * @param hit        模型判定为「命中」的条数
+     * @param returned   模型实际返回的 verdict 条数
+     * @param rubricSize 清单条数；非 JSON 数组传 -1
+     * @return 命中率 ∈ [0,1]；-1 表示核验不可用
+     */
+    static double computeChecklistHitRate(int hit, int returned, int rubricSize) {
+        if (returned <= 0) return -1;
+        if (rubricSize > 0 && returned * 2 < rubricSize) return -1;
+        int denominator = rubricSize > 0 ? rubricSize : returned;
+        return (double) Math.min(Math.max(hit, 0), denominator) / denominator;
     }
 
     /** 每轮对话保留的最大消息数（6轮 × 2条 = 12条） */
@@ -1283,7 +1367,7 @@ public class chatController {
                                 // 追问轮：题目由模型自拟、没有题库标准答案 → 让模型先给出该题的参考答案要点
                                 ckRubric = ensureRubricForQuestion(ckQuestion);
                             }
-                            ChecklistVerdict ck = verifyChecklist(ckRubric, userInput);
+                            ChecklistVerdict ck = verifyChecklist(defenseId, ckIndex, ckRubric, userInput);
                             if (!ck.isRelevant()) {
                                 // 【N7+ · 2026-10-14】与本题完全无关（问 Hadoop 答天气 / 整段讨分操控话术）→
                                 // 直接五维归零。模型常把"答别的题"标成 [切题] 给 20~38 分，此前只能靠跑题链路兜；
@@ -1307,6 +1391,11 @@ public class chatController {
                                 if (comment == null || !comment.contains(WRONG_ANSWER_NOTE)) {
                                     comment = (comment == null ? "" : comment) + WRONG_ANSWER_NOTE;
                                 }
+                            } else if (ck.getHitRate() < 0) {
+                                // 【2026-11-17】核验不可用必须可见：此前静默维持原判，
+                                // 日志里无法区分「核验没跑」和「核验通过」（defenseId=407 全场 0 条核验日志）。
+                                log.warn("要点核验不可用，本轮维持原判（未做错误识别） - defenseId: {}, 题目索引: {}, 原因: {}",
+                                        defenseId, ckIndex, ck.getReason());
                             }
                         }
                     }
@@ -3229,7 +3318,8 @@ public class chatController {
             String resp = chatClient.prompt()
                     .user(prompt)
                     .options(OpenAiChatOptions.builder()
-                            .model(ollamaModelName)
+                            // 【2026-11-17】要点抽取属判分类任务，用未微调底座（v2 丢失 JSON 指令遵循）
+                            .model(judgeModelName())
                             .temperature(0.0)
                             .maxTokens(200)
                             .build())
@@ -3242,8 +3332,8 @@ public class chatController {
                 log.info("追问要点清单缓存超过 {} 条，已整体清理", RUBRIC_TEXT_CACHE_MAX);
             }
             rubricByQuestionText.put(key, rubric);
-            log.info("追问轮要点清单已生成 - 题目: {}, 清单: {}",
-                    truncateForPrompt(question, 40), truncateForPrompt(rubric, 120));
+            log.info("追问轮要点清单已生成 - 模型: {}, 题目: {}, 清单: {}",
+                    judgeModelName(), truncateForPrompt(question, 40), truncateForPrompt(rubric, 120));
             return rubric;
         } catch (Exception e) {
             log.warn("追问轮要点清单生成失败，本轮跳过要点核验: {}", e.getMessage());
@@ -3296,7 +3386,8 @@ public class chatController {
             String resp = chatClient.prompt()
                     .user(prompt)
                     .options(OpenAiChatOptions.builder()
-                            .model(ollamaModelName)
+                            // 【2026-11-17】要点抽取属判分类任务，用未微调底座（v2 丢失 JSON 指令遵循）
+                            .model(judgeModelName())
                             .temperature(0.0)
                             .maxTokens(200)
                             .build())
@@ -3306,7 +3397,8 @@ public class chatController {
             if (rubric.isEmpty()) return null;
             rubricCache.put(questionId, rubric);
             saveRubricToDb(questionId, rubric);
-            log.info("要点清单生成完成 - questionId: {}, 内容: {}", questionId, rubric);
+            log.info("要点清单生成完成 - 模型: {}, questionId: {}, 内容: {}",
+                    judgeModelName(), questionId, rubric);
             return rubric;
         } catch (Exception e) {
             log.warn("要点清单生成失败，跳过核验: {}", e.getMessage());
@@ -3359,10 +3451,17 @@ public class chatController {
      *
      * @return 判定结果；调用失败或无法解析时返回「相关 + 命中率 -1」（方向安全：宁可维持原判，绝不误归零）
      */
-    private ChecklistVerdict verifyChecklist(String rubric, String answer) {
-        if (rubric == null || rubric.isEmpty() || answer == null || answer.trim().isEmpty()) {
-            return ChecklistVerdict.unknown();
+    private ChecklistVerdict verifyChecklist(Integer defenseId, int questionIndex, String rubric, String answer) {
+        if (rubric == null || rubric.trim().isEmpty()) {
+            log.debug("要点核验跳过：要点清单为空 - defenseId: {}, 题目索引: {}", defenseId, questionIndex);
+            return ChecklistVerdict.unknown("要点清单为空");
         }
+        if (answer == null || answer.trim().isEmpty()) {
+            log.debug("要点核验跳过：学生回答为空 - defenseId: {}, 题目索引: {}", defenseId, questionIndex);
+            return ChecklistVerdict.unknown("学生回答为空");
+        }
+        // 【2026-11-17】命中率分母 = 清单条数；rubric 不是合法 JSON 数组时返回 -1（回退模型返回条数口径）
+        int rubricSize = parseRubricSize(rubric);
         try {
             String prompt = "你是答辩判分助手。下面是【本题要点清单】和【学生本轮回答】，请完成两项判定，只输出 JSON。\n"
                     + "【一、相关性 relevant】判断学生是否在回答本题：\n"
@@ -3381,14 +3480,17 @@ public class chatController {
             String resp = chatClient.prompt()
                     .user(prompt)
                     .options(OpenAiChatOptions.builder()
-                            .model(ollamaModelName)
+                            // 【2026-11-17】要点核验属判分类任务，用未微调底座（v2 丢失 JSON 指令遵循）
+                            .model(judgeModelName())
                             .temperature(0.0)
                             .maxTokens(400)
                             .build())
                     .call()
                     .content();
             if (resp == null) {
-                return ChecklistVerdict.unknown();
+                log.warn("要点核验返回空内容，本轮维持原判 - defenseId: {}, 题目索引: {}, 模型: {}",
+                        defenseId, questionIndex, judgeModelName());
+                return ChecklistVerdict.unknown("模型返回空内容");
             }
             // 相关性：只认模型显式输出的 false；解析不到一律视为相关（方向安全——绝不用解析失败去归零）
             boolean relevant = !java.util.regex.Pattern
@@ -3396,21 +3498,42 @@ public class chatController {
                     .matcher(resp).find();
             java.util.regex.Matcher m = java.util.regex.Pattern
                     .compile("\"verdict\"\\s*[:：]\\s*\"?(命中|未命中|矛盾)\"?").matcher(resp);
-            int hit = 0, total = 0;
+            int hit = 0, returned = 0;
             while (m.find()) {
-                total++;
+                returned++;
                 if ("命中".equals(m.group(1))) hit++;
             }
-            if (total == 0) {
-                log.warn("要点核验输出无法解析，维持原判（相关性={}）: {}", relevant, resp);
-                return new ChecklistVerdict(relevant, -1, resp);
+            if (returned == 0) {
+                // 【2026-11-17】静默修复：解析失败必须可见，否则「核验没跑」与「核验通过」日志无法区分
+                log.warn("要点核验输出无法解析，本轮维持原判 - defenseId: {}, 题目索引: {}, 模型: {}, 原始输出: {}",
+                        defenseId, questionIndex, judgeModelName(), truncateForPrompt(resp, 300));
+                return ChecklistVerdict.unknown("核验输出无法解析");
             }
-            double rate = (double) hit / total;
-            log.info("要点核验 - 相关性: {}, 命中 {}/{} = {}, 原始输出: {}", relevant, hit, total, rate, resp);
-            return new ChecklistVerdict(relevant, rate, resp);
+            if (rubricSize <= 0) {
+                // 历史数据可能是纯文本清单：回退旧口径，但必须标出分母来源，便于审计
+                log.warn("要点清单不是合法 JSON 数组，命中率分母回退为模型返回条数（denominator=model） - "
+                                + "defenseId: {}, 题目索引: {}, 清单片段: {}",
+                        defenseId, questionIndex, truncateForPrompt(rubric, 120));
+            }
+            double rate = computeChecklistHitRate(hit, returned, rubricSize);
+            if (rate < 0) {
+                log.warn("要点核验输出条数不足（模型返回 {} 条 < 清单 {} 条的一半），判核验不可用 - "
+                                + "defenseId: {}, 题目索引: {}, 模型: {}, 原始输出: {}",
+                        returned, rubricSize, defenseId, questionIndex, judgeModelName(),
+                        truncateForPrompt(resp, 300));
+                return ChecklistVerdict.unknown(
+                        "核验输出条数不足（模型返回 " + returned + " 条 / 清单 " + rubricSize + " 条）");
+            }
+            int denominator = rubricSize > 0 ? rubricSize : returned;
+            int effectiveHit = Math.min(hit, denominator);
+            log.info("要点核验 - 模型: {}, defenseId: {}, 题目索引: {}, 相关性: {}, 命中 {}/{} = {}（denominator={}）, 原始输出: {}",
+                    judgeModelName(), defenseId, questionIndex, relevant, effectiveHit, denominator, rate,
+                    rubricSize > 0 ? "rubric" : "model", truncateForPrompt(resp, 300));
+            return new ChecklistVerdict(relevant, rate, resp, "");
         } catch (Exception e) {
-            log.warn("要点核验调用失败，维持原判: {}", e.getMessage());
-            return ChecklistVerdict.unknown();
+            log.warn("要点核验调用失败，本轮维持原判 - defenseId: {}, 题目索引: {}, 模型: {}, 原因: {}",
+                    defenseId, questionIndex, judgeModelName(), e.getMessage());
+            return ChecklistVerdict.unknown("调用异常: " + e.getMessage());
         }
     }
 
@@ -3423,16 +3546,24 @@ public class chatController {
         private final boolean relevant;
         private final double hitRate;
         private final String raw;
+        /** 【2026-11-17】不可用原因（调用方日志用，便于 grep 审计） */
+        private final String reason;
 
-        ChecklistVerdict(boolean relevant, double hitRate, String raw) {
+        ChecklistVerdict(boolean relevant, double hitRate, String raw, String reason) {
             this.relevant = relevant;
             this.hitRate = hitRate;
             this.raw = raw;
+            this.reason = reason;
         }
 
         /** 解析失败/调用异常时的中性结果：视为相关 + 命中率未知（绝不误归零） */
         static ChecklistVerdict unknown() {
-            return new ChecklistVerdict(true, -1, "");
+            return new ChecklistVerdict(true, -1, "", "");
+        }
+
+        /** 【2026-11-17】带原因的中性结果：调用方会据此打「要点核验不可用」日志 */
+        static ChecklistVerdict unknown(String reason) {
+            return new ChecklistVerdict(true, -1, "", reason == null ? "" : reason);
         }
 
         boolean isRelevant() {
@@ -3445,6 +3576,10 @@ public class chatController {
 
         String getRaw() {
             return raw;
+        }
+
+        String getReason() {
+            return reason;
         }
     }
 
