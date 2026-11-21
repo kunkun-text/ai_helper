@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>课程考核AI答辩辅助 · 教师端（网页演示）</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">AI</div>
+        <div class="brand-text">
+          <div class="brand-title">课程考核AI答辩辅助</div>
+          <div class="brand-sub">教师端 · Web</div>
+        </div>
+      </div>
+      <nav class="menu">
+        <a class="menu-item" data-route="stats" href="#stats"><span class="mi">统</span><span class="mt">成绩统计</span></a>
+        <a class="menu-item" data-route="records" href="#records"><span class="mi">记</span><span class="mt">答辩记录</span></a>
+        <a class="menu-item" data-route="profile" href="#profile"><span class="mi">我</span><span class="mt">个人信息</span></a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="demo-badge">演示数据 · 均为虚构</div>
+        <div class="muted">与小程序教师端同源字段</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="crumb" id="crumb">成绩统计</div>
+          <div class="page-title" id="pageTitle">成绩统计 · 数据总览</div>
+        </div>
+        <div class="topbar-right">
+          <select id="topicFilter" class="select" aria-label="按课题筛选"></select>
+          <div class="user-chip"><div class="avatar-sm">T</div><span id="chipName"></span></div>
+        </div>
+      </header>
+
+      <!-- ================= 成绩统计 ================= -->
+      <section class="view" id="view-stats">
+        <div class="stat-grid" id="statGrid"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><div class="card-title">成绩等级分布</div><div class="card-sub">口径：50 分制，≥35 优秀 · 26~34 良好 · 15~25 合格 · 5~14 不合格 · &lt;5 无效</div></div>
+            <div class="chart-box"><canvas id="chartGrade"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">分数段分布</div><div class="card-sub">已出分场次的总分直方图（每 5 分一段）</div></div>
+            <div class="chart-box"><canvas id="chartHist"></canvas></div>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-head"><div class="card-title">五维能力均值</div><div class="card-sub">表达 / 逻辑 / 专业 / 应变 / 创新（每维 10 分）</div></div>
+            <div class="chart-box"><canvas id="chartRadar"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">答辩形式构成</div><div class="card-sub">文字 / 语音 / 文档 / 视频</div></div>
+            <div class="chart-box"><canvas id="chartMode"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">合格率与优秀率</div><div class="card-sub">按课题对比（合格及以上 / 优秀）</div></div>
+            <div class="chart-box"><canvas id="chartPass"></canvas></div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><div class="card-title">课题答辩分布</div><div class="card-sub">各课题答辩场次</div></div>
+            <div class="chart-box"><canvas id="chartTopic"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">近 14 天答辩趋势</div><div class="card-sub">每日答辩场次与当日平均分</div></div>
+            <div class="chart-box"><canvas id="chartTrend"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head row">
+            <div><div class="card-title">按课题统计</div><div class="card-sub">题目数 / 场次 / 已完成 / 平均分 / 合格率 / 优秀率</div></div>
+            <button class="btn outline" id="btnExportTopic">导出课题统计 CSV</button>
+          </div>
+          <div class="table-wrap"><table class="table" id="topicTable"></table></div>
+        </div>
+      </section>
+
+      <!-- ================= 答辩记录 ================= -->
+      <section class="view" id="view-records">
+        <div class="card">
+          <div class="card-head row">
+            <div><div class="card-title">学生答辩记录</div><div class="card-sub">与小程序「答辩记录」列表同口径：主分数 / 报告评析 / 视频 / 语音 / 材料裁定标签</div></div>
+            <div class="search">
+              <input id="qName" class="input" placeholder="学生姓名" />
+              <input id="qNo" class="input" placeholder="学号" />
+              <button class="btn outline" id="btnClear">清空</button>
+              <button class="btn primary" id="btnExport">导出答辩成绩 CSV</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table" id="recordTable"></table></div>
+        </div>
+      </section>
+
+      <!-- ================= 个人信息 ================= -->
+      <section class="view" id="view-profile">
+        <div class="profile-grid">
+          <div class="col">
+            <div class="welcome-card">
+              <div class="avatar-lg">T</div>
+              <div>
+                <div class="welcome-title" id="welcomeName"></div>
+                <div class="welcome-sub">管理答辩题目并查看学生表现</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head row">
+                <div class="card-title">个人信息</div>
+                <span class="tag" id="editState">只读</span>
+              </div>
+              <form id="profileForm" class="form" autocomplete="off">
+                <label class="form-item"><span class="label">姓名</span><input class="input" name="name" disabled /></label>
+                <label class="form-item"><span class="label">教师编号</span><input class="input" name="userNumber" disabled /></label>
+                <label class="form-item"><span class="label">手机号码</span><input class="input" name="phone" disabled /></label>
+                <label class="form-item"><span class="label">邮箱</span><input class="input" name="email" disabled /></label>
+                <div class="form-actions">
+                  <button type="button" class="btn primary block" id="btnEdit">修改个人信息</button>
+                  <button type="button" class="btn outline block hidden" id="btnCancel">取消</button>
+                </div>
+              </form>
+            </div>
+            <div class="card">
+              <div class="card-title">我负责的答辩题目</div>
+              <div id="myTopics" class="topic-list"></div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="stat-grid two" id="profileStats"></div>
+            <div class="card">
+              <div class="card-title">功能入口</div>
+              <div class="cells">
+                <a class="cell" href="#stats"><span>数据总览</span><span class="arrow">›</span></a>
+                <a class="cell" href="#" id="cellExport"><span>导出答辩成绩</span><span class="arrow">›</span></a>
+                <a class="cell" href="#" id="cellExportTopic"><span>导出课题统计</span><span class="arrow">›</span></a>
+                <a class="cell" href="#" id="cellFeedback"><span>反馈管理</span><span class="badge" id="fbBadge"></span><span class="arrow">›</span></a>
+                <a class="cell" href="#"><span>意见反馈</span><span class="arrow">›</span></a>
+                <a class="cell" href="#"><span>设置</span><span class="arrow">›</span></a>
+                <a class="cell danger" href="#"><span>退出登录</span><span class="arrow">›</span></a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="foot">本页面为「课程考核AI答辩辅助平台」教师端网页演示版，所有姓名、学号、成绩均为程序生成的虚构示例数据；字段与小程序教师端及后端统计接口保持一致。</footer>
+    </main>
+  </div>
+
+  <nav class="tabbar">
+    <a data-route="stats" href="#stats">成绩统计</a>
+    <a data-route="records" href="#records">答辩记录</a>
+    <a data-route="profile" href="#profile">我的</a>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="stats-core.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

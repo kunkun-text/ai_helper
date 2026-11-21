@@ -79,6 +79,7 @@ Page({
     // 已上传附件的对外地址：用于预览 / 下载 / 删除
     uploadedVideoUrl: '',
     uploadedReportUrl: '',
+    videoOverlayUrl: '',     // 电脑端页内视频播放层地址（空 = 不显示）
 
     // 顶部提示条状态（上传成功/失败统一走它，5 秒自动消失）
     banner: {
@@ -138,7 +139,6 @@ Page({
   },
 
   onLoad() {
-    console.log('学生页面onLoad执行');
     this.loadUserInfo();
 
     // 加载真实的答辩记录数据
@@ -149,7 +149,6 @@ Page({
   },
 
   onShow() {
-    console.log('学生页面onShow执行');
     this.loadUserInfo();
     // 从答辩页返回时刷新答辩记录（onLoad只在首次进入执行，onShow补一次刷新）
     if (this._recordsLoaded) {
@@ -773,8 +772,6 @@ Page({
       }
     });
 
-    console.log('更新后的data.user:', this.data.user);
-    console.log('=== 用户信息加载完成 ===');
   },
 
   // 格式化时间到分钟：兼容 "2026-09-10 14:30:00" 与 ISO "2026-09-10T14:30:00" 两种格式
@@ -829,7 +826,6 @@ Page({
         'Authorization': 'Bearer ' + this.data.token
       },
       success(res) {
-        console.log('答辩记录接口响应:', res);
 
         if (res.statusCode === 401) {
           handleAuthExpired();
@@ -980,7 +976,6 @@ Page({
         'Authorization': 'Bearer ' + this.data.token
       },
       success(res) {
-        console.log('答辩详情接口响应:', res);
         wx.hideLoading();
 
         if (res.statusCode === 401) {
@@ -1095,6 +1090,10 @@ Page({
     // 旧实现是 wx.downloadFile + wx.openDocument({fileType:'video'})，
     // 而 openDocument 只支持 doc/docx/xls/xlsx/ppt/pptx/pdf——视频根本打不开
     // （大文件还要先整个下载一遍才失败，用户表现为"点了没反应/不能全屏"）。
+    if (this.shouldUseVideoOverlay()) {
+      this.setData({ videoOverlayUrl: videoUrl });
+      return;
+    }
     wx.previewMedia({
       sources: [{
         url: videoUrl,
@@ -1154,7 +1153,6 @@ Page({
             filePath: filePath,
             fileType: fileType,
             success: (openRes) => {
-              console.log('报告打开成功', openRes);
             },
             fail: (openErr) => {
               console.error('报告打开失败', openErr);
@@ -1216,7 +1214,6 @@ Page({
         'Authorization': 'Bearer ' + this.data.token
       },
       success(res) {
-        console.log('回答详情接口响应:', res);
         wx.hideLoading();
 
         if (res.statusCode === 401) {
@@ -1444,7 +1441,6 @@ Page({
       maxDuration: 600, // 最大时长10分钟（600秒）
       camera: 'back',
       success: function(res) {
-        console.log('选择视频成功:', res);
         
         if (res.tempFiles && res.tempFiles.length > 0) {
           const videoFile = res.tempFiles[0];
@@ -1479,7 +1475,6 @@ Page({
             showSettingButton = true;
           } else if (err.errMsg.includes('cancel') || err.errMsg.includes('deny')) {
             // 用户取消了视频选择或拒绝了权限，不显示错误
-            console.log('用户取消了视频选择或拒绝了权限');
             return;
           } else if (err.errMsg.includes('invalid')) {
             errorMessage = '视频格式不支持';
@@ -1789,11 +1784,34 @@ Page({
     });
   },
 
+  /**
+   * 电脑端（Windows / Mac 微信、开发者工具）用页内播放层：
+   * 试用反馈指出电脑端 previewMedia 打开后没有可见的返回按钮；手机端仍用系统全屏预览（自带返回）。
+   */
+  shouldUseVideoOverlay() {
+    let platform = '';
+    try {
+      platform = String((wx.getSystemInfoSync() || {}).platform || '').toLowerCase();
+    } catch (e) {
+      platform = '';
+    }
+    return platform === 'windows' || platform === 'mac' || platform === 'devtools';
+  },
+
+  /** 关闭页内视频播放层 */
+  closeVideoOverlay() {
+    this.setData({ videoOverlayUrl: '' });
+  },
+
   /** 预览已上传的视频 */
   previewVideo() {
     const url = uploader.resolveFileUrl(this.data.uploadedVideoUrl);
     if (!url) {
       wx.showToast({ title: '还没有上传视频', icon: 'none' });
+      return;
+    }
+    if (this.shouldUseVideoOverlay()) {
+      this.setData({ videoOverlayUrl: url });
       return;
     }
     wx.previewMedia({
@@ -1895,7 +1913,6 @@ Page({
     // devtools 运行时 platform 是 'devtools'，但底层是 Windows/Mac，同样支持 saveFileToDisk；
     // 因此不按平台名硬判，直接看 API 是否存在，避免「开发者工具里永远不弹窗、只能看到 Word 报错」。
     const canSaveToDisk = typeof wx.saveFileToDisk === 'function';
-    console.log('[template] platform=' + platform + ' saveFileToDisk=' + canSaveToDisk);
     if (canSaveToDisk) {
       wx.saveFileToDisk({
         filePath,

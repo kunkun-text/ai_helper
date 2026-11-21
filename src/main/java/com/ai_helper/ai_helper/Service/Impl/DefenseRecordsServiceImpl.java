@@ -64,9 +64,22 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     private AppProperties appProperties;
 
 
+    /** 分页上限（与课题列表一致）：防止 pageSize=100000 之类的超大页一次拖出全表（2026-11-21 接口边界测试发现） */
+    private static final int MAX_PAGE_SIZE = 100;
+
+    public static int safePageNum(Integer pageNum) {
+        return (pageNum == null || pageNum <= 0) ? 1 : pageNum;
+    }
+
+    public static int safePageSize(Integer pageSize) {
+        if (pageSize == null || pageSize <= 0) return 10;
+        return Math.min(pageSize, MAX_PAGE_SIZE);
+    }
+
     @Override
     public Result<PageInfo<DefenseRecordsVo>> getDefenseRecords(Integer pageNum, Integer pageSize) {
-        PageHelper.startPage(pageNum, pageSize);
+        // 不在此截断：导出 CSV 复用本方法一次取 EXPORT_MAX_ROWS 行；接口入口的截断在 DefenseRecordsController
+        PageHelper.startPage(safePageNum(pageNum), pageSize == null || pageSize <= 0 ? 10 : pageSize);
         List<DefenseRecordsVo> records = defenseRecordsMapper.getDefenseRecords(null);
         PageInfo<DefenseRecordsVo> pageInfo = new PageInfo<>(records);
         return Result.success(pageInfo);
@@ -94,8 +107,8 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
     @Override
     public Result<PageInfo<DefenseRecordsVo>> selectDefenseRecords(DefenseRecordsDto defenseRecordsDto) {
 
-        int pageNum = defenseRecordsDto.getPageNum() != null ? defenseRecordsDto.getPageNum() : 1;
-        int pageSize = defenseRecordsDto.getPageSize() != null ? defenseRecordsDto.getPageSize() : 10;
+        int pageNum = safePageNum(defenseRecordsDto.getPageNum());
+        int pageSize = safePageSize(defenseRecordsDto.getPageSize());
 
 
         PageHelper.startPage(pageNum,pageSize);
@@ -107,7 +120,7 @@ public class DefenseRecordsServiceImpl implements DefenseRecordsService {
 
     @Override
     public Result<PageInfo<DefenseRecordsVo>> getStudentDefenseRecords(int pageNum, int pageSize, String userNumber) {
-        PageHelper.startPage(pageNum, pageSize);
+        PageHelper.startPage(safePageNum(pageNum), safePageSize(pageSize));
         List<DefenseRecordsVo> list = defenseRecordsMapper.getStudentDefenseRecords(userNumber);
 
         PageInfo<DefenseRecordsVo> pageInfo = new PageInfo<>(list);

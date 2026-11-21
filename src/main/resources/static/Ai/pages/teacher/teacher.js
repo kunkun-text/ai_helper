@@ -239,7 +239,6 @@ Page({
   // 根据搜索条件加载答辩记录
   loadDefenseRecordsBySearch(isRefresh = false, specificPageNum = null) {
     if (!isRefresh && (this.data.defenseRecordsLoading || !this.data.defenseRecordsHasMore)) {
-      console.log('搜索加载被阻止：正在加载中或没有更多数据');
       return;
     }
 
@@ -302,7 +301,7 @@ Page({
             isSearching: true // 确保搜索状态保持为true
           });
         } else {
-          console.log('搜索失败 - 后端返回错误:', res.data);
+          console.warn('搜索失败 - 后端返回错误:', res.data);
           wx.showToast({
             title: res.data.msg || '搜索失败',
             icon: 'error'
@@ -558,7 +557,6 @@ loadMoreTopics() {
 },
 
   onShow() {
-    console.log('老师页面onShow执行');
     this.loadUserInfo();
     
     // 重新加载答辩记录数据，确保通过底部导航跳转时数据正确显示
@@ -1535,7 +1533,6 @@ loadMoreTopics() {
         'Authorization': token ? 'Bearer ' + token : ''
       },
       success: (res) => {
-        console.log('获取回答详情成功:', res.data);
         if (res.data.code === 1) {
           const answers = res.data.data;
           // 处理数据，添加必要的字段用于显示
@@ -1995,7 +1992,6 @@ loadMoreTopics() {
               filePath: filePath,
               fileType: fileType,
               success: (openRes) => {
-                console.log('文档打开成功', openRes);
               },
               fail: (openErr) => {
                 console.error('文档打开失败', openErr);

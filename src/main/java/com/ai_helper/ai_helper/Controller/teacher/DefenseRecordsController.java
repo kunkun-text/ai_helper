@@ -1,5 +1,6 @@
 package com.ai_helper.ai_helper.Controller.teacher;
 
+import com.ai_helper.ai_helper.Service.Impl.DefenseRecordsServiceImpl;
 import com.ai_helper.ai_helper.Service.DefenseRecordsService;
 import com.ai_helper.ai_helper.Service.AuditLogService;
 import com.ai_helper.ai_helper.Service.VoiceArchiveService;
@@ -54,7 +55,9 @@ public class DefenseRecordsController {
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "10") Integer pageSize) {
 
-        return defenseRecordsService.getDefenseRecords(pageNum, pageSize);
+        // 2026-11-21：接口入口截断超大页（pageSize<=100），导出 CSV 走 Service 直调不受影响
+        return defenseRecordsService.getDefenseRecords(
+                DefenseRecordsServiceImpl.safePageNum(pageNum), DefenseRecordsServiceImpl.safePageSize(pageSize));
     }
 
     /*

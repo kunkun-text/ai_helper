@@ -90,6 +90,8 @@
           </view>
           
           <!-- 已上传时提供预览 / 删除（替换走上方"重新上传视频"） -->
+          <!-- 2026-11-21 试用反馈：上传后要让用户一眼看出「已传上」 -->
+          <text wx:if="{{hasUploadedVideo && !isUploading}}" class="upload-done">✓ 视频已上传，可点「预览视频」确认内容</text>
           <view wx:if="{{hasUploadedVideo && !isUploading}}" class="media-actions">
             <button class="mini-btn" bindtap="previewVideo">预览视频</button>
             <button class="mini-btn danger" bindtap="deleteVideo">删除视频</button>
@@ -143,6 +145,7 @@
           </view>
 
           <!-- 已上传时提供查看/下载 / 删除 -->
+          <text wx:if="{{hasUploadedReport && !isReportUploading}}" class="upload-done">✓ 报告已上传，可点「查看 / 下载」确认内容</text>
           <view wx:if="{{hasUploadedReport && !isReportUploading}}" class="media-actions">
             <button class="mini-btn" bindtap="openUploadedReport">查看 / 下载</button>
             <button class="mini-btn danger" bindtap="deleteReport">删除报告</button>
@@ -680,4 +683,11 @@
     </view>
   </view>
 
+  <!-- 2026-11-21 试用反馈：电脑端微信 previewMedia 预览视频后没有返回按钮 → 电脑端改用页内播放层 + 显式「返回」 -->
+  <view wx:if="{{videoOverlayUrl}}" class="video-overlay">
+    <view class="video-overlay-bar">
+      <button class="video-overlay-back" bindtap="closeVideoOverlay">‹ 返回</button>
+    </view>
+    <video class="video-overlay-player" src="{{videoOverlayUrl}}" controls autoplay show-fullscreen-btn="{{true}}" object-fit="contain"></video>
+  </view>
 </view>

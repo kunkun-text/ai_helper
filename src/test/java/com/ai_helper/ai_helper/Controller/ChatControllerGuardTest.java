@@ -107,4 +107,22 @@ class ChatControllerGuardTest {
         assertNull(chatController.sessionIdTopicMismatch("user_12408060102_topic_28", "12408060102", null));
         assertNull(chatController.sessionIdTopicMismatch(null, "12408060102", 28));
     }
+
+    /** 2026-11-21 用户试用反馈：单个字母、寒暄语按敷衍作答固定零分；正常简答不误伤 */
+    @Test
+    void junkAnswerCoversSingleLetterAndGreetings() {
+        assertTrue(chatController.isJunkAnswer("a"));
+        assertTrue(chatController.isJunkAnswer(" A "));
+        assertTrue(chatController.isJunkAnswer("你好"));
+        assertTrue(chatController.isJunkAnswer("你好！"));
+        assertTrue(chatController.isJunkAnswer("老师好"));
+        assertTrue(chatController.isJunkAnswer("Hello"));
+        assertTrue(chatController.isJunkAnswer("1"));
+        assertTrue(chatController.isJunkAnswer("嗯嗯"));
+        assertFalse(chatController.isJunkAnswer("HDFS"));
+        assertFalse(chatController.isJunkAnswer("3306"));
+        assertFalse(chatController.isJunkAnswer("你好，我认为 NameNode 负责管理文件系统命名空间"));
+        assertFalse(chatController.isJunkAnswer("一般用快排"));
+        assertFalse(chatController.isJunkAnswer(""));
+    }
 }

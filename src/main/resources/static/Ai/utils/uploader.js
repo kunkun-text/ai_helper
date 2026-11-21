@@ -50,6 +50,10 @@ function resolveFileUrl(value) {
 
 /** 统一日志前缀，便于在开发者工具 Console 里过滤 */
 function log() {
+  // 【优化 · 2026-11-21】仅开发/真机调试环境输出过程日志；prod（体验版/正式版）静默，避免刷屏与泄露上传细节
+  if (config.env === 'prod') {
+    return;
+  }
   const args = Array.prototype.slice.call(arguments);
   console.log.apply(console, ['[uploader]'].concat(args));
 }

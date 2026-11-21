@@ -10,8 +10,8 @@ import java.util.Map;
  * <p>这一天是「视频答辩」正式接入 AI 评分的起点。在此之前，视频只是上传后归档到
  * {@code defense_records.video_url}，不参与任何评分；从这一版起，视频里的说话内容会被
  * 转成文字并进入五维评分，与「文字答辩」「语音答辩」「文档答辩」并列，成为第四条评分链路。
- * 后续再改视频链路（换模型、改分档、调 prompt）时，请以本注释为时间锚点回看
- * {@code CHANGES.md} 与 {@code 新阶段路线图-2026-10-15.md} 的 VID-0 ~ VID-4 条目。</p>
+ * 后续再改视频链路（换模型、改分档、调 prompt）时，请以本注释为时间锚点，并同步更新
+ * {@code docs/答辩系统-项目情况说明.md} 中视频答辩相关说明。</p>
  *
  * <p><b>本次纳入版本库的相关文件（提交/推送前逐项确认，漏一个链路就断）：</b></p>
  * <ul>
@@ -32,7 +32,7 @@ import java.util.Map;
  *       {@code utils/uploader.js}、{@code pages/defense/*}（答辩页视频上传条）、
  *       {@code pages/teacher/*}（触发按钮 + 轮询 + 五维卡片 + 列表红标）、
  *       {@code pages/student/*}（只读成绩单 + 列表红标）、{@code app.wxss}（共用标签样式）；</li>
- *   <li>文档：{@code CHANGES.md}、{@code 新阶段路线图-2026-10-15.md}、{@code 需求清单-2026-09-15.md}。</li>
+ *   <li>文档：{@code docs/答辩系统-项目情况说明.md}、{@code docs/schema.sql}。</li>
  * </ul>
  *
  * <p><b>【务必同步仓库】</b>本批文件必须整体提交并推送到远端

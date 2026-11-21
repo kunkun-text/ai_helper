@@ -295,7 +295,7 @@ if ($mysqlOk -and $mysqlExePath) {
 Write-Host "`n[3] Redis（$RedisHost`:$RedisPort）" -ForegroundColor Yellow
 $redisOk = Test-PortOpen -TargetHost $RedisHost -Port $RedisPort
 Write-Check -Name "端口 $RedisPort 监听" -Ok $redisOk `
-    -Fix "启动 Redis（必须用带 requirepass 的配置文件，见 CLAUDE.md 第四节）"
+    -Fix "启动 Redis（必须使用带 requirepass 的配置文件，见《从零部署手册》Redis 一节）"
 
 $redisCliPath = Find-Exe -Explicit $RedisCli -ExeName "redis-cli.exe" -ListeningPort $RedisPort `
     -SearchRoots @("F:\杂七杂八\Redis2", "D:\tools\redis", "C:\tools\redis", "C:\Program Files\Redis")

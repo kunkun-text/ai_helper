@@ -3,7 +3,7 @@
  *
  * 【2026-11-17 · 第三次修复：彻底放弃 canvas，改纯 WXML/CSS 绘制】
  *
- * 历史教训（同一天的两次失败尝试，详见 CHANGES.md 2026-11-17 §六~§八）：
+ * 历史教训（同一天的两次失败尝试）：
  *   ① canvas 2d + 重试/滚动补画 → 真机仍空白；
  *   ② canvas 2d 双作用域查询 + 尺寸兜底 + 旧版 canvas-id 兜底 → 真机仍空白。
  * 结论：本项目的弹层环境（`componentFramework: glass-easel` + canvas 位于 wx:if 弹层的

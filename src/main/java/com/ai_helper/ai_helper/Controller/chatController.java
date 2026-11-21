@@ -2082,7 +2082,9 @@ public class chatController {
             "说不上来", "答不上来", "忘了", "忘记了",
             // 2026-09-15 实测补网：报数式玩笑（"我是250"曾漏判得8分）、骂人单字（精确相等匹配，不会误伤正常回答）
             "我是250", "250", "滚",
-            "ok", "okay", "next", "emm", "emmm"
+            "ok", "okay", "next", "emm", "emmm",
+            // 2026-11-21 用户试用反馈补网：寒暄语曾被正常评分（"你好"拿到分数）
+            "你好", "您好", "老师好", "老师您好", "在吗", "hello", "hi", "hey"
     };
 
     /** 语气词/填充字符：回答仅由这些字符组成（"额""嗯嗯""额啊"等任意组合）视为敷衍输入 */
@@ -2095,7 +2097,7 @@ public class chatController {
      * ②1~2位纯数字（如"1"）；③仅由语气词字符组成；④与敷衍短语精确相等（含"我会这道题"等只声称会但不回答）。
      * 3位及以上纯数字（如端口号"3306"）可能是有效简答，不在此判定，交由评分模型按提示词规则给分。
      */
-    private boolean isJunkAnswer(String userInput) {
+    static boolean isJunkAnswer(String userInput) {
         if (userInput == null) return false;
         String trimmed = userInput.trim();
         if (trimmed.isEmpty()) return false;
@@ -2104,6 +2106,8 @@ public class chatController {
         text = text.replaceAll("[吧呢啊呀哦嘛呗啦哟唷哇哈么]+$", "");
         if (text.isEmpty()) return true;
         if (text.matches("[0-9]{1,2}")) return true;
+        // 2026-11-21 用户试用反馈：输入单个字母（如"a"）常拿到 30 分左右 → 单个拉丁字母按敷衍处理
+        if (text.matches("[a-z]")) return true;
         boolean allFiller = true;
         for (int i = 0; i < text.length(); i++) {
             if (FILLER_CHARS.indexOf(text.charAt(i)) < 0) { allFiller = false; break; }

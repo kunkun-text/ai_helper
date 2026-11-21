@@ -84,7 +84,6 @@ Page({
     this._pwdWasFocus = false;
     const next = !this.data.showPwd;
     this.setData({ showPwd: next });
-    console.log('切换密码显隐 - showPwd:', next);
     if (keepKeyboard) {
       // 显隐切换会重建 input 导致失焦：先置 false 再置 true，确保焦点属性真正发生变化
       setTimeout(() => {

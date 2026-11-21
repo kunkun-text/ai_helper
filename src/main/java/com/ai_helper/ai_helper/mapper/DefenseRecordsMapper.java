@@ -292,7 +292,7 @@ public interface DefenseRecordsMapper {
     /**
      * 【2026-10-28】写入答辩形式（{@code text} / {@code voice}）。
      *
-     * <p>该列此前建了但从未写入（CLAUDE.md 挂账项），导致列表看不出「语音答辩」。</p>
+     * <p>该列此前建了但从未写入，导致列表看不出「语音答辩」。</p>
      */
     int updateDefenseMode(@Param("defenseId") Integer defenseId, @Param("mode") String mode);
 }
